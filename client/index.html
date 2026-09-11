@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#090c12" />
+  <title>Shared World Prototype 0.1</title>
+</head>
+<body>
+  <canvas id="application-canvas"></canvas>
+
+  <section id="lobby" class="panel">
+    <div class="eyebrow">XR EDUCATION DEVELOPMENT</div>
+    <h1>SHARED WORLD <span>0.1</span></h1>
+    <p class="lead">同じ ROOM CODE の参加者が、ひとつの3D空間を共有します。</p>
+
+    <label>NAME
+      <input id="nameInput" maxlength="16" value="Ken" autocomplete="off" />
+    </label>
+    <label>ROOM CODE
+      <input id="roomInput" maxlength="16" value="ART001" autocomplete="off" />
+    </label>
+    <button id="enterButton">ENTER WORLD</button>
+    <p id="status">サーバー未接続</p>
+  </section>
+
+  <section id="hud" class="hud hidden">
+    <div><strong>SHARED WORLD 0.1</strong></div>
+    <div id="roomLabel">ROOM —</div>
+    <div id="playersLabel">PLAYERS 0 / 4</div>
+    <div class="controls">WASD / 矢印キー：移動</div>
+  </section>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

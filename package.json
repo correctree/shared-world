@@ -1,0 +1,28 @@
+{
+  "name": "shared-world-prototype-0.1-github-pages",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "client": "vite --host 0.0.0.0",
+    "server": "tsx watch server/src/main.ts",
+    "server:start": "tsx server/src/main.ts",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@colyseus/schema": "5.0.8",
+    "@colyseus/sdk": "0.18.2",
+    "colyseus": "0.18.5",
+    "playcanvas": "2.21.4"
+  },
+  "devDependencies": {
+    "tsx": "4.23.13",
+    "typescript": "7.0.2",
+    "vite": "8.3.0"
+  }
+}

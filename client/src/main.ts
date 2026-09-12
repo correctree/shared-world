@@ -347,6 +347,7 @@ async function enterWorld() {
         avatar.target.set(player.x, player.y, player.z);
         avatar.name = player.name;
         avatar.名前ラベル.textContent = player.name;
+        avatar.entity.setEulerAngles(0, player.rotationY ?? 0, 0);
       });
     });
     $(room.state).players.onRemove((_player: any, sessionId: string) => removeAvatar(sessionId));
@@ -469,7 +470,11 @@ camera.lookAt(
 
     const now = performance.now();
     if (now - lastSend >= 1000 / SEND_HZ) {
-      activeRoom.send("move", { x: localPosition.x, z: localPosition.z });
+ activeRoom.send("move", {
+  x: localPosition.x,
+  z: localPosition.z,
+  rotationY: moveAngle
+});
       lastSend = now;
     }
   }

@@ -88,6 +88,13 @@ camera.setPosition(0, 10, 11);
 camera.lookAt(0, 0, 0);
 app.root.addChild(camera);
 
+let cameraYaw = 0;
+let cameraPitch = -35;
+let cameraDistance = 15;
+let cameraDragging = false;
+let lastMouseX = 0;
+let lastMouseY = 0;
+
 const avatars = new Map<string, Avatar>();
 const keys = new Set<string>();
 let currentSessionId = "";
@@ -95,6 +102,42 @@ let activeRoom: Room | null = null;
 let localPosition = new pc.Vec3();
 let lastSend = 0;
 
+canvas.addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return;
+
+  cameraDragging = true;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+});
+
+window.addEventListener("mouseup", () => {
+  cameraDragging = false;
+});
+
+window.addEventListener("mousemove", (e) => {
+  if (!cameraDragging) return;
+
+  const dx = e.clientX - lastMouseX;
+  const dy = e.clientY - lastMouseY;
+
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+
+  cameraYaw -= dx * 0.25;
+  cameraPitch -= dy * 0.25;
+
+  cameraPitch = pc.math.clamp(cameraPitch, -80, -10);
+});
+canvas.addEventListener(
+  "wheel",
+  (e) => {
+    e.preventDefault();
+
+    cameraDistance += e.deltaY * 0.01;
+    cameraDistance = pc.math.clamp(cameraDistance, 5, 30);
+  },
+  { passive: false }
+);
 window.addEventListener("keydown", (e) => {
   if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(e.key.toLowerCase())) {
     e.preventDefault();
@@ -214,7 +257,35 @@ roomInput.addEventListener("keydown", (e) => { if (e.key === "Enter") enterWorld
 nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") enterWorld(); });
 
 app.on("update", (dt: number) => {
+
+  const cameraTarget =
+  currentSessionId && avatars.get(currentSessionId)
+    ? avatars.get(currentSessionId)!.entity.getPosition()
+    : new pc.Vec3(0, 0, 0);
+
+const yawRad = cameraYaw * pc.math.DEG_TO_RAD;
+const pitchRad = cameraPitch * pc.math.DEG_TO_RAD;
+
+const horizontalDistance = Math.cos(pitchRad) * cameraDistance;
+
+const cameraX =
+  cameraTarget.x + Math.sin(yawRad) * horizontalDistance;
+
+const cameraY =
+  cameraTarget.y - Math.sin(pitchRad) * cameraDistance;
+
+const cameraZ =
+  cameraTarget.z + Math.cos(yawRad) * horizontalDistance;
+
+camera.setPosition(cameraX, cameraY, cameraZ);
+camera.lookAt(
+  cameraTarget.x,
+  cameraTarget.y + 0.3,
+  cameraTarget.z
+);
+
   // Smooth remote avatars toward server-authoritative positions.
+
   for (const [sessionId, avatar] of avatars) {
     if (sessionId === currentSessionId) continue;
     const p = avatar.entity.getPosition();

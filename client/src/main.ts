@@ -27,6 +27,9 @@ const status = document.querySelector<HTMLElement>("#status")!;
 const roomLabel = document.querySelector<HTMLElement>("#roomLabel")!;
 const playersLabel = document.querySelector<HTMLElement>("#playersLabel")!;
 
+const joystick = document.querySelector<HTMLDivElement>("#joystick")!;
+const joystickKnob = document.querySelector<HTMLDivElement>("#joystickKnob")!;
+
 const app = new pc.Application(canvas, {
   graphicsDeviceOptions: { alpha: false, antialias: true }
 });
@@ -101,6 +104,64 @@ let currentSessionId = "";
 let activeRoom: Room | null = null;
 let localPosition = new pc.Vec3();
 let lastSend = 0;
+
+let joystickX = 0;
+let joystickY = 0;
+
+let joystickPointerId: number | null = null;
+
+function updateJoystick(clientX: number, clientY: number) {
+  const rect = joystick.getBoundingClientRect();
+
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+
+  const dx = clientX - centerX;
+  const dy = clientY - centerY;
+
+  const maxRadius = rect.width * 0.34;
+  const distance = Math.hypot(dx, dy);
+  const scale = distance > maxRadius ? maxRadius / distance : 1;
+
+  const clampedX = dx * scale;
+  const clampedY = dy * scale;
+
+  joystickX = clampedX / maxRadius;
+  joystickY = clampedY / maxRadius;
+
+  joystickKnob.style.transform =
+    `translate(calc(-50% + ${clampedX}px), calc(-50% + ${clampedY}px))`;
+}
+
+function resetJoystick() {
+  joystickX = 0;
+  joystickY = 0;
+  joystickPointerId = null;
+
+  joystickKnob.style.transform = "translate(-50%, -50%)";
+}
+
+joystick.addEventListener("pointerdown", (e) => {
+  joystickPointerId = e.pointerId;
+  joystick.setPointerCapture(e.pointerId);
+  updateJoystick(e.clientX, e.clientY);
+});
+
+joystick.addEventListener("pointermove", (e) => {
+  if (e.pointerId !== joystickPointerId) return;
+  updateJoystick(e.clientX, e.clientY);
+});
+
+joystick.addEventListener("pointerup", (e) => {
+  if (e.pointerId !== joystickPointerId) return;
+  resetJoystick();
+});
+
+joystick.addEventListener("pointercancel", (e) => {
+  if (e.pointerId !== joystickPointerId) return;
+  resetJoystick();
+});
+
 
 canvas.addEventListener("mousedown", (e) => {
   if (e.button !== 0) return;
@@ -316,10 +377,19 @@ camera.lookAt(
   if (keys.has("a") || keys.has("arrowleft")) x -= 1;
   if (keys.has("d") || keys.has("arrowright")) x += 1;
 
+  x += Math.abs(joystickX) < 0.08 ? 0 : joystickX;
+  z += Math.abs(joystickY) < 0.08 ? 0 : joystickY;
+
   if (x !== 0 || z !== 0) {
-    const len = Math.hypot(x, z) || 1;
-    localPosition.x = pc.math.clamp(localPosition.x + (x / len) * MOVE_SPEED * dt, -6.5, 6.5);
-    localPosition.z = pc.math.clamp(localPosition.z + (z / len) * MOVE_SPEED * dt, -6.5, 6.5);
+    const len = Math.hypot(x, z);
+   
+    if (len > 1) {
+    x /= len;
+    z /= len;
+    }
+    
+    localPosition.x = pc.math.clamp(localPosition.x + x * MOVE_SPEED * dt, -7, 7);
+    localPosition.z = pc.math.clamp(localPosition.z + z * MOVE_SPEED * dt, -7, 7);
     me.entity.setPosition(localPosition);
 
     const now = performance.now();

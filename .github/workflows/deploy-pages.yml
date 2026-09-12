@@ -33,7 +33,7 @@ jobs:
 
       - name: Build client
         env:
-          VITE_COLYSEUS_SERVER_URL: ${{ vars.COLYSEUS_SERVER_URL }}
+          VITE_SERVER_URL: ${{ vars.COLYSEUS_SERVER_URL }}
         run: npm run build
 
       - name: Setup Pages

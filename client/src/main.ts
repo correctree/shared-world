@@ -286,6 +286,16 @@ function createAvatar(sessionId: string, player: any) {
   entity.setLocalScale(0.65, 0.65, 0.65);
   entity.setPosition(player.x, player.y, player.z);
   entity.render!.material = avatarMaterial(sessionId);
+
+  // Prototype 0.5: avatar forward marker
+const forwardMarker = new pc.Entity(`Forward-${sessionId}`);
+forwardMarker.addComponent("render", { type: "box" });
+forwardMarker.setLocalScale(0.16, 0.16, 0.42);
+forwardMarker.setLocalPosition(0, 0, -0.42);
+forwardMarker.render!.material = material([1.0, 0.55, 0.15]);
+
+entity.addChild(forwardMarker);
+  
   app.root.addChild(entity);
 
   const 名前ラベル = 名前ラベルを作成(player.name);
@@ -439,6 +449,9 @@ camera.lookAt(
     -x * Math.sin(yawRad) +
     z * Math.cos(yawRad);
 
+    const moveAngle = Math.atan2(moveX, moveZ) * pc.math.RAD_TO_DEG;
+    me.entity.setEulerAngles(0, moveAngle, 0);
+    
   localPosition.x = pc.math.clamp(
     localPosition.x + moveX * MOVE_SPEED * dt,
     -7,

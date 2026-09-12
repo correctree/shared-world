@@ -99,7 +99,7 @@ let cameraDragging = false;
 let lastMouseX = 0;
 let lastMouseY = 0;
 let cameraPointerId: number | null = null;
-
+let firstPersonMode = false;
 const avatars = new Map<string, Avatar>();
 const keys = new Set<string>();
 let currentSessionId = "";
@@ -240,7 +240,17 @@ canvas.addEventListener(
   },
   { passive: false }
 );
-window.addEventListener("keydown", (e) => {
+if (e.key.toLowerCase() === "v") {
+  firstPersonMode = !firstPersonMode;
+
+  if (firstPersonMode) {
+    cameraPitch = 0;
+  } else {
+    cameraPitch = -35;
+  }
+
+  return;
+}
   if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(e.key.toLowerCase())) {
     e.preventDefault();
     keys.add(e.key.toLowerCase());
@@ -386,6 +396,14 @@ app.on("update", (dt: number) => {
     ? avatars.get(currentSessionId)!.entity.getPosition()
     : new pc.Vec3(0, 0, 0);
 
+  const selfAvatar =
+  currentSessionId ? avatars.get(currentSessionId) : undefined;
+
+if (selfAvatar) {
+  selfAvatar.entity.enabled = !firstPersonMode;
+  selfAvatar.名前ラベル.style.display = firstPersonMode ? "none" : "";
+}
+  
 const yawRad = cameraYaw * pc.math.DEG_TO_RAD;
 const pitchRad = cameraPitch * pc.math.DEG_TO_RAD;
 
@@ -400,12 +418,40 @@ const cameraY =
 const cameraZ =
   cameraTarget.z + Math.cos(yawRad) * horizontalDistance;
 
-camera.setPosition(cameraX, cameraY, cameraZ);
-camera.lookAt(
-  cameraTarget.x,
-  cameraTarget.y + 0.3,
-  cameraTarget.z
-);
+if (firstPersonMode) {
+  const eyeHeight = 0.55;
+
+  camera.setPosition(
+    cameraTarget.x,
+    cameraTarget.y + eyeHeight,
+    cameraTarget.z
+  );
+
+  const lookDistance = 10;
+
+  const lookX =
+    cameraTarget.x -
+    Math.sin(yawRad) * Math.cos(pitchRad) * lookDistance;
+
+  const lookY =
+    cameraTarget.y +
+    eyeHeight +
+    Math.sin(pitchRad) * lookDistance;
+
+  const lookZ =
+    cameraTarget.z -
+    Math.cos(yawRad) * Math.cos(pitchRad) * lookDistance;
+
+  camera.lookAt(lookX, lookY, lookZ);
+} else {
+  camera.setPosition(cameraX, cameraY, cameraZ);
+
+  camera.lookAt(
+    cameraTarget.x,
+    cameraTarget.y + 0.3,
+    cameraTarget.z
+  );
+}
 
   // Smooth remote avatars toward server-authoritative positions.
 

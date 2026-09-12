@@ -421,16 +421,37 @@ camera.lookAt(
   z += Math.abs(joystickY) < 0.08 ? 0 : joystickY;
 
   if (x !== 0 || z !== 0) {
-    const len = Math.hypot(x, z);
-   
-    if (len > 1) {
+  const len = Math.hypot(x, z);
+
+  if (len > 1) {
     x /= len;
     z /= len;
-    }
-    
-    localPosition.x = pc.math.clamp(localPosition.x + x * MOVE_SPEED * dt, -7, 7);
-    localPosition.z = pc.math.clamp(localPosition.z + z * MOVE_SPEED * dt, -7, 7);
-    me.entity.setPosition(localPosition);
+  }
+
+  // カメラの向きを基準に移動方向を回転
+  const yawRad = cameraYaw * pc.math.DEG_TO_RAD;
+
+  const moveX =
+    x * Math.cos(yawRad) +
+    z * Math.sin(yawRad);
+
+  const moveZ =
+    -x * Math.sin(yawRad) +
+    z * Math.cos(yawRad);
+
+  localPosition.x = pc.math.clamp(
+    localPosition.x + moveX * MOVE_SPEED * dt,
+    -7,
+    7
+  );
+
+  localPosition.z = pc.math.clamp(
+    localPosition.z + moveZ * MOVE_SPEED * dt,
+    -7,
+    7
+  );
+
+  me.entity.setPosition(localPosition);
 
     const now = performance.now();
     if (now - lastSend >= 1000 / SEND_HZ) {

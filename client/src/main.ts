@@ -97,6 +97,7 @@ let cameraDistance = 15;
 let cameraDragging = false;
 let lastMouseX = 0;
 let lastMouseY = 0;
+let cameraPointerId: number | null = null;
 
 const avatars = new Map<string, Avatar>();
 const keys = new Set<string>();
@@ -189,6 +190,45 @@ window.addEventListener("mousemove", (e) => {
 
   cameraPitch = pc.math.clamp(cameraPitch, -80, -10);
 });
+
+canvas.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "mouse") return;
+
+  const target = e.target as HTMLElement;
+  if (target.closest("#joystick")) return;
+
+  cameraPointerId = e.pointerId;
+  canvas.setPointerCapture(e.pointerId);
+
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (e.pointerId !== cameraPointerId) return;
+
+  const dx = e.clientX - lastMouseX;
+  const dy = e.clientY - lastMouseY;
+
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+
+  cameraYaw -= dx * 0.25;
+  cameraPitch -= dy * 0.25;
+
+  cameraPitch = pc.math.clamp(cameraPitch, -80, -10);
+});
+
+canvas.addEventListener("pointerup", (e) => {
+  if (e.pointerId !== cameraPointerId) return;
+  cameraPointerId = null;
+});
+
+canvas.addEventListener("pointercancel", (e) => {
+  if (e.pointerId !== cameraPointerId) return;
+  cameraPointerId = null;
+});
+
 canvas.addEventListener(
   "wheel",
   (e) => {

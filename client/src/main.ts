@@ -475,7 +475,7 @@ for (const [sessionId, avatar] of avatars) {
   pulsedScale
 );
 }
-  
+} 
   if (!activeRoom || !currentSessionId) return;
   const me = avatars.get(currentSessionId);
   if (!me) return;

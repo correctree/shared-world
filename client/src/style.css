@@ -17,3 +17,39 @@ button:disabled { opacity: .45; cursor: wait; }
 .controls { margin-top: 8px; opacity: .56; }
 .hidden { display: none; }
 @media (max-width: 640px) { .panel { left: 18px; top: 18px; width: calc(100vw - 36px); } }
+
+/* Mobile virtual joystick */
+#joystick {
+  position: fixed;
+  left: 28px;
+  bottom: 28px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  z-index: 30;
+  display: none;
+  touch-action: none;
+  user-select: none;
+}
+
+#joystickKnob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 255, 255, 0.72);
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+}
+
+/* Show joystick on touch devices */
+@media (pointer: coarse) {
+  #joystick {
+    display: block;
+  }
+}

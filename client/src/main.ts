@@ -149,7 +149,7 @@ function createAvatar(sessionId: string, player: any) {
   avatars.set(sessionId, {
     entity,
     target: new pc.Vec3(player.x, player.y, player.z),
-    name: player.name
+    name: player.name,
     名前ラベル,
   });
 

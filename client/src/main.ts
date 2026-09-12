@@ -14,6 +14,7 @@ type Avatar = {
   entity: pc.Entity;
   target: pc.Vec3;
   name: string;
+  名前ラベル: HTMLDivElement;
 };
 
 const canvas = document.querySelector<HTMLCanvasElement>("#application-canvas")!;
@@ -111,6 +112,29 @@ function avatarMaterial(sessionId: string) {
   const b = 0.25 + (((hash >> 16) & 255) / 255) * 0.55;
   return material([r, g, b]);
 }
+function 名前ラベルを作成(名前: string) {
+  const ラベル = document.createElement("div");
+  ラベル.textContent = 名前;
+
+  ラベル.style.position = "fixed";
+  ラベル.style.left = "0";
+  ラベル.style.top = "0";
+  ラベル.style.transform = "translate(-50%, -100%)";
+  ラベル.style.padding = "4px 8px";
+  ラベル.style.borderRadius = "6px";
+  ラベル.style.background = "rgba(0, 0, 0, 0.65)";
+  ラベル.style.color = "#ffffff";
+  ラベル.style.fontFamily = "Arial, sans-serif";
+  ラベル.style.fontSize = "12px";
+  ラベル.style.fontWeight = "600";
+  ラベル.style.whiteSpace = "nowrap";
+  ラベル.style.pointerEvents = "none";
+  ラベル.style.zIndex = "20";
+
+  document.body.appendChild(ラベル);
+
+  return ラベル;
+}
 
 function createAvatar(sessionId: string, player: any) {
   const entity = new pc.Entity(`Player-${sessionId}`);
@@ -120,10 +144,13 @@ function createAvatar(sessionId: string, player: any) {
   entity.render!.material = avatarMaterial(sessionId);
   app.root.addChild(entity);
 
+  const 名前ラベル = 名前ラベルを作成(player.name);
+
   avatars.set(sessionId, {
     entity,
     target: new pc.Vec3(player.x, player.y, player.z),
     name: player.name
+    名前ラベル,
   });
 
   if (sessionId === currentSessionId) localPosition.set(player.x, player.y, player.z);
@@ -133,6 +160,7 @@ function createAvatar(sessionId: string, player: any) {
 function removeAvatar(sessionId: string) {
   const avatar = avatars.get(sessionId);
   if (!avatar) return;
+  avatar.名前ラベル.remove();
   avatar.entity.destroy();
   avatars.delete(sessionId);
   updatePlayerCount();
@@ -164,6 +192,7 @@ async function enterWorld() {
         if (!avatar) return;
         avatar.target.set(player.x, player.y, player.z);
         avatar.name = player.name;
+        avatar.名前ラベル.textContent = player.name;
         if (sessionId === currentSessionId) localPosition.set(player.x, player.y, player.z);
       });
     });
@@ -194,6 +223,16 @@ app.on("update", (dt: number) => {
       pc.math.lerp(p.y, avatar.target.y, Math.min(1, dt * 10)),
       pc.math.lerp(p.z, avatar.target.z, Math.min(1, dt * 10))
     );
+  }
+  
+  for (const avatar of avatars.values()) {
+  const worldPos = avatar.entity.getPosition().clone();
+  worldPos.y += 0.65;
+
+  const screenPos = camera.camera!.worldToScreen(worldPos);
+
+  avatar.名前ラベル.style.left = `${screenPos.x}px`;
+  avatar.名前ラベル.style.top = `${screenPos.y}px`;
   }
 
   if (!activeRoom || !currentSessionId) return;

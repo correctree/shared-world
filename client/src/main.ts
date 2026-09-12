@@ -15,6 +15,7 @@ type Avatar = {
   target: pc.Vec3;
   name: string;
   名前ラベル: HTMLDivElement;
+  proximityHalo: pc.Entity;
 };
 
 const canvas = document.querySelector<HTMLCanvasElement>("#application-canvas")!;
@@ -295,7 +296,17 @@ forwardMarker.setLocalPosition(0, 0, -0.42);
 forwardMarker.render!.material = material([1.0, 0.55, 0.15]);
 
 entity.addChild(forwardMarker);
-  
+
+  // Prototype 0.5: proximity halo
+const proximityHalo = new pc.Entity(`ProximityHalo-${sessionId}`);
+proximityHalo.addComponent("render", { type: "cylinder" });
+proximityHalo.setLocalScale(1.5, 0.025, 1.5);
+proximityHalo.setLocalPosition(0, -0.48, 0);
+proximityHalo.render!.material = material([1.0, 0.45, 0.08]);
+proximityHalo.enabled = false;
+
+entity.addChild(proximityHalo);
+
   app.root.addChild(entity);
 
   const 名前ラベル = 名前ラベルを作成(player.name);
@@ -305,6 +316,7 @@ entity.addChild(forwardMarker);
     target: new pc.Vec3(player.x, player.y, player.z),
     name: player.name,
     名前ラベル,
+    proximityHalo,
   });
 
   if (sessionId === currentSessionId) localPosition.set(player.x, player.y, player.z);
@@ -417,6 +429,53 @@ camera.lookAt(
   avatar.名前ラベル.style.top = `${screenPos.y}px`;
   }
 
+  const PROXIMITY_DISTANCE = 2.5;
+
+for (const [sessionId, avatar] of avatars) {
+  let isNearSomeone = false;
+  let nearestDistance = PROXIMITY_DISTANCE;
+
+  const posA = avatar.entity.getPosition();
+
+  for (const [otherSessionId, otherAvatar] of avatars) {
+    if (sessionId === otherSessionId) continue;
+
+    const posB = otherAvatar.entity.getPosition();
+
+    const dx = posA.x - posB.x;
+    const dz = posA.z - posB.z;
+    const distance = Math.hypot(dx, dz);
+
+   if (distance <= PROXIMITY_DISTANCE) {
+  isNearSomeone = true;
+  nearestDistance = Math.min(nearestDistance, distance);
+}
+  }
+
+  avatar.proximityHalo.enabled = isNearSomeone;
+
+  if (isNearSomeone) {
+  avatar.名前ラベル.style.background = "rgba(255, 120, 40, 0.88)";
+  avatar.名前ラベル.style.transform = "translate(-50%, -115%) scale(1.08)";
+} else {
+  avatar.名前ラベル.style.background = "rgba(0, 0, 0, 0.65)";
+  avatar.名前ラベル.style.transform = "translate(-50%, -100%) scale(1)";
+}
+  
+  if (isNearSomeone) {
+  const proximity =
+    1 - nearestDistance / PROXIMITY_DISTANCE;
+
+  const haloScale = 1.5 + proximity * 1.2;
+    const pulse = 1 + Math.sin(performance.now() * 0.006) * 0.08;
+    const pulsedScale = haloScale * pulse;
+  avatar.proximityHalo.setLocalScale(
+  pulsedScale,
+  0.025,
+  pulsedScale
+);
+}
+  
   if (!activeRoom || !currentSessionId) return;
   const me = avatars.get(currentSessionId);
   if (!me) return;

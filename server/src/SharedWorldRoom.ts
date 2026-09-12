@@ -9,13 +9,19 @@ export class SharedWorldRoom extends Room<WorldState> {
   state = new WorldState();
 
   messages = {
-    move: (client: Client, payload: { x?: number; z?: number }) => {
+    move: (
+  client: Client,
+  payload: { x?: number; z?: number; rotationY?: number }
+) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
 
       const nextX = Number(payload?.x);
       const nextZ = Number(payload?.z);
       if (!Number.isFinite(nextX) || !Number.isFinite(nextZ)) return;
+  
+  const nextRotationY = Number(payload?.rotationY);
+  if (!Number.isFinite(nextRotationY)) return;
 
       const clampedX = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, nextX));
       const clampedZ = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, nextZ));
@@ -28,6 +34,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
       player.x = clampedX;
       player.z = clampedZ;
+  player.rotationY = nextRotationY;
     }
   };
 

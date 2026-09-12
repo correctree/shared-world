@@ -240,6 +240,7 @@ canvas.addEventListener(
   },
   { passive: false }
 );
+window.addEventListener("keydown", (e) => {
 if (e.key.toLowerCase() === "v") {
   firstPersonMode = !firstPersonMode;
 

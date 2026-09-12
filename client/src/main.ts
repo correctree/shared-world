@@ -449,7 +449,8 @@ camera.lookAt(
     -x * Math.sin(yawRad) +
     z * Math.cos(yawRad);
 
-    const moveAngle = Math.atan2(moveX, moveZ) * pc.math.RAD_TO_DEG;
+ const moveAngle =
+  Math.atan2(moveX, moveZ) * pc.math.RAD_TO_DEG + 180;
     me.entity.setEulerAngles(0, moveAngle, 0);
     
   localPosition.x = pc.math.clamp(

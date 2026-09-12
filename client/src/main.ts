@@ -236,7 +236,6 @@ async function enterWorld() {
         avatar.target.set(player.x, player.y, player.z);
         avatar.name = player.name;
         avatar.名前ラベル.textContent = player.name;
-        if (sessionId === currentSessionId) localPosition.set(player.x, player.y, player.z);
       });
     });
     $(room.state).players.onRemove((_player: any, sessionId: string) => removeAvatar(sessionId));

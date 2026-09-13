@@ -131,4 +131,7 @@ button:disabled { opacity: .45; cursor: wait; }
   right: max(16px, env(safe-area-inset-right)) !important;
   left: auto !important;
   bottom: auto !important;
+
+  width: auto !important;
+  max-width: none !important;
 }

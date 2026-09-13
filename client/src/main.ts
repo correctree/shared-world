@@ -515,8 +515,28 @@ const artworkInFront =
 
 artwork.style.display =
   artworkInFront ? "block" : "none";
-  
-  // Smooth remote avatars toward server-authoritative positions.
+
+let debug = document.getElementById("artwork-debug");
+
+if (!debug) {
+  debug = document.createElement("div");
+  debug.id = "artwork-debug";
+  debug.style.position = "fixed";
+  debug.style.left = "20px";
+  debug.style.bottom = "20px";
+  debug.style.padding = "8px 12px";
+  debug.style.background = "rgba(0,0,0,0.75)";
+  debug.style.color = "white";
+  debug.style.fontFamily = "monospace";
+  debug.style.fontSize = "14px";
+  debug.style.zIndex = "9999";
+  document.body.appendChild(debug);
+}
+
+debug.textContent =
+  `yaw: ${cameraYaw.toFixed(1)} / dot: ${viewDirection.dot(toArtwork).toFixed(3)} / front: ${artworkInFront}`;
+
+// Smooth remote avatars toward server-authoritative positions.
 
   for (const [sessionId, avatar] of avatars) {
     if (sessionId === currentSessionId) continue;

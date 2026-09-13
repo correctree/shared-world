@@ -112,33 +112,66 @@ artworkPlane.setEulerAngles(90, 0, 0);
 app.root.addChild(artworkPlane);
 
 // テクスチャを読み込む
-app.assets.loadFromUrl(
-  "./artworks/delete.gif",
-  "texture",
-  (err, asset) => {
-    if (err || !asset) {
-      console.error("Artwork texture load failed:", err);
-      return;
-    }
+// Animated transparent WebM artwork
+const artworkVideo = document.createElement("video");
 
-    const artworkMaterial = new pc.StandardMaterial();
+artworkVideo.src = "./artworks/delete.webm";
+artworkVideo.loop = true;
+artworkVideo.muted = true;
+artworkVideo.autoplay = true;
+artworkVideo.playsInline = true;
+artworkVideo.preload = "auto";
 
-    artworkMaterial.diffuseMap = asset.resource;
-    artworkMaterial.emissiveMap = asset.resource;
-    artworkMaterial.emissive = new pc.Color(1, 1, 1);
+artworkVideo.style.position = "absolute";
+artworkVideo.style.width = "1px";
+artworkVideo.style.height = "1px";
+artworkVideo.style.opacity = "0";
+artworkVideo.style.pointerEvents = "none";
+artworkVideo.style.zIndex = "-1000";
 
-    // 照明の影響を受けにくくする
-    artworkMaterial.useLighting = false;
+document.body.appendChild(artworkVideo);
 
-    // 表裏どちらからでも見える
-    artworkMaterial.cull = pc.CULLFACE_NONE;
+const artworkTexture = new pc.Texture(app.graphicsDevice, {
+  format: pc.PIXELFORMAT_RGBA8,
+  minFilter: pc.FILTER_LINEAR,
+  magFilter: pc.FILTER_LINEAR,
+  addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+  addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+  mipmaps: false
+});
 
-    artworkMaterial.update();
+artworkTexture.setSource(artworkVideo);
 
-    artworkPlane.render!.material = artworkMaterial;
-  }
-);
+const artworkMaterial = new pc.StandardMaterial();
 
+// 映像
+artworkMaterial.diffuseMap = artworkTexture;
+artworkMaterial.emissiveMap = artworkTexture;
+artworkMaterial.emissive = new pc.Color(1, 1, 1);
+
+// 透明背景
+artworkMaterial.opacityMap = artworkTexture;
+artworkMaterial.opacityMapChannel = "a";
+artworkMaterial.blendType = pc.BLEND_NORMAL;
+artworkMaterial.depthWrite = false;
+
+// 照明の影響を受けない
+artworkMaterial.useLighting = false;
+
+// Planeの表裏どちらからも見える
+artworkMaterial.cull = pc.CULLFACE_NONE;
+
+artworkMaterial.update();
+
+artworkPlane.render!.material = artworkMaterial;
+
+artworkVideo.addEventListener("canplay", () => {
+  artworkVideo.play().catch((error) => {
+    console.warn("Artwork video autoplay blocked:", error);
+  });
+});
+
+artworkVideo.load();
 let cameraYaw = 0;
 let cameraPitch = -35;
 let cameraDistance = 15;
@@ -448,7 +481,11 @@ roomInput.addEventListener("keydown", (e) => { if (e.key === "Enter") enterWorld
 nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") enterWorld(); });
 
 app.on("update", (dt: number) => {
-
+  
+if (artworkVideo.readyState >= 2) {
+  artworkTexture.upload();
+}
+  
   const cameraTarget =
   currentSessionId && avatars.get(currentSessionId)
     ? avatars.get(currentSessionId)!.entity.getPosition()

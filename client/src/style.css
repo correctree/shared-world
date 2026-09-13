@@ -34,6 +34,37 @@ button:disabled { opacity: .45; cursor: wait; }
   user-select: none;
 }
 
+/* Mobile first / third person view toggle */
+#viewToggle {
+  position: fixed;
+  right: 28px;
+  bottom: 36px;
+  width: 64px;
+  height: 48px;
+  margin: 0;
+  padding: 0;
+
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 12px;
+
+  background: rgba(8, 11, 16, 0.72);
+  color: #ffffff;
+
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+
+  z-index: 40;
+  display: none;
+  touch-action: manipulation;
+}
+
+@media (pointer: coarse) {
+  #viewToggle {
+    display: block;
+  }
+}
+
 #joystickKnob {
   position: absolute;
   left: 50%;

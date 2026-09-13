@@ -36,6 +36,65 @@
     + ADD ARTWORK
   </button>
 
+  <!-- Prototype 0.9 / Add Artwork Panel -->
+<section id="addArtworkPanel" class="artwork-panel hidden">
+
+  <div class="artwork-panel-header">
+    <strong>ADD ARTWORK</strong>
+    <button id="closeArtworkPanel" type="button" aria-label="Close">
+      ×
+    </button>
+  </div>
+
+  <div class="artwork-panel-body">
+
+    <div class="artwork-label">
+      MEDIA TYPE
+    </div>
+
+    <div class="artwork-media-buttons">
+      <button
+        id="webmArtworkMode"
+        class="artwork-media-button active"
+        type="button"
+      >
+        TRANSPARENT WEBM
+      </button>
+
+      <button
+        id="spriteArtworkMode"
+        class="artwork-media-button"
+        type="button"
+      >
+        SPRITE SHEET
+      </button>
+    </div>
+
+    <input
+      id="artworkFileInput"
+      type="file"
+      accept=".webm,.png,.json,.zip"
+      hidden
+    />
+
+    <button id="selectArtworkFile" type="button">
+      SELECT FILE
+    </button>
+
+    <div id="artworkFileName">
+      NO FILE SELECTED
+    </div>
+
+  </div>
+
+  <div class="artwork-panel-footer">
+    <button id="cancelArtworkButton" type="button">
+      CANCEL
+    </button>
+  </div>
+
+</section>
+  
   <!-- Mobile virtual joystick -->
 <div id="joystick">
   <div id="joystickKnob"></div>

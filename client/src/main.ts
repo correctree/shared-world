@@ -499,7 +499,7 @@ artwork.style.transform =
 
   const cameraForward = camera.forward;
 const toArtwork = artworkPosition.clone().sub(cameraPos);
-const artworkInFront = cameraForward.dot(toArtwork) < 0;
+const artworkInFront = cameraForward.dot(toArtwork) > 0;
 
 artwork.style.display = artworkInFront ? "block" : "none";
   

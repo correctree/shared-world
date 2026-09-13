@@ -93,22 +93,51 @@ camera.setPosition(0, 10, 11);
 camera.lookAt(0, 0, 0);
 app.root.addChild(camera);
 
-// Prototype 0.7: Reactive Artwork
-const artwork = document.createElement("img");
-artwork.src = "./artworks/delete.gif";
-artwork.alt = "Reactive Artwork";
-
-artwork.style.position = "fixed";
-artwork.style.width = "260px";
-artwork.style.height = "260px";
-artwork.style.objectFit = "contain";
-artwork.style.transform = "translate(-50%, -50%)";
-artwork.style.pointerEvents = "none";
-artwork.style.zIndex = "5";
-
-document.body.appendChild(artwork);
-
+// Prototype 0.7: Reactive Artwork - 3D Plane
 const artworkPosition = new pc.Vec3(4, 1.8, 0);
+
+const artworkPlane = new pc.Entity("ReactiveArtwork");
+artworkPlane.addComponent("render", {
+  type: "plane"
+});
+
+artworkPlane.setPosition(artworkPosition);
+
+// 作品サイズ
+artworkPlane.setLocalScale(3.2, 1, 3.2);
+
+// Planeを垂直に立てる
+artworkPlane.setEulerAngles(90, 0, 0);
+
+app.root.addChild(artworkPlane);
+
+// テクスチャを読み込む
+app.assets.loadFromUrl(
+  "./artworks/delete.gif",
+  "texture",
+  (err, asset) => {
+    if (err || !asset) {
+      console.error("Artwork texture load failed:", err);
+      return;
+    }
+
+    const artworkMaterial = new pc.StandardMaterial();
+
+    artworkMaterial.diffuseMap = asset.resource;
+    artworkMaterial.emissiveMap = asset.resource;
+    artworkMaterial.emissive = new pc.Color(1, 1, 1);
+
+    // 照明の影響を受けにくくする
+    artworkMaterial.useLighting = false;
+
+    // 表裏どちらからでも見える
+    artworkMaterial.cull = pc.CULLFACE_NONE;
+
+    artworkMaterial.update();
+
+    artworkPlane.render!.material = artworkMaterial;
+  }
+);
 
 let cameraYaw = 0;
 let cameraPitch = -35;
@@ -481,60 +510,6 @@ if (firstPersonMode) {
     cameraTarget.z
   );
 }
-
-  const artworkScreenPos =
-  camera.camera!.worldToScreen(artworkPosition);
-
-artwork.style.left = `${artworkScreenPos.x}px`;
-artwork.style.top = `${artworkScreenPos.y}px`;
-
-  const cameraPos = camera.getPosition();
-const artworkDistance = cameraPos.distance(artworkPosition);
-
-const artworkScale =
-  pc.math.clamp(8 / artworkDistance, 0.45, 2.0);
-
-artwork.style.transform =
-  `translate(-50%, -50%) scale(${artworkScale})`;
-
-const cameraPosNow = camera.getPosition().clone();
-
-const toArtwork = artworkPosition
-  .clone()
-  .sub(cameraPosNow)
-  .normalize();
-
-const viewDirection = new pc.Vec3(
-  -Math.sin(yawRad) * Math.cos(pitchRad),
-   Math.sin(pitchRad),
-  -Math.cos(yawRad) * Math.cos(pitchRad)
-).normalize();
-
-const artworkInFront =
-  viewDirection.dot(toArtwork) > 0;
-
-artwork.style.display =
-  artworkInFront ? "block" : "none";
-
-let debug = document.getElementById("artwork-debug");
-
-if (!debug) {
-  debug = document.createElement("div");
-  debug.id = "artwork-debug";
-  debug.style.position = "fixed";
-  debug.style.left = "20px";
-  debug.style.bottom = "20px";
-  debug.style.padding = "8px 12px";
-  debug.style.background = "rgba(0,0,0,0.75)";
-  debug.style.color = "white";
-  debug.style.fontFamily = "monospace";
-  debug.style.fontSize = "14px";
-  debug.style.zIndex = "9999";
-  document.body.appendChild(debug);
-}
-
-debug.textContent =
-  `yaw: ${cameraYaw.toFixed(1)} / dot: ${viewDirection.dot(toArtwork).toFixed(3)} / front: ${artworkInFront}`;
 
 // Smooth remote avatars toward server-authoritative positions.
 

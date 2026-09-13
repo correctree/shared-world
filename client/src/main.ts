@@ -740,6 +740,9 @@ const artworkFileInput =
 const artworkFileName =
   document.querySelector<HTMLElement>("#artworkFileName");
 
+const addArtworkToWorldButton =
+  document.querySelector<HTMLButtonElement>("#addArtworkToWorldButton");
+
 let artworkMediaType: "webm" | "sprite" = "webm";
 
 function updateArtworkModeUI() {
@@ -779,15 +782,24 @@ artworkFileInput?.addEventListener("change", () => {
   const file = artworkFileInput.files?.[0];
 
   if (!file) {
-    if (artworkFileName) {
-      artworkFileName.textContent = "NO FILE SELECTED";
-    }
-    return;
+  if (artworkFileName) {
+    artworkFileName.textContent = "NO FILE SELECTED";
   }
+
+  if (addArtworkToWorldButton) {
+    addArtworkToWorldButton.disabled = true;
+  }
+
+  return;
+}
 
   if (artworkFileName) {
     artworkFileName.textContent = file.name;
   }
+
+  if (addArtworkToWorldButton) {
+  addArtworkToWorldButton.disabled = false;
+}
 });
 
 updateArtworkModeUI();

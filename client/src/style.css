@@ -84,3 +84,42 @@ button:disabled { opacity: .45; cursor: wait; }
     display: block;
   }
 }
+
+#addArtworkButton {
+  position: fixed;
+
+  top: max(16px, env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
+
+  min-height: 48px;
+  padding: 0 18px;
+
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 12px;
+
+  background: rgba(15, 18, 25, 0.88);
+  color: #ffffff;
+
+  font-family: Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+
+  cursor: pointer;
+  z-index: 50;
+
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#addArtworkButton:active {
+  transform: scale(0.96);
+}
+
+@media (max-width: 700px) {
+  #addArtworkButton {
+    min-height: 52px;
+    padding: 0 16px;
+    font-size: 12px;
+  }
+}

@@ -30,6 +30,7 @@ const playersLabel = document.querySelector<HTMLElement>("#playersLabel")!;
 
 const joystick = document.querySelector<HTMLDivElement>("#joystick")!;
 const joystickKnob = document.querySelector<HTMLDivElement>("#joystickKnob")!;
+const viewToggle = document.querySelector<HTMLButtonElement>("#viewToggle")!;
 
 const app = new pc.Application(canvas, {
   graphicsDeviceOptions: { alpha: false, antialias: true }
@@ -100,6 +101,19 @@ let lastMouseX = 0;
 let lastMouseY = 0;
 let cameraPointerId: number | null = null;
 let firstPersonMode = false;
+
+function toggleViewMode() {
+  firstPersonMode = !firstPersonMode;
+
+  if (firstPersonMode) {
+    cameraPitch = 0;
+    viewToggle.textContent = "3RD";
+  } else {
+    cameraPitch = -35;
+    viewToggle.textContent = "1ST";
+  }
+}
+
 const avatars = new Map<string, Avatar>();
 const keys = new Set<string>();
 let currentSessionId = "";
@@ -242,14 +256,7 @@ canvas.addEventListener(
 );
 window.addEventListener("keydown", (e) => {
 if (e.key.toLowerCase() === "v") {
-  firstPersonMode = !firstPersonMode;
-
-  if (firstPersonMode) {
-    cameraPitch = 0;
-  } else {
-    cameraPitch = -35;
-  }
-
+  toggleViewMode();
   return;
 }
   if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(e.key.toLowerCase())) {
@@ -258,6 +265,10 @@ if (e.key.toLowerCase() === "v") {
   }
 });
 window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+
+viewToggle.addEventListener("click", () => {
+  toggleViewMode();
+});
 
 function avatarMaterial(sessionId: string) {
   if (sessionId === currentSessionId) return material([0.94, 0.94, 0.96]);

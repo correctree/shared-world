@@ -720,3 +720,74 @@ cancelArtworkButton?.addEventListener(
   "click",
   closeArtworkPanelUI
 );
+
+// =========================================================
+// Prototype 0.9 / ARTWORK MEDIA TYPE + FILE SELECT
+// =========================================================
+
+const webmArtworkMode =
+  document.querySelector<HTMLButtonElement>("#webmArtworkMode");
+
+const spriteArtworkMode =
+  document.querySelector<HTMLButtonElement>("#spriteArtworkMode");
+
+const selectArtworkFile =
+  document.querySelector<HTMLButtonElement>("#selectArtworkFile");
+
+const artworkFileInput =
+  document.querySelector<HTMLInputElement>("#artworkFileInput");
+
+const artworkFileName =
+  document.querySelector<HTMLElement>("#artworkFileName");
+
+let artworkMediaType: "webm" | "sprite" = "webm";
+
+function updateArtworkModeUI() {
+  const isWebM = artworkMediaType === "webm";
+
+  webmArtworkMode?.classList.toggle("active", isWebM);
+  spriteArtworkMode?.classList.toggle("active", !isWebM);
+
+  if (artworkFileInput) {
+    artworkFileInput.value = "";
+
+    artworkFileInput.accept = isWebM
+      ? ".webm,video/webm"
+      : ".zip,application/zip";
+  }
+
+  if (artworkFileName) {
+    artworkFileName.textContent = "NO FILE SELECTED";
+  }
+}
+
+webmArtworkMode?.addEventListener("click", () => {
+  artworkMediaType = "webm";
+  updateArtworkModeUI();
+});
+
+spriteArtworkMode?.addEventListener("click", () => {
+  artworkMediaType = "sprite";
+  updateArtworkModeUI();
+});
+
+selectArtworkFile?.addEventListener("click", () => {
+  artworkFileInput?.click();
+});
+
+artworkFileInput?.addEventListener("change", () => {
+  const file = artworkFileInput.files?.[0];
+
+  if (!file) {
+    if (artworkFileName) {
+      artworkFileName.textContent = "NO FILE SELECTED";
+    }
+    return;
+  }
+
+  if (artworkFileName) {
+    artworkFileName.textContent = file.name;
+  }
+});
+
+updateArtworkModeUI();

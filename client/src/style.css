@@ -123,3 +123,12 @@ button:disabled { opacity: .45; cursor: wait; }
     font-size: 12px;
   }
 }
+
+/* Prototype 0.9 — ADD ARTWORK position override */
+#addArtworkButton {
+  position: fixed !important;
+  top: max(16px, env(safe-area-inset-top)) !important;
+  right: max(16px, env(safe-area-inset-right)) !important;
+  left: auto !important;
+  bottom: auto !important;
+}

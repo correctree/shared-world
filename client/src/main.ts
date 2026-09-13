@@ -499,14 +499,22 @@ artwork.style.transform =
 
 const cameraPosNow = camera.getPosition().clone();
 
-const toArtwork = artworkPosition.clone().sub(cameraPosNow).normalize();
+const toArtwork = artworkPosition
+  .clone()
+  .sub(cameraPosNow)
+  .normalize();
 
-const cameraForward =
-  camera.getRotation().transformVector(new pc.Vec3(0, 0, -1));
+const viewDirection = new pc.Vec3(
+  -Math.sin(yawRad) * Math.cos(pitchRad),
+   Math.sin(pitchRad),
+  -Math.cos(yawRad) * Math.cos(pitchRad)
+).normalize();
 
-const artworkInFront = cameraForward.dot(toArtwork) > 0;
+const artworkInFront =
+  viewDirection.dot(toArtwork) > 0;
 
-artwork.style.display = artworkInFront ? "block" : "none";
+artwork.style.display =
+  artworkInFront ? "block" : "none";
   
   // Smooth remote avatars toward server-authoritative positions.
 

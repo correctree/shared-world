@@ -684,3 +684,39 @@ for (const [sessionId, avatar] of avatars) {
     }
   }
 });
+
+// =========================================================
+// Prototype 0.9 / ADD ARTWORK PANEL
+// =========================================================
+
+const addArtworkButton =
+  document.querySelector<HTMLButtonElement>("#addArtworkButton");
+
+const addArtworkPanel =
+  document.querySelector<HTMLElement>("#addArtworkPanel");
+
+const closeArtworkPanel =
+  document.querySelector<HTMLButtonElement>("#closeArtworkPanel");
+
+const cancelArtworkButton =
+  document.querySelector<HTMLButtonElement>("#cancelArtworkButton");
+
+function openArtworkPanel() {
+  addArtworkPanel?.classList.remove("hidden");
+}
+
+function closeArtworkPanelUI() {
+  addArtworkPanel?.classList.add("hidden");
+}
+
+addArtworkButton?.addEventListener("click", openArtworkPanel);
+
+closeArtworkPanel?.addEventListener(
+  "click",
+  closeArtworkPanelUI
+);
+
+cancelArtworkButton?.addEventListener(
+  "click",
+  closeArtworkPanelUI
+);

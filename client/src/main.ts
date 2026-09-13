@@ -487,6 +487,21 @@ if (firstPersonMode) {
 
 artwork.style.left = `${artworkScreenPos.x}px`;
 artwork.style.top = `${artworkScreenPos.y}px`;
+
+  const cameraPos = camera.getPosition();
+const artworkDistance = cameraPos.distance(artworkPosition);
+
+const artworkScale =
+  pc.math.clamp(8 / artworkDistance, 0.45, 2.0);
+
+artwork.style.transform =
+  `translate(-50%, -50%) scale(${artworkScale})`;
+
+  const cameraForward = camera.forward;
+const toArtwork = artworkPosition.clone().sub(cameraPos);
+const artworkInFront = cameraForward.dot(toArtwork) < 0;
+
+artwork.style.display = artworkInFront ? "block" : "none";
   
   // Smooth remote avatars toward server-authoritative positions.
 

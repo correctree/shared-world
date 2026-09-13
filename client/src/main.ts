@@ -111,6 +111,8 @@ artworkPlane.setEulerAngles(90, 0, 0);
 
 app.root.addChild(artworkPlane);
 
+artworkPlane.render!.castShadows = true;
+
 // テクスチャを読み込む
 // Animated transparent WebM artwork
 const artworkVideo = document.createElement("video");
@@ -152,8 +154,11 @@ artworkMaterial.emissive = new pc.Color(1, 1, 1);
 // 透明背景
 artworkMaterial.opacityMap = artworkTexture;
 artworkMaterial.opacityMapChannel = "a";
+artworkMaterial.alphaTest = 0.12;
 artworkMaterial.blendType = pc.BLEND_NORMAL;
 artworkMaterial.depthWrite = false;
+// 透明部分を影にも反映
+artworkMaterial.alphaTest = 0.12;
 
 // 照明の影響を受けない
 artworkMaterial.useLighting = false;

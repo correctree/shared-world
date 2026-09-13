@@ -497,9 +497,10 @@ const artworkScale =
 artwork.style.transform =
   `translate(-50%, -50%) scale(${artworkScale})`;
 
-  const cameraForward = camera.forward;
-const toArtwork = artworkPosition.clone().sub(cameraPos);
-const artworkInFront = cameraForward.dot(toArtwork) > 0;
+const viewMatrix = camera.camera!.viewMatrix;
+const artworkCameraSpace = viewMatrix.transformPoint(artworkPosition);
+
+const artworkInFront = artworkCameraSpace.z < 0;
 
 artwork.style.display = artworkInFront ? "block" : "none";
   

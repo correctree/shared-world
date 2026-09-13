@@ -93,6 +93,23 @@ camera.setPosition(0, 10, 11);
 camera.lookAt(0, 0, 0);
 app.root.addChild(camera);
 
+// Prototype 0.7: Reactive Artwork
+const artwork = document.createElement("img");
+artwork.src = "./artworks/delete.gif";
+artwork.alt = "Reactive Artwork";
+
+artwork.style.position = "fixed";
+artwork.style.width = "260px";
+artwork.style.height = "260px";
+artwork.style.objectFit = "contain";
+artwork.style.transform = "translate(-50%, -50%)";
+artwork.style.pointerEvents = "none";
+artwork.style.zIndex = "5";
+
+document.body.appendChild(artwork);
+
+const artworkPosition = new pc.Vec3(4, 1.8, 0);
+
 let cameraYaw = 0;
 let cameraPitch = -35;
 let cameraDistance = 15;
@@ -465,6 +482,12 @@ if (firstPersonMode) {
   );
 }
 
+  const artworkScreenPos =
+  camera.camera!.worldToScreen(artworkPosition);
+
+artwork.style.left = `${artworkScreenPos.x}px`;
+artwork.style.top = `${artworkScreenPos.y}px`;
+  
   // Smooth remote avatars toward server-authoritative positions.
 
   for (const [sessionId, avatar] of avatars) {

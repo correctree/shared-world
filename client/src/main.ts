@@ -595,37 +595,53 @@ function clearImportedArtwork() {
 
 let importedSpriteImageURL: string | null = null;
 let importedSpriteMeta: any = null;
+let importedSpriteImage: HTMLImageElement | null = null;
+let importedSpriteCanvas: HTMLCanvasElement | null = null;
+let importedSpriteContext: CanvasRenderingContext2D | null = null;
+let importedSpriteFrame = 0;
+let importedSpriteFrameCount = 1;
+let importedSpriteColumns = 1;
+let importedSpriteRows = 1;
+let importedSpriteFrameWidth = 1;
+let importedSpriteFrameHeight = 1;
+let importedSpriteFPS = 4;
+let importedSpriteElapsed = 0;
+let importedSpritePlaying = false;
 
-async function loadSpriteZipPackage(file: File) {
+function clearImportedSpriteResources() {
+  importedSpritePlaying = false;
+  importedSpriteElapsed = 0;
+  importedSpriteFrame = 0;
+
+  importedSpriteImage = null;
+  importedSpriteCanvas = null;
+  importedSpriteContext = null;
+  importedSpriteMeta = null;
 
   if (importedSpriteImageURL) {
     URL.revokeObjectURL(importedSpriteImageURL);
     importedSpriteImageURL = null;
   }
+}
 
-  importedSpriteMeta = null;
+async function loadSpriteZipPackage(file: File) {
+
+  clearImportedSpriteResources();
 
   const zip = await JSZip.loadAsync(file);
 
-  const entries =
-  Object.values(zip.files);
+  const entries = Object.values(zip.files);
 
-const pngEntry =
-  entries.find(
+  const pngEntry = entries.find(
     (entry) =>
       !entry.dir &&
-      entry.name
-        .toLowerCase()
-        .endsWith(".png")
+      entry.name.toLowerCase().endsWith(".png")
   );
 
-const jsonEntry =
-  entries.find(
+  const jsonEntry = entries.find(
     (entry) =>
       !entry.dir &&
-      entry.name
-        .toLowerCase()
-        .endsWith(".json")
+      entry.name.toLowerCase().endsWith(".json")
   );
 
   if (!pngEntry) {
@@ -667,7 +683,167 @@ const jsonEntry =
   );
 }
 
+function drawSpriteFrame(frameIndex: number) {
+  if (
+    !importedSpriteImage ||
+    !importedSpriteCanvas ||
+    !importedSpriteContext
+  ) {
+    return;
+  }
+
+  const safeFrame =
+    ((frameIndex % importedSpriteFrameCount) + importedSpriteFrameCount) %
+    importedSpriteFrameCount;
+
+  const column = safeFrame % importedSpriteColumns;
+  const row = Math.floor(safeFrame / importedSpriteColumns);
+
+  const sourceX = column * importedSpriteFrameWidth;
+  const sourceY = row * importedSpriteFrameHeight;
+
+  importedSpriteContext.clearRect(
+    0,
+    0,
+    importedSpriteCanvas.width,
+    importedSpriteCanvas.height
+  );
+
+  importedSpriteContext.drawImage(
+    importedSpriteImage,
+    sourceX,
+    sourceY,
+    importedSpriteFrameWidth,
+    importedSpriteFrameHeight,
+    0,
+    0,
+    importedSpriteCanvas.width,
+    importedSpriteCanvas.height
+  );
+}
+
+async function prepareSpriteAnimation() {
+  if (!importedSpriteImageURL || !importedSpriteMeta) {
+    throw new Error("Sprite PNGまたはJSONがありません。");
+  }
+
+  const image = new Image();
+
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () =>
+      reject(new Error("Sprite PNGの読み込みに失敗しました。"));
+    image.src = importedSpriteImageURL!;
+  });
+
+  importedSpriteImage = image;
+
+  importedSpriteFrameWidth = Number(importedSpriteMeta.frameWidth);
+  importedSpriteFrameHeight = Number(importedSpriteMeta.frameHeight);
+  importedSpriteColumns = Number(importedSpriteMeta.columns);
+  importedSpriteRows = Number(importedSpriteMeta.rows);
+
+  const declaredFrames = Number(importedSpriteMeta.frames);
+  const maxFrames = importedSpriteColumns * importedSpriteRows;
+  importedSpriteFrameCount = Math.max(1, Math.min(declaredFrames, maxFrames));
+
+  const declaredFPS = Number(importedSpriteMeta.fps);
+  const durationMs = Number(importedSpriteMeta.duration);
+
+  importedSpriteFPS =
+    declaredFPS > 0
+      ? declaredFPS
+      : durationMs > 0
+        ? importedSpriteFrameCount / (durationMs / 1000)
+        : 4;
+
+  if (
+    !Number.isFinite(importedSpriteFrameWidth) ||
+    importedSpriteFrameWidth <= 0 ||
+    !Number.isFinite(importedSpriteFrameHeight) ||
+    importedSpriteFrameHeight <= 0 ||
+    !Number.isFinite(importedSpriteColumns) ||
+    importedSpriteColumns <= 0 ||
+    !Number.isFinite(importedSpriteRows) ||
+    importedSpriteRows <= 0 ||
+    !Number.isFinite(importedSpriteFrameCount) ||
+    importedSpriteFrameCount <= 0 ||
+    !Number.isFinite(importedSpriteFPS) ||
+    importedSpriteFPS <= 0
+  ) {
+    throw new Error("Sprite JSONの情報が不足しています。");
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = importedSpriteFrameWidth;
+  canvas.height = importedSpriteFrameHeight;
+
+  const context = canvas.getContext("2d", { alpha: true });
+
+  if (!context) {
+    throw new Error("Sprite Canvasを作成できません。");
+  }
+
+  context.imageSmoothingEnabled = true;
+
+  importedSpriteCanvas = canvas;
+  importedSpriteContext = context;
+  importedSpriteFrame = 0;
+  importedSpriteElapsed = 0;
+  importedSpritePlaying = true;
+
+  drawSpriteFrame(0);
+}
+
+function addSpriteArtworkToWorld() {
+  if (!importedSpriteCanvas) {
+    throw new Error("Sprite Canvasが準備されていません。");
+  }
+
+  clearImportedArtwork();
+
+  const texture = new pc.Texture(app.graphicsDevice, {
+    format: pc.PIXELFORMAT_RGBA8,
+    minFilter: pc.FILTER_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+    mipmaps: false
+  });
+
+  texture.setSource(importedSpriteCanvas);
+  importedArtworkTexture = texture;
+
+  const spriteMaterial = new pc.StandardMaterial();
+  spriteMaterial.diffuseMap = texture;
+  spriteMaterial.emissiveMap = texture;
+  spriteMaterial.emissive = new pc.Color(1, 1, 1);
+  spriteMaterial.opacityMap = texture;
+  spriteMaterial.opacityMapChannel = "a";
+  spriteMaterial.blendType = pc.BLEND_NORMAL;
+  spriteMaterial.depthWrite = false;
+  spriteMaterial.alphaTest = 0.12;
+  spriteMaterial.useLighting = false;
+  spriteMaterial.cull = pc.CULLFACE_NONE;
+  spriteMaterial.update();
+
+  const plane = new pc.Entity("ImportedSpriteArtwork");
+  plane.addComponent("render", { type: "plane" });
+  plane.render!.material = spriteMaterial;
+  plane.render!.castShadows = true;
+  plane.setPosition(0, 1.8, -3);
+  plane.setLocalScale(3.2, 1, 3.2);
+  plane.setEulerAngles(90, 0, 0);
+  app.root.addChild(plane);
+
+  importedArtworkEntity = plane;
+  importedArtworkTexture.upload();
+
+  console.log("Sprite artwork added.");
+}
+
 async function addWebMArtworkToWorld(file: File) {
+  clearImportedSpriteResources();
   clearImportedArtwork();
   importedArtworkObjectURL = URL.createObjectURL(file);
 
@@ -814,6 +990,7 @@ placeArtworkButton?.addEventListener("click", () => {
 
 cancelPlacementButton?.addEventListener("click", () => {
   clearImportedArtwork();
+  clearImportedSpriteResources();
   artworkPlacementPanel?.classList.add("hidden");
 });
 
@@ -835,41 +1012,32 @@ addArtworkToWorldButton?.addEventListener("click", async () => {
       console.error("Artwork import failed:", error);
       addArtworkToWorldButton.disabled = false;
     }
- } else {
+  } else {
+    try {
+      addArtworkToWorldButton.disabled = true;
 
-  try {
+      await loadSpriteZipPackage(file);
+      await prepareSpriteAnimation();
+      addSpriteArtworkToWorld();
 
-    addArtworkToWorldButton.disabled = true;
+      if (artworkFileName) {
+        artworkFileName.textContent = `${file.name} / READY`;
+      }
 
-    await loadSpriteZipPackage(file);
+      closeArtworkPanelUI();
+      openPlacementEditor();
 
-    if (artworkFileName) {
-      artworkFileName.textContent =
-        `${file.name} / READY`;
+      console.log("Sprite package loaded successfully.");
+    } catch (error) {
+      console.error("Sprite ZIP import failed:", error);
+
+      if (artworkFileName) {
+        artworkFileName.textContent = "SPRITE ZIP ERROR";
+      }
+    } finally {
+      addArtworkToWorldButton.disabled = false;
     }
-
-    console.log(
-      "Sprite package loaded successfully."
-    );
-
-  } catch (error) {
-
-    console.error(
-      "Sprite ZIP import failed:",
-      error
-    );
-
-    if (artworkFileName) {
-      artworkFileName.textContent =
-        "SPRITE ZIP ERROR";
-    }
-
-  } finally {
-
-    addArtworkToWorldButton.disabled =
-      false;
   }
-}
 });
 
 updateArtworkModeUI();
@@ -890,6 +1058,27 @@ app.on("update", (dt: number) => {
     importedArtworkVideo.readyState >= 2
   ) {
     importedArtworkTexture.upload();
+  }
+
+  // Prototype 0.9 / Stage 3⑤-2 / Sprite Sheet Animation
+  if (
+    importedSpritePlaying &&
+    importedSpriteCanvas &&
+    importedArtworkTexture &&
+    !importedArtworkVideo &&
+    importedSpriteFrameCount > 0
+  ) {
+    importedSpriteElapsed += dt;
+
+    const frameDuration = 1 / importedSpriteFPS;
+
+    while (importedSpriteElapsed >= frameDuration) {
+      importedSpriteElapsed -= frameDuration;
+      importedSpriteFrame =
+        (importedSpriteFrame + 1) % importedSpriteFrameCount;
+      drawSpriteFrame(importedSpriteFrame);
+      importedArtworkTexture.upload();
+    }
   }
 
   const cameraTarget =

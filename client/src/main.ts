@@ -839,9 +839,41 @@ addArtworkToWorldButton?.addEventListener("click", async () => {
       console.error("Artwork import failed:", error);
       addArtworkToWorldButton.disabled = false;
     }
-  } else {
-    console.log("Sprite Sheet ZIP import will be added in the next step.");
+ } else {
+
+  try {
+
+    addArtworkToWorldButton.disabled = true;
+
+    await loadSpriteZipPackage(file);
+
+    if (artworkFileName) {
+      artworkFileName.textContent =
+        `${file.name} / READY`;
+    }
+
+    console.log(
+      "Sprite package loaded successfully."
+    );
+
+  } catch (error) {
+
+    console.error(
+      "Sprite ZIP import failed:",
+      error
+    );
+
+    if (artworkFileName) {
+      artworkFileName.textContent =
+        "SPRITE ZIP ERROR";
+    }
+
+  } finally {
+
+    addArtworkToWorldButton.disabled =
+      false;
   }
+}
 });
 
 updateArtworkModeUI();

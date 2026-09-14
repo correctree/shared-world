@@ -490,6 +490,15 @@ app.on("update", (dt: number) => {
 if (artworkVideo.readyState >= 2) {
   artworkTexture.upload();
 }
+
+ // Prototype 0.9 / imported artwork video update
+  if (
+    importedArtworkVideo &&
+    importedArtworkTexture &&
+    importedArtworkVideo.readyState >= 2
+  ) {
+    importedArtworkTexture.upload();
+  }
   
   const cameraTarget =
   currentSessionId && avatars.get(currentSessionId)
@@ -803,3 +812,172 @@ artworkFileInput?.addEventListener("change", () => {
 });
 
 updateArtworkModeUI();
+
+addArtworkToWorldButton?.addEventListener(
+  "click",
+  async () => {
+
+    const file =
+      artworkFileInput?.files?.[0];
+
+    if (!file) return;
+
+
+    if (artworkMediaType === "webm") {
+
+      await addWebMArtworkToWorld(file);
+
+      closeArtworkPanelUI();
+
+    } else {
+
+      console.log(
+        "Sprite Sheet import will be added next."
+      );
+
+    }
+  }
+);
+
+// =========================================================
+// Prototype 0.9 / ADD WEBM ARTWORK TO WORLD
+// =========================================================
+
+let importedArtworkEntity: pc.Entity | null = null;
+let importedArtworkVideo: HTMLVideoElement | null = null;
+let importedArtworkTexture: pc.Texture | null = null;
+let importedArtworkObjectURL: string | null = null;
+
+async function addWebMArtworkToWorld(file: File) {
+
+  // 以前に仮配置した作品があれば削除
+  if (importedArtworkEntity) {
+    importedArtworkEntity.destroy();
+    importedArtworkEntity = null;
+  }
+
+  if (importedArtworkVideo) {
+    importedArtworkVideo.pause();
+    importedArtworkVideo.src = "";
+    importedArtworkVideo = null;
+  }
+
+  if (importedArtworkTexture) {
+    importedArtworkTexture.destroy();
+    importedArtworkTexture = null;
+  }
+
+  if (importedArtworkObjectURL) {
+    URL.revokeObjectURL(importedArtworkObjectURL);
+    importedArtworkObjectURL = null;
+  }
+
+
+  // -------------------------------------------------------
+  // WebM VIDEO
+  // -------------------------------------------------------
+
+  importedArtworkObjectURL = URL.createObjectURL(file);
+
+  const video = document.createElement("video");
+
+  video.src = importedArtworkObjectURL;
+  video.loop = true;
+  video.muted = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.preload = "auto";
+
+  importedArtworkVideo = video;
+
+  await video.play().catch(() => {
+    console.log("WebM autoplay waiting for user interaction.");
+  });
+
+
+  // -------------------------------------------------------
+  // PlayCanvas Texture
+  // -------------------------------------------------------
+
+  const texture = new pc.Texture(app.graphicsDevice, {
+    format: pc.PIXELFORMAT_RGBA8,
+    minFilter: pc.FILTER_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+    mipmaps: false
+  });
+
+  texture.setSource(video);
+
+  importedArtworkTexture = texture;
+
+
+  // -------------------------------------------------------
+  // Material
+  // -------------------------------------------------------
+
+  const material = new pc.StandardMaterial();
+
+  material.diffuseMap = texture;
+  material.emissiveMap = texture;
+
+  material.emissive = new pc.Color(1, 1, 1);
+
+  material.opacityMap = texture;
+  material.opacityMapChannel = "a";
+
+  material.blendType = pc.BLEND_NORMAL;
+  material.depthWrite = false;
+
+  material.alphaTest = 0.12;
+
+  material.useLighting = false;
+
+  material.cull = pc.CULLFACE_NONE;
+
+  material.update();
+
+
+  // -------------------------------------------------------
+  // Plane
+  // -------------------------------------------------------
+
+  const plane = new pc.Entity("ImportedArtwork");
+
+  plane.addComponent("render", {
+    type: "plane"
+  });
+
+  plane.render!.material = material;
+  plane.render!.castShadows = true;
+
+
+  // -------------------------------------------------------
+  // TEMPORARY POSITION
+  // -------------------------------------------------------
+
+  plane.setPosition(0, 1.8, -3);
+
+  plane.setLocalScale(
+    3.2,
+    1,
+    3.2
+  );
+
+  plane.setEulerAngles(
+    90,
+    0,
+    0
+  );
+
+  app.root.addChild(plane);
+
+  importedArtworkEntity = plane;
+
+
+  console.log(
+    "Artwork added:",
+    file.name
+  );
+}

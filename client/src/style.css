@@ -329,3 +329,164 @@ button:disabled { opacity: .45; cursor: wait; }
     min-height: 56px;
   }
 }
+
+/* =========================================================
+   Prototype 0.9 / ARTWORK PLACEMENT EDITOR
+   ========================================================= */
+
+.artwork-placement-panel {
+  position: fixed;
+
+  top: 90px;
+  right: 16px;
+
+  width: min(340px, calc(100vw - 32px));
+
+  background: rgba(12, 16, 22, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 16px;
+
+  color: #fff;
+
+  z-index: 9997;
+
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+
+  overflow: hidden;
+}
+
+.artwork-placement-panel.hidden {
+  display: none;
+}
+
+.artwork-placement-header {
+  padding: 16px 18px;
+
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.artwork-placement-header strong {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+
+.artwork-placement-body {
+  padding: 18px;
+}
+
+.placement-section-title {
+  margin-top: 16px;
+  margin-bottom: 8px;
+
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+
+  color: rgba(255, 255, 255, 0.52);
+}
+
+.placement-section-title:first-child {
+  margin-top: 0;
+}
+
+.placement-row {
+  display: grid;
+  grid-template-columns: 24px 44px 1fr 44px;
+  align-items: center;
+  gap: 8px;
+
+  margin-bottom: 8px;
+}
+
+.placement-row button {
+  width: 44px !important;
+  min-width: 44px;
+  height: 44px;
+
+  padding: 0;
+
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+
+  font-size: 18px;
+
+  touch-action: manipulation;
+}
+
+.placement-row span:nth-child(3) {
+  text-align: center;
+
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+#artworkScale,
+#artworkRotationY {
+  width: 100%;
+
+  touch-action: pan-x;
+}
+
+.placement-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 10px;
+
+  margin-top: 22px;
+}
+
+#cancelPlacementButton,
+#placeArtworkButton {
+  min-height: 48px;
+
+  border-radius: 10px;
+
+  font-size: 12px;
+  font-weight: 800;
+
+  touch-action: manipulation;
+}
+
+#cancelPlacementButton {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+#placeArtworkButton {
+  background: #fff;
+  color: #0b0f14;
+
+  border: none;
+}
+
+
+/* iPhone / iPad */
+@media (max-width: 700px) {
+  .artwork-placement-panel {
+    top: auto;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    left: 12px;
+
+    width: auto;
+
+    border-radius: 18px;
+  }
+
+  .placement-row button {
+    width: 48px !important;
+    min-width: 48px;
+    height: 48px;
+  }
+
+  #cancelPlacementButton,
+  #placeArtworkButton {
+    min-height: 54px;
+  }
+}

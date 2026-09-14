@@ -79,6 +79,51 @@ const artworkRotationY = document.querySelector<HTMLInputElement>("#artworkRotat
 const cancelPlacementButton = document.querySelector<HTMLButtonElement>("#cancelPlacementButton");
 const placeArtworkButton = document.querySelector<HTMLButtonElement>("#placeArtworkButton");
 
+
+// Prototype 0.10 / Stage 3 / GLB Animation UI
+// Added at runtime so index.html / style.css do not need to change.
+const glbAnimationPanel = document.createElement("section");
+glbAnimationPanel.id = "glbAnimationPanel";
+glbAnimationPanel.style.display = "none";
+glbAnimationPanel.style.marginTop = "14px";
+glbAnimationPanel.style.padding = "12px";
+glbAnimationPanel.style.border = "1px solid rgba(255,255,255,0.18)";
+glbAnimationPanel.style.borderRadius = "10px";
+glbAnimationPanel.style.background = "rgba(0,0,0,0.18)";
+glbAnimationPanel.innerHTML = `
+  <div style="font-size:12px;letter-spacing:.08em;opacity:.72;margin-bottom:8px;">
+    ANIMATION
+  </div>
+  <select id="glbAnimationSelect"
+    style="width:100%;box-sizing:border-box;margin-bottom:10px;padding:8px;border-radius:7px;">
+  </select>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <button id="glbAnimationPlay" type="button">▶ PLAY</button>
+    <button id="glbAnimationStop" type="button">■ STOP</button>
+    <label style="display:flex;gap:6px;align-items:center;font-size:12px;">
+      <input id="glbAnimationLoop" type="checkbox" checked>
+      LOOP
+    </label>
+  </div>
+  <div id="glbAnimationStatus"
+    style="font-size:11px;opacity:.65;margin-top:8px;word-break:break-word;">
+    NO ANIMATION
+  </div>
+`;
+
+artworkPlacementPanel?.appendChild(glbAnimationPanel);
+
+const glbAnimationSelect =
+  glbAnimationPanel.querySelector<HTMLSelectElement>("#glbAnimationSelect")!;
+const glbAnimationPlay =
+  glbAnimationPanel.querySelector<HTMLButtonElement>("#glbAnimationPlay")!;
+const glbAnimationStop =
+  glbAnimationPanel.querySelector<HTMLButtonElement>("#glbAnimationStop")!;
+const glbAnimationLoop =
+  glbAnimationPanel.querySelector<HTMLInputElement>("#glbAnimationLoop")!;
+const glbAnimationStatus =
+  glbAnimationPanel.querySelector<HTMLElement>("#glbAnimationStatus")!;
+
 // =========================================================
 // PLAYCANVAS
 // =========================================================
@@ -614,12 +659,191 @@ let importedGLBAsset: pc.Asset | null = null;
 let importedGLBObjectURL: string | null = null;
 let importedGLBModelEntity: pc.Entity | null = null;
 
+
+// Prototype 0.10 / Stage 3 / GLB Animation state
+type ImportedGLBAnimationClip = {
+  displayName: string;
+  stateName: string;
+  track: any;
+};
+
+let importedGLBAnimationClips: ImportedGLBAnimationClip[] = [];
+let importedGLBSelectedAnimation = 0;
+let importedGLBAnimationPlaying = false;
+
+function resetGLBAnimationUI() {
+  importedGLBAnimationClips = [];
+  importedGLBSelectedAnimation = 0;
+  importedGLBAnimationPlaying = false;
+
+  glbAnimationSelect.innerHTML = "";
+  glbAnimationLoop.checked = true;
+  glbAnimationPlay.disabled = true;
+  glbAnimationStop.disabled = true;
+  glbAnimationStatus.textContent = "NO ANIMATION";
+  glbAnimationPanel.style.display = "none";
+}
+
+function makeAnimationStateName(index: number) {
+  // PlayCanvas uses dots in state names as blend-tree path separators.
+  // Keep the original clip name only for display and use a safe internal state name.
+  return `GLB_Animation_${index + 1}`;
+}
+
+function setupGLBAnimations(modelEntity: pc.Entity, containerResource: any) {
+  resetGLBAnimationUI();
+
+  const tracks = Array.isArray(containerResource?.animations)
+    ? (containerResource.animations as any[])
+    : [];
+
+  if (tracks.length === 0) {
+    glbAnimationPanel.style.display = "block";
+    glbAnimationStatus.textContent = "NO ANIMATION CLIP DETECTED";
+    return;
+  }
+
+  modelEntity.addComponent("anim", {
+    activate: false,
+    speed: 1
+  });
+
+  const anim = modelEntity.anim;
+  if (!anim) {
+    glbAnimationPanel.style.display = "block";
+    glbAnimationStatus.textContent = "ANIMATION COMPONENT ERROR";
+    return;
+  }
+
+  importedGLBAnimationClips = tracks.map((track, index) => {
+    const rawName = String((track as any).name || `Animation ${index + 1}`);
+    const stateName = makeAnimationStateName(index);
+
+    anim.assignAnimation(
+      stateName,
+      track,
+      undefined,
+      1,
+      glbAnimationLoop.checked
+    );
+
+    return {
+      displayName: rawName,
+      stateName,
+      track
+    };
+  });
+
+  for (const clip of importedGLBAnimationClips) {
+    const option = document.createElement("option");
+    option.value = clip.stateName;
+    option.textContent = clip.displayName;
+    glbAnimationSelect.appendChild(option);
+  }
+
+  importedGLBSelectedAnimation = 0;
+  glbAnimationSelect.selectedIndex = 0;
+  glbAnimationPlay.disabled = false;
+  glbAnimationStop.disabled = false;
+  glbAnimationStatus.textContent =
+    `${importedGLBAnimationClips.length} CLIP${importedGLBAnimationClips.length === 1 ? "" : "S"} DETECTED`;
+  glbAnimationPanel.style.display = "block";
+
+  // Keep the model stopped until the user presses PLAY.
+  const layer = anim.baseLayer;
+  if (layer) {
+    layer.play(importedGLBAnimationClips[0].stateName);
+    layer.pause();
+    layer.activeStateCurrentTime = 0;
+  }
+
+  console.log(
+    "GLB animation clips:",
+    importedGLBAnimationClips.map((clip) => clip.displayName)
+  );
+}
+
+function selectedGLBAnimationClip() {
+  return importedGLBAnimationClips[importedGLBSelectedAnimation] || null;
+}
+
+function playSelectedGLBAnimation() {
+  const model = importedGLBModelEntity;
+  const clip = selectedGLBAnimationClip();
+  const anim = model?.anim;
+  const layer = anim?.baseLayer;
+
+  if (!anim || !layer || !clip) return;
+
+  // Re-assign so the LOOP checkbox is always reflected by the active clip.
+  anim.assignAnimation(
+    clip.stateName,
+    clip.track,
+    undefined,
+    1,
+    glbAnimationLoop.checked
+  );
+
+  layer.play(clip.stateName);
+  importedGLBAnimationPlaying = true;
+  glbAnimationStatus.textContent =
+    `PLAYING: ${clip.displayName}${glbAnimationLoop.checked ? " / LOOP" : ""}`;
+}
+
+function stopGLBAnimation() {
+  const clip = selectedGLBAnimationClip();
+  const layer = importedGLBModelEntity?.anim?.baseLayer;
+  if (!layer || !clip) return;
+
+  layer.pause();
+  layer.activeStateCurrentTime = 0;
+  importedGLBAnimationPlaying = false;
+  glbAnimationStatus.textContent = `STOPPED: ${clip.displayName}`;
+}
+
+glbAnimationSelect.addEventListener("change", () => {
+  importedGLBSelectedAnimation = Math.max(0, glbAnimationSelect.selectedIndex);
+  stopGLBAnimation();
+});
+
+glbAnimationPlay.addEventListener("click", () => {
+  playSelectedGLBAnimation();
+});
+
+glbAnimationStop.addEventListener("click", () => {
+  stopGLBAnimation();
+});
+
+glbAnimationLoop.addEventListener("change", () => {
+  const wasPlaying = importedGLBAnimationPlaying;
+  const clip = selectedGLBAnimationClip();
+  const anim = importedGLBModelEntity?.anim;
+
+  if (!anim || !clip) return;
+
+  anim.assignAnimation(
+    clip.stateName,
+    clip.track,
+    undefined,
+    1,
+    glbAnimationLoop.checked
+  );
+
+  if (wasPlaying) {
+    playSelectedGLBAnimation();
+  } else {
+    glbAnimationStatus.textContent =
+      `${clip.displayName}${glbAnimationLoop.checked ? " / LOOP" : " / ONCE"}`;
+  }
+});
+
 function clearImportedArtwork() {
   if (importedArtworkEntity) {
     importedArtworkEntity.destroy();
     importedArtworkEntity = null;
   }
 
+  resetGLBAnimationUI();
   importedGLBModelEntity = null;
 
   if (importedArtworkVideo) {
@@ -967,7 +1191,7 @@ async function addWebMArtworkToWorld(file: File) {
 }
 
 // =========================================================
-// Prototype 0.10 / Stage 2 / GLB IMPORT CORE
+// Prototype 0.10 / Stage 3 / GLB IMPORT + ANIMATION CORE
 // =========================================================
 
 function loadGLBContainerAsset(file: File, objectURL: string) {
@@ -1072,6 +1296,9 @@ async function addGLBArtworkToWorld(file: File) {
     const modelEntity = containerResource.instantiateRenderEntity() as pc.Entity;
     importedGLBModelEntity = modelEntity;
 
+    // Prototype 0.10 / Stage 3: detect every animation track in the GLB.
+    setupGLBAnimations(modelEntity, containerResource);
+
     const holder = new pc.Entity("ImportedGLBArtwork");
     const normalizer = new pc.Entity("GLBNormalizer");
 
@@ -1146,6 +1373,14 @@ function openPlacementEditor() {
 
   updatePlacementUI();
   applyArtworkPlacement();
+
+  if (importedArtworkKind === "glb") {
+    // setupGLBAnimations() already populated the panel; keep it visible even when no clip exists.
+    glbAnimationPanel.style.display = "block";
+  } else {
+    glbAnimationPanel.style.display = "none";
+  }
+
   artworkPlacementPanel?.classList.remove("hidden");
 }
 

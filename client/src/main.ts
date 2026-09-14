@@ -1,3 +1,4 @@
+import JSZip from "jszip";
 import "./style.css";
 import * as pc from "playcanvas";
 import { Client, getStateCallbacks, type Room } from "@colyseus/sdk";
@@ -585,6 +586,89 @@ function clearImportedArtwork() {
     URL.revokeObjectURL(importedArtworkObjectURL);
     importedArtworkObjectURL = null;
   }
+}
+
+// =========================================================
+// Prototype 0.9 / Stage 3⑤-1
+// SPRITE ZIP IMPORT CORE
+// =========================================================
+
+let importedSpriteImageURL: string | null = null;
+let importedSpriteMeta: any = null;
+
+async function loadSpriteZipPackage(file: File) {
+
+  if (importedSpriteImageURL) {
+    URL.revokeObjectURL(importedSpriteImageURL);
+    importedSpriteImageURL = null;
+  }
+
+  importedSpriteMeta = null;
+
+  const zip = await JSZip.loadAsync(file);
+
+  let pngEntry: JSZip.JSZipObject | null = null;
+  let jsonEntry: JSZip.JSZipObject | null = null;
+
+  zip.forEach((_path, entry) => {
+
+    if (entry.dir) return;
+
+    const name =
+      entry.name.toLowerCase();
+
+    if (
+      !pngEntry &&
+      name.endsWith(".png")
+    ) {
+      pngEntry = entry;
+    }
+
+    if (
+      !jsonEntry &&
+      name.endsWith(".json")
+    ) {
+      jsonEntry = entry;
+    }
+  });
+
+  if (!pngEntry) {
+    throw new Error(
+      "Sprite ZIPにPNGが見つかりません。"
+    );
+  }
+
+  if (!jsonEntry) {
+    throw new Error(
+      "Sprite ZIPにJSONが見つかりません。"
+    );
+  }
+
+  const pngBlob =
+    await pngEntry.async("blob");
+
+  importedSpriteImageURL =
+    URL.createObjectURL(pngBlob);
+
+  const jsonText =
+    await jsonEntry.async("text");
+
+  importedSpriteMeta =
+    JSON.parse(jsonText);
+
+  console.log(
+    "SPRITE PNG:",
+    pngEntry.name
+  );
+
+  console.log(
+    "SPRITE JSON:",
+    importedSpriteMeta
+  );
+
+  console.log(
+    "SPRITE ZIP READY"
+  );
 }
 
 async function addWebMArtworkToWorld(file: File) {

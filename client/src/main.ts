@@ -693,9 +693,32 @@ function makeAnimationStateName(index: number) {
 function setupGLBAnimations(modelEntity: pc.Entity, containerResource: any) {
   resetGLBAnimationUI();
 
-  const tracks = Array.isArray(containerResource?.animations)
+  const animationEntries = Array.isArray(containerResource?.animations)
     ? (containerResource.animations as any[])
     : [];
+
+  // PlayCanvas container animations are animation Asset objects in this
+  // runtime. AnimComponent.assignAnimation() requires the Asset.resource
+  // (AnimTrack), not the Asset wrapper itself. Support both shapes so this
+  // remains compatible if the engine returns AnimTrack objects directly.
+  const tracks = animationEntries
+    .map((entry) => {
+      const track = entry?.resource ?? entry;
+      if (!track) return null;
+
+      return {
+        asset: entry,
+        track,
+        displayName: String(
+          track?.name || entry?.name || "Animation"
+        )
+      };
+    })
+    .filter(Boolean) as Array<{
+      asset: any;
+      track: any;
+      displayName: string;
+    }>;
 
   if (tracks.length === 0) {
     glbAnimationPanel.style.display = "block";
@@ -719,9 +742,10 @@ function setupGLBAnimations(modelEntity: pc.Entity, containerResource: any) {
   // This is important for skinned GLB files whose bone nodes live below this root.
   anim.rootBone = modelEntity;
 
-  importedGLBAnimationClips = tracks.map((track, index) => {
-    const rawName = String((track as any).name || `Animation ${index + 1}`);
+  importedGLBAnimationClips = tracks.map((entry, index) => {
+    const rawName = entry.displayName || `Animation ${index + 1}`;
     const stateName = makeAnimationStateName(index);
+    const track = entry.track;
 
     anim.assignAnimation(
       stateName,
@@ -796,6 +820,7 @@ function playSelectedGLBAnimation() {
   // after the model has been re-parented by the placement/normalization wrapper.
   anim.rebind();
   layer.play(clip.stateName);
+  anim.playing = true;
   importedGLBAnimationPlaying = true;
   glbAnimationStatus.textContent =
     `PLAYING: ${clip.displayName}${glbAnimationLoop.checked ? " / LOOP" : ""}`;
@@ -808,6 +833,7 @@ function stopGLBAnimation() {
 
   layer.pause();
   layer.activeStateCurrentTime = 0;
+  importedGLBModelEntity!.anim!.playing = false;
   importedGLBAnimationPlaying = false;
   glbAnimationStatus.textContent = `STOPPED: ${clip.displayName}`;
 }

@@ -107,6 +107,77 @@
 </div>
 
 </section>
+
+  <!-- Prototype 0.9 / Artwork Placement Editor -->
+<section id="artworkPlacementPanel" class="artwork-placement-panel hidden">
+
+  <div class="artwork-placement-header">
+    <strong>ARTWORK PLACEMENT</strong>
+  </div>
+
+  <div class="artwork-placement-body">
+
+    <div class="placement-section-title">POSITION</div>
+
+    <div class="placement-row">
+      <span>X</span>
+      <button id="artworkXMinus" type="button">−</button>
+      <span id="artworkXValue">0.0</span>
+      <button id="artworkXPlus" type="button">＋</button>
+    </div>
+
+    <div class="placement-row">
+      <span>Y</span>
+      <button id="artworkYMinus" type="button">−</button>
+      <span id="artworkYValue">1.8</span>
+      <button id="artworkYPlus" type="button">＋</button>
+    </div>
+
+    <div class="placement-row">
+      <span>Z</span>
+      <button id="artworkZMinus" type="button">−</button>
+      <span id="artworkZValue">-3.0</span>
+      <button id="artworkZPlus" type="button">＋</button>
+    </div>
+
+
+    <div class="placement-section-title">SCALE</div>
+
+    <input
+      id="artworkScale"
+      type="range"
+      min="0.5"
+      max="6"
+      step="0.1"
+      value="3.2"
+    />
+
+
+    <div class="placement-section-title">ROTATION Y</div>
+
+    <input
+      id="artworkRotationY"
+      type="range"
+      min="-180"
+      max="180"
+      step="1"
+      value="0"
+    />
+
+
+    <div class="placement-actions">
+      <button id="cancelPlacementButton" type="button">
+        CANCEL
+      </button>
+
+      <button id="placeArtworkButton" type="button">
+        PLACE
+      </button>
+    </div>
+
+  </div>
+
+</section>
   
   <!-- Mobile virtual joystick -->
 <div id="joystick">

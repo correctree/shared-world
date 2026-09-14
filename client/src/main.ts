@@ -715,6 +715,10 @@ function setupGLBAnimations(modelEntity: pc.Entity, containerResource: any) {
     return;
   }
 
+  // Stage 3.1: bind the AnimComponent explicitly to the instantiated GLB hierarchy.
+  // This is important for skinned GLB files whose bone nodes live below this root.
+  anim.rootBone = modelEntity;
+
   importedGLBAnimationClips = tracks.map((track, index) => {
     const rawName = String((track as any).name || `Animation ${index + 1}`);
     const stateName = makeAnimationStateName(index);
@@ -748,6 +752,10 @@ function setupGLBAnimations(modelEntity: pc.Entity, containerResource: any) {
   glbAnimationStatus.textContent =
     `${importedGLBAnimationClips.length} CLIP${importedGLBAnimationClips.length === 1 ? "" : "S"} DETECTED`;
   glbAnimationPanel.style.display = "block";
+
+  // Stage 3.1: force all animation curves to bind to the nodes that now exist
+  // under the instantiated GLB root.
+  anim.rebind();
 
   // Keep the model stopped until the user presses PLAY.
   const layer = anim.baseLayer;
@@ -784,6 +792,9 @@ function playSelectedGLBAnimation() {
     glbAnimationLoop.checked
   );
 
+  // Stage 3.1: refresh bindings before playback. This also makes PLAY robust
+  // after the model has been re-parented by the placement/normalization wrapper.
+  anim.rebind();
   layer.play(clip.stateName);
   importedGLBAnimationPlaying = true;
   glbAnimationStatus.textContent =
@@ -1296,15 +1307,16 @@ async function addGLBArtworkToWorld(file: File) {
     const modelEntity = containerResource.instantiateRenderEntity() as pc.Entity;
     importedGLBModelEntity = modelEntity;
 
-    // Prototype 0.10 / Stage 3: detect every animation track in the GLB.
-    setupGLBAnimations(modelEntity, containerResource);
-
     const holder = new pc.Entity("ImportedGLBArtwork");
     const normalizer = new pc.Entity("GLBNormalizer");
 
     holder.addChild(normalizer);
     normalizer.addChild(modelEntity);
     app.root.addChild(holder);
+
+    // Prototype 0.10 / Stage 3.1:
+    // attach the complete GLB hierarchy to the live scene first, then bind animation.
+    setupGLBAnimations(modelEntity, containerResource);
 
     normalizeImportedGLB(modelEntity, normalizer);
 

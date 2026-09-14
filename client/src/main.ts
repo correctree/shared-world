@@ -49,6 +49,20 @@ const artworkFileInput = document.querySelector<HTMLInputElement>("#artworkFileI
 const artworkFileName = document.querySelector<HTMLElement>("#artworkFileName");
 const addArtworkToWorldButton = document.querySelector<HTMLButtonElement>("#addArtworkToWorldButton");
 
+// Prototype 0.10 / Stage 2 / GLB mode button
+// Existing index.html can stay unchanged: add the GLB button at runtime.
+let glbArtworkMode = document.querySelector<HTMLButtonElement>("#glbArtworkMode");
+
+if (!glbArtworkMode && spriteArtworkMode) {
+  const button = document.createElement("button");
+  button.id = "glbArtworkMode";
+  button.type = "button";
+  button.textContent = "3D GLB";
+  button.className = spriteArtworkMode.className;
+  spriteArtworkMode.insertAdjacentElement("afterend", button);
+  glbArtworkMode = button;
+}
+
 // Prototype 0.9 / Placement Editor UI
 const artworkPlacementPanel = document.querySelector<HTMLElement>("#artworkPlacementPanel");
 const artworkXMinus = document.querySelector<HTMLButtonElement>("#artworkXMinus");
@@ -505,18 +519,27 @@ cancelArtworkButton?.addEventListener("click", closeArtworkPanelUI);
 // Prototype 0.9 / MEDIA TYPE + FILE SELECT
 // =========================================================
 
-let artworkMediaType: "webm" | "sprite" = "webm";
+let artworkMediaType: "webm" | "sprite" | "glb" = "webm";
 
 function updateArtworkModeUI() {
   const isWebM = artworkMediaType === "webm";
+  const isSprite = artworkMediaType === "sprite";
+  const isGLB = artworkMediaType === "glb";
+
   webmArtworkMode?.classList.toggle("active", isWebM);
-  spriteArtworkMode?.classList.toggle("active", !isWebM);
+  spriteArtworkMode?.classList.toggle("active", isSprite);
+  glbArtworkMode?.classList.toggle("active", isGLB);
 
   if (artworkFileInput) {
     artworkFileInput.value = "";
-    artworkFileInput.accept = isWebM
-      ? ".webm,video/webm"
-      : ".zip,application/zip";
+
+    if (isWebM) {
+      artworkFileInput.accept = ".webm,video/webm";
+    } else if (isSprite) {
+      artworkFileInput.accept = ".zip,application/zip";
+    } else {
+      artworkFileInput.accept = ".glb,model/gltf-binary";
+    }
   }
 
   if (artworkFileName) {
@@ -538,6 +561,11 @@ spriteArtworkMode?.addEventListener("click", () => {
   updateArtworkModeUI();
 });
 
+glbArtworkMode?.addEventListener("click", () => {
+  artworkMediaType = "glb";
+  updateArtworkModeUI();
+});
+
 selectArtworkFile?.addEventListener("click", () => {
   artworkFileInput?.click();
 });
@@ -551,6 +579,20 @@ artworkFileInput?.addEventListener("change", () => {
     return;
   }
 
+  const lowerName = file.name.toLowerCase();
+  const valid =
+    artworkMediaType === "webm"
+      ? lowerName.endsWith(".webm")
+      : artworkMediaType === "sprite"
+        ? lowerName.endsWith(".zip")
+        : lowerName.endsWith(".glb");
+
+  if (!valid) {
+    if (artworkFileName) artworkFileName.textContent = "UNSUPPORTED FILE";
+    if (addArtworkToWorldButton) addArtworkToWorldButton.disabled = true;
+    return;
+  }
+
   if (artworkFileName) artworkFileName.textContent = file.name;
   if (addArtworkToWorldButton) addArtworkToWorldButton.disabled = false;
 });
@@ -559,16 +601,26 @@ artworkFileInput?.addEventListener("change", () => {
 // Prototype 0.9 / IMPORTED WEBM ARTWORK
 // =========================================================
 
+type ImportedArtworkKind = "webm" | "sprite" | "glb" | null;
+
+let importedArtworkKind: ImportedArtworkKind = null;
 let importedArtworkEntity: pc.Entity | null = null;
 let importedArtworkVideo: HTMLVideoElement | null = null;
 let importedArtworkTexture: pc.Texture | null = null;
 let importedArtworkObjectURL: string | null = null;
+
+// Prototype 0.10 / Stage 2 / GLB resources
+let importedGLBAsset: pc.Asset | null = null;
+let importedGLBObjectURL: string | null = null;
+let importedGLBModelEntity: pc.Entity | null = null;
 
 function clearImportedArtwork() {
   if (importedArtworkEntity) {
     importedArtworkEntity.destroy();
     importedArtworkEntity = null;
   }
+
+  importedGLBModelEntity = null;
 
   if (importedArtworkVideo) {
     importedArtworkVideo.pause();
@@ -586,6 +638,19 @@ function clearImportedArtwork() {
     URL.revokeObjectURL(importedArtworkObjectURL);
     importedArtworkObjectURL = null;
   }
+
+  if (importedGLBAsset) {
+    importedGLBAsset.unload();
+    app.assets.remove(importedGLBAsset);
+    importedGLBAsset = null;
+  }
+
+  if (importedGLBObjectURL) {
+    URL.revokeObjectURL(importedGLBObjectURL);
+    importedGLBObjectURL = null;
+  }
+
+  importedArtworkKind = null;
 }
 
 // =========================================================
@@ -837,6 +902,7 @@ function addSpriteArtworkToWorld() {
   app.root.addChild(plane);
 
   importedArtworkEntity = plane;
+  importedArtworkKind = "sprite";
   importedArtworkTexture.upload();
 
   console.log("Sprite artwork added.");
@@ -896,7 +962,137 @@ async function addWebMArtworkToWorld(file: File) {
   app.root.addChild(plane);
 
   importedArtworkEntity = plane;
+  importedArtworkKind = "webm";
   console.log("Artwork added:", file.name);
+}
+
+// =========================================================
+// Prototype 0.10 / Stage 2 / GLB IMPORT CORE
+// =========================================================
+
+function loadGLBContainerAsset(file: File, objectURL: string) {
+  return new Promise<pc.Asset>((resolve, reject) => {
+    app.assets.loadFromUrlAndFilename(
+      objectURL,
+      file.name,
+      "container",
+      (error, asset) => {
+        if (error || !asset) {
+          reject(
+            error instanceof Error
+              ? error
+              : new Error(String(error || "GLB asset could not be loaded."))
+          );
+          return;
+        }
+
+        resolve(asset);
+      }
+    );
+  });
+}
+
+function normalizeImportedGLB(
+  modelEntity: pc.Entity,
+  normalizer: pc.Entity
+) {
+  const renderComponents = modelEntity.findComponents("render") as any[];
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+  let foundBounds = false;
+
+  for (const render of renderComponents) {
+    render.castShadows = true;
+
+    const meshInstances = render.meshInstances || [];
+    for (const meshInstance of meshInstances) {
+      const aabb = meshInstance.aabb;
+      if (!aabb) continue;
+
+      foundBounds = true;
+
+      const c = aabb.center;
+      const h = aabb.halfExtents;
+
+      minX = Math.min(minX, c.x - h.x);
+      minY = Math.min(minY, c.y - h.y);
+      minZ = Math.min(minZ, c.z - h.z);
+      maxX = Math.max(maxX, c.x + h.x);
+      maxY = Math.max(maxY, c.y + h.y);
+      maxZ = Math.max(maxZ, c.z + h.z);
+    }
+  }
+
+  if (!foundBounds) {
+    return;
+  }
+
+  const width = Math.max(0.0001, maxX - minX);
+  const height = Math.max(0.0001, maxY - minY);
+  const depth = Math.max(0.0001, maxZ - minZ);
+  const maxDimension = Math.max(width, height, depth);
+
+  // Normalize a newly imported model to roughly human scale.
+  // The placement editor then applies a second, user-controlled uniform scale.
+  const targetSize = 1.8;
+  const baseScale = targetSize / maxDimension;
+
+  const centerX = (minX + maxX) * 0.5;
+  const centerZ = (minZ + maxZ) * 0.5;
+
+  normalizer.setLocalScale(baseScale, baseScale, baseScale);
+  normalizer.setLocalPosition(
+    -centerX * baseScale,
+    -minY * baseScale,
+    -centerZ * baseScale
+  );
+}
+
+async function addGLBArtworkToWorld(file: File) {
+  clearImportedSpriteResources();
+  clearImportedArtwork();
+
+  importedGLBObjectURL = URL.createObjectURL(file);
+
+  try {
+    const asset = await loadGLBContainerAsset(file, importedGLBObjectURL);
+    importedGLBAsset = asset;
+
+    const containerResource = asset.resource as any;
+
+    if (!containerResource?.instantiateRenderEntity) {
+      throw new Error("GLB container resource could not be instantiated.");
+    }
+
+    const modelEntity = containerResource.instantiateRenderEntity() as pc.Entity;
+    importedGLBModelEntity = modelEntity;
+
+    const holder = new pc.Entity("ImportedGLBArtwork");
+    const normalizer = new pc.Entity("GLBNormalizer");
+
+    holder.addChild(normalizer);
+    normalizer.addChild(modelEntity);
+    app.root.addChild(holder);
+
+    normalizeImportedGLB(modelEntity, normalizer);
+
+    importedArtworkEntity = holder;
+    importedArtworkKind = "glb";
+
+    holder.setPosition(0, 0, -3);
+    holder.setLocalScale(1, 1, 1);
+    holder.setEulerAngles(0, 0, 0);
+
+    console.log("GLB artwork added:", file.name);
+  } catch (error) {
+    clearImportedArtwork();
+    throw error;
+  }
 }
 
 // =========================================================
@@ -919,17 +1115,35 @@ function updatePlacementUI() {
 
 function applyArtworkPlacement() {
   if (!importedArtworkEntity) return;
+
   importedArtworkEntity.setPosition(placementX, placementY, placementZ);
-  importedArtworkEntity.setLocalScale(placementScale, 1, placementScale);
-  importedArtworkEntity.setEulerAngles(90, placementRotationY, 0);
+
+  if (importedArtworkKind === "glb") {
+    importedArtworkEntity.setLocalScale(
+      placementScale,
+      placementScale,
+      placementScale
+    );
+    importedArtworkEntity.setEulerAngles(0, placementRotationY, 0);
+  } else {
+    importedArtworkEntity.setLocalScale(placementScale, 1, placementScale);
+    importedArtworkEntity.setEulerAngles(90, placementRotationY, 0);
+  }
 }
 
 function openPlacementEditor() {
   placementX = 0;
-  placementY = 1.8;
   placementZ = -3;
-  placementScale = 3.2;
   placementRotationY = 0;
+
+  if (importedArtworkKind === "glb") {
+    placementY = 0;
+    placementScale = 1;
+  } else {
+    placementY = 1.8;
+    placementScale = 3.2;
+  }
+
   updatePlacementUI();
   applyArtworkPlacement();
   artworkPlacementPanel?.classList.remove("hidden");
@@ -1010,9 +1224,14 @@ addArtworkToWorldButton?.addEventListener("click", async () => {
       openPlacementEditor();
     } catch (error) {
       console.error("Artwork import failed:", error);
+      if (artworkFileName) artworkFileName.textContent = "WEBM ERROR";
+    } finally {
       addArtworkToWorldButton.disabled = false;
     }
-  } else {
+    return;
+  }
+
+  if (artworkMediaType === "sprite") {
     try {
       addArtworkToWorldButton.disabled = true;
 
@@ -1037,6 +1256,35 @@ addArtworkToWorldButton?.addEventListener("click", async () => {
     } finally {
       addArtworkToWorldButton.disabled = false;
     }
+    return;
+  }
+
+  // Prototype 0.10 / Stage 2 / GLB
+  try {
+    addArtworkToWorldButton.disabled = true;
+
+    if (artworkFileName) {
+      artworkFileName.textContent = `${file.name} / LOADING`;
+    }
+
+    await addGLBArtworkToWorld(file);
+
+    if (artworkFileName) {
+      artworkFileName.textContent = `${file.name} / READY`;
+    }
+
+    closeArtworkPanelUI();
+    openPlacementEditor();
+
+    console.log("GLB package loaded successfully.");
+  } catch (error) {
+    console.error("GLB import failed:", error);
+
+    if (artworkFileName) {
+      artworkFileName.textContent = "GLB ERROR";
+    }
+  } finally {
+    addArtworkToWorldButton.disabled = false;
   }
 });
 

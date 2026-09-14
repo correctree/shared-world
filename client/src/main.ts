@@ -607,30 +607,26 @@ async function loadSpriteZipPackage(file: File) {
 
   const zip = await JSZip.loadAsync(file);
 
-  let pngEntry: JSZip.JSZipObject | null = null;
-  let jsonEntry: JSZip.JSZipObject | null = null;
+  const entries =
+  Object.values(zip.files);
 
-  zip.forEach((_path, entry) => {
+const pngEntry =
+  entries.find(
+    (entry) =>
+      !entry.dir &&
+      entry.name
+        .toLowerCase()
+        .endsWith(".png")
+  );
 
-    if (entry.dir) return;
-
-    const name =
-      entry.name.toLowerCase();
-
-    if (
-      !pngEntry &&
-      name.endsWith(".png")
-    ) {
-      pngEntry = entry;
-    }
-
-    if (
-      !jsonEntry &&
-      name.endsWith(".json")
-    ) {
-      jsonEntry = entry;
-    }
-  });
+const jsonEntry =
+  entries.find(
+    (entry) =>
+      !entry.dir &&
+      entry.name
+        .toLowerCase()
+        .endsWith(".json")
+  );
 
   if (!pngEntry) {
     throw new Error(

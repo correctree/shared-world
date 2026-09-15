@@ -894,6 +894,174 @@ type PlacedMediaRuntime = {
 
 const placedMediaRuntimes: PlacedMediaRuntime[] = [];
 
+
+type ManagedPlacedMedia = {
+  id: string;
+  title: string;
+  kind: "webm" | "sprite" | "glb";
+  entity: pc.Entity;
+};
+
+const managedPlacedMedia = new Map<string, ManagedPlacedMedia>();
+let selectedManagedMediaId: string | null = null;
+let editingManagedMediaId: string | null = null;
+
+// Prototype 0.11 / Stage 3 / MEDIA OBJECT MANAGER
+// The panel is created at runtime so index.html/style.css do not need replacing.
+const mediaManagerButton = document.createElement("button");
+mediaManagerButton.id = "mediaManagerButton";
+mediaManagerButton.type = "button";
+mediaManagerButton.textContent = "MEDIA OBJECTS";
+document.body.appendChild(mediaManagerButton);
+
+const mediaManagerPanel = document.createElement("section");
+mediaManagerPanel.id = "mediaManagerPanel";
+mediaManagerPanel.className = "hidden";
+mediaManagerPanel.innerHTML = `
+  <div class="media-manager-header">
+    <strong>MEDIA OBJECTS</strong>
+    <button id="closeMediaManagerButton" type="button">×</button>
+  </div>
+  <div id="mediaManagerList"></div>
+  <div class="media-manager-actions">
+    <button id="editManagedMediaButton" type="button" disabled>EDIT</button>
+    <button id="deleteManagedMediaButton" type="button" disabled>DELETE</button>
+  </div>
+`;
+document.body.appendChild(mediaManagerPanel);
+
+const mediaManagerStyle = document.createElement("style");
+mediaManagerStyle.textContent = `
+  #mediaManagerButton {
+    position: fixed; top: max(68px, calc(env(safe-area-inset-top) + 68px));
+    right: max(16px, env(safe-area-inset-right)); z-index: 40;
+    width: auto !important; padding: 10px 14px; border: 1px solid #4a5260;
+    border-radius: 12px; background: rgba(10,14,20,.92); color: #fff;
+    font: 700 12px/1 system-ui, sans-serif; letter-spacing: .04em;
+  }
+  #mediaManagerPanel {
+    position: fixed; top: 116px; right: max(16px, env(safe-area-inset-right));
+    z-index: 50; width: min(340px, calc(100vw - 32px)); max-height: 62vh;
+    overflow: auto; box-sizing: border-box; padding: 14px;
+    border: 1px solid #3d4653; border-radius: 16px;
+    background: rgba(9,13,19,.96); color: #fff; backdrop-filter: blur(14px);
+    font-family: system-ui, sans-serif;
+  }
+  #mediaManagerPanel.hidden { display: none; }
+  .media-manager-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  #closeMediaManagerButton { width:36px !important; height:36px; border-radius:10px; }
+  #mediaManagerList { display:grid; gap:8px; }
+  .media-manager-item {
+    width:100% !important; display:grid; grid-template-columns:54px 1fr; gap:8px;
+    text-align:left; padding:11px; border:1px solid #343d49; border-radius:11px;
+    background:#111720; color:#fff;
+  }
+  .media-manager-item.selected { outline:2px solid #2f8cff; background:#172334; }
+  .media-manager-kind { opacity:.62; font-size:10px; font-weight:800; }
+  .media-manager-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+  .media-manager-empty { opacity:.55; padding:18px 6px; text-align:center; font-size:12px; }
+  .media-manager-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  .media-manager-actions button { width:100% !important; }
+  #deleteManagedMediaButton { border-color:#7b3940; }
+  @media (max-width: 640px) {
+    #mediaManagerPanel { top:auto; right:12px; left:12px; bottom:max(12px, env(safe-area-inset-bottom)); width:auto; max-height:55vh; }
+    #mediaManagerButton { right:12px; }
+  }
+`;
+document.head.appendChild(mediaManagerStyle);
+
+const closeMediaManagerButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#closeMediaManagerButton")!;
+const mediaManagerList = mediaManagerPanel.querySelector<HTMLElement>("#mediaManagerList")!;
+const editManagedMediaButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#editManagedMediaButton")!;
+const deleteManagedMediaButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#deleteManagedMediaButton")!;
+
+function refreshMediaManagerUI() {
+  mediaManagerList.innerHTML = "";
+  const objects = Array.from(managedPlacedMedia.values());
+
+  if (objects.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "media-manager-empty";
+    empty.textContent = "NO MEDIA OBJECTS";
+    mediaManagerList.appendChild(empty);
+  } else {
+    objects.forEach((item, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "media-manager-item" + (item.id === selectedManagedMediaId ? " selected" : "");
+      button.innerHTML = `<span class="media-manager-kind">${String(index + 1).padStart(2, "0")} ${item.kind.toUpperCase()}</span><span class="media-manager-title"></span>`;
+      const title = button.querySelector<HTMLElement>(".media-manager-title");
+      if (title) title.textContent = item.title;
+      button.addEventListener("click", () => {
+        selectedManagedMediaId = item.id;
+        refreshMediaManagerUI();
+      });
+      mediaManagerList.appendChild(button);
+    });
+  }
+
+  const hasSelection = !!selectedManagedMediaId && managedPlacedMedia.has(selectedManagedMediaId);
+  editManagedMediaButton.disabled = !hasSelection;
+  deleteManagedMediaButton.disabled = !hasSelection;
+}
+
+function disposePlacedRuntime(id: string) {
+  const index = placedMediaRuntimes.findIndex((runtime) => runtime.id === id);
+  if (index >= 0) {
+    const [runtime] = placedMediaRuntimes.splice(index, 1);
+    runtime.dispose?.();
+  }
+}
+
+function deleteManagedMedia(id: string) {
+  const item = managedPlacedMedia.get(id);
+  if (!item) return;
+
+  disposePlacedRuntime(id);
+  item.entity.destroy();
+  xrMediaManager.unregister(id);
+  managedPlacedMedia.delete(id);
+
+  if (selectedManagedMediaId === id) selectedManagedMediaId = null;
+  if (editingManagedMediaId === id) editingManagedMediaId = null;
+  refreshMediaManagerUI();
+  console.log("XR Media deleted:", id);
+}
+
+mediaManagerButton.addEventListener("click", () => {
+  refreshMediaManagerUI();
+  mediaManagerPanel.classList.toggle("hidden");
+});
+closeMediaManagerButton.addEventListener("click", () => mediaManagerPanel.classList.add("hidden"));
+
+deleteManagedMediaButton.addEventListener("click", () => {
+  if (!selectedManagedMediaId) return;
+  deleteManagedMedia(selectedManagedMediaId);
+});
+
+editManagedMediaButton.addEventListener("click", () => {
+  if (!selectedManagedMediaId) return;
+  const item = managedPlacedMedia.get(selectedManagedMediaId);
+  if (!item) return;
+
+  editingManagedMediaId = item.id;
+  importedArtworkEntity = item.entity;
+  importedArtworkKind = item.kind;
+
+  const position = item.entity.getPosition();
+  placementX = position.x;
+  placementY = position.y;
+  placementZ = position.z;
+  placementRotationY = item.entity.getEulerAngles().y;
+  const scale = item.entity.getLocalScale();
+  placementScale = item.kind === "glb" ? scale.x : scale.x;
+
+  updatePlacementUI();
+  glbAnimationPanel.style.display = "none";
+  artworkPlacementPanel?.classList.remove("hidden");
+  mediaManagerPanel.classList.add("hidden");
+});
+
 /**
  * PLACE commits the currently edited media object to the world.
  * Its resources are detached from the temporary import globals instead of
@@ -1014,6 +1182,16 @@ function commitActiveArtworkToWorld() {
       }
     });
   }
+
+  const committedMedia = xrMediaManager.get(committedId);
+  managedPlacedMedia.set(committedId, {
+    id: committedId,
+    title: committedMedia?.title || `${importedArtworkKind.toUpperCase()} Artwork`,
+    kind: importedArtworkKind,
+    entity: importedArtworkEntity
+  });
+  selectedManagedMediaId = committedId;
+  refreshMediaManagerUI();
 
   // The Entity and resources now belong to the committed XRMediaObject.
   // Clear only the editor's references. Do NOT destroy the committed object.
@@ -1705,12 +1883,34 @@ artworkRotationY?.addEventListener("input", () => {
 });
 
 placeArtworkButton?.addEventListener("click", () => {
+  if (editingManagedMediaId) {
+    // EDIT works directly on the already committed Entity. PLACE simply finishes editing.
+    const editedId = editingManagedMediaId;
+    editingManagedMediaId = null;
+    importedArtworkEntity = null;
+    importedArtworkKind = null;
+    selectedManagedMediaId = editedId;
+    refreshMediaManagerUI();
+    artworkPlacementPanel?.classList.add("hidden");
+    console.log("XR Media edit confirmed:", editedId);
+    return;
+  }
+
   commitActiveArtworkToWorld();
   artworkPlacementPanel?.classList.add("hidden");
   console.log("Artwork placement confirmed and committed to XR Media World.");
 });
 
 cancelPlacementButton?.addEventListener("click", () => {
+  if (editingManagedMediaId) {
+    // Stage 3 CANCEL exits edit mode. (Transform undo is reserved for a later stage.)
+    editingManagedMediaId = null;
+    importedArtworkEntity = null;
+    importedArtworkKind = null;
+    artworkPlacementPanel?.classList.add("hidden");
+    return;
+  }
+
   clearImportedArtwork();
   clearImportedSpriteResources();
   artworkPlacementPanel?.classList.add("hidden");

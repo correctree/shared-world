@@ -306,7 +306,11 @@ window.addEventListener("mousemove", (e) => {
   lastMouseY = e.clientY;
   cameraYaw -= dx * 0.25;
   cameraPitch -= dy * 0.25;
-  cameraPitch = pc.math.clamp(cameraPitch, -80, -10);
+  cameraPitch = pc.math.clamp(
+    cameraPitch,
+    firstPersonMode ? -89 : -80,
+    firstPersonMode ? 89 : -10
+  );
 });
 
 canvas.addEventListener("pointerdown", (e) => {
@@ -327,7 +331,11 @@ canvas.addEventListener("pointermove", (e) => {
   lastMouseY = e.clientY;
   cameraYaw -= dx * 0.25;
   cameraPitch -= dy * 0.25;
-  cameraPitch = pc.math.clamp(cameraPitch, -80, -10);
+  cameraPitch = pc.math.clamp(
+    cameraPitch,
+    firstPersonMode ? -89 : -80,
+    firstPersonMode ? 89 : -10
+  );
 });
 
 canvas.addEventListener("pointerup", (e) => {

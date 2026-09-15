@@ -2,6 +2,8 @@ import JSZip from "jszip";
 import "./style.css";
 import * as pc from "playcanvas";
 import { Client, getStateCallbacks, type Room } from "@colyseus/sdk";
+import { XRMediaManager } from "./core/XRMediaManager";
+import { createMediaObject } from "./media/createMediaObject";
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:2567";
 
@@ -11,6 +13,11 @@ if (window.location.protocol === "https:" && SERVER_URL.startsWith("http://")) {
 
 const MOVE_SPEED = 3.2;
 const SEND_HZ = 20;
+
+// Prototype 0.11 / XR MEDIA CORE
+// Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
+const xrMediaManager = new XRMediaManager();
+let activeXRMediaId: string | null = null;
 
 type Avatar = {
   entity: pc.Entity;
@@ -875,6 +882,10 @@ glbAnimationLoop.addEventListener("change", () => {
 });
 
 function clearImportedArtwork() {
+  if (activeXRMediaId) {
+    xrMediaManager.unregister(activeXRMediaId);
+    activeXRMediaId = null;
+  }
   if (importedArtworkEntity) {
     importedArtworkEntity.destroy();
     importedArtworkEntity = null;
@@ -1166,6 +1177,20 @@ function addSpriteArtworkToWorld() {
   importedArtworkKind = "sprite";
   importedArtworkTexture.upload();
 
+  const media = xrMediaManager.register(createMediaObject({
+    title: "Sprite Artwork",
+    type: "sprite",
+    entity: plane,
+    playable: true,
+    animated: true,
+    playback: {
+      play: () => { importedSpritePlaying = true; },
+      stop: () => { importedSpritePlaying = false; },
+      setLoop: () => { /* Sprite currently loops by design. */ }
+    }
+  }));
+  activeXRMediaId = media.id;
+
   console.log("Sprite artwork added.");
 }
 
@@ -1224,6 +1249,22 @@ async function addWebMArtworkToWorld(file: File) {
 
   importedArtworkEntity = plane;
   importedArtworkKind = "webm";
+
+  const media = xrMediaManager.register(createMediaObject({
+    title: file.name,
+    type: "webm",
+    entity: plane,
+    playable: true,
+    animated: true,
+    playback: {
+      play: async () => { await video.play(); },
+      stop: () => { video.pause(); },
+      setLoop: (loop) => { video.loop = loop; }
+    },
+    source: { fileName: file.name }
+  }));
+  activeXRMediaId = media.id;
+
   console.log("Artwork added:", file.name);
 }
 
@@ -1352,6 +1393,33 @@ async function addGLBArtworkToWorld(file: File) {
     holder.setPosition(0, 0, -3);
     holder.setLocalScale(1, 1, 1);
     holder.setEulerAngles(0, 0, 0);
+
+    const media = xrMediaManager.register(createMediaObject({
+      title: file.name,
+      type: "glb",
+      entity: holder,
+      playable: importedGLBAnimationClips.length > 0,
+      animated: importedGLBAnimationClips.length > 0,
+      playback: {
+        play: () => { playSelectedGLBAnimation(); },
+        stop: () => { stopGLBAnimation(); },
+        setLoop: (loop) => {
+          glbAnimationLoop.checked = loop;
+          glbAnimationLoop.dispatchEvent(new Event("change"));
+        },
+        getClips: () => importedGLBAnimationClips.map((clip) => clip.displayName),
+        playClip: (name) => {
+          const index = importedGLBAnimationClips.findIndex((clip) => clip.displayName === name);
+          if (index >= 0) {
+            importedGLBSelectedAnimation = index;
+            glbAnimationSelect.selectedIndex = index;
+            playSelectedGLBAnimation();
+          }
+        }
+      },
+      source: { fileName: file.name }
+    }));
+    activeXRMediaId = media.id;
 
     console.log("GLB artwork added:", file.name);
   } catch (error) {

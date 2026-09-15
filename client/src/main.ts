@@ -904,6 +904,14 @@ mediaManagerPanel.innerHTML = `
       </div>
     </label>
 
+    <label id="behaviorLookAngleRow" class="behavior-row hidden">
+      <span>Look Angle</span>
+      <div class="behavior-distance-control">
+        <input id="behaviorLookAngle" type="range" min="3" max="45" step="1" value="12">
+        <strong id="behaviorLookAngleValue">12°</strong>
+      </div>
+    </label>
+
     <label class="behavior-row">
       <span>Enter Action</span>
       <select id="behaviorEnterAction">
@@ -969,6 +977,7 @@ mediaManagerStyle.textContent = `
     background:#0d131b;
   }
   .behavior-editor.hidden { display:none; }
+  .behavior-row.hidden { display:none; }
   .behavior-editor-status { opacity:.55; font-size:11px; padding:4px 0 2px; }
   .behavior-editor-controls.hidden { display:none; }
   .behavior-editor-title {
@@ -1008,6 +1017,9 @@ const behaviorEditorControls = mediaManagerPanel.querySelector<HTMLElement>("#be
 const behaviorTrigger = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorTrigger")!;
 const behaviorDistance = mediaManagerPanel.querySelector<HTMLInputElement>("#behaviorDistance")!;
 const behaviorDistanceValue = mediaManagerPanel.querySelector<HTMLElement>("#behaviorDistanceValue")!;
+const behaviorLookAngleRow = mediaManagerPanel.querySelector<HTMLElement>("#behaviorLookAngleRow")!;
+const behaviorLookAngle = mediaManagerPanel.querySelector<HTMLInputElement>("#behaviorLookAngle")!;
+const behaviorLookAngleValue = mediaManagerPanel.querySelector<HTMLElement>("#behaviorLookAngleValue")!;
 const behaviorEnterAction = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorEnterAction")!;
 const behaviorLeaveAction = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorLeaveAction")!;
 const behaviorEnabled = mediaManagerPanel.querySelector<HTMLInputElement>("#behaviorEnabled")!;
@@ -1045,10 +1057,18 @@ function refreshBehaviorEditorUI() {
   }
 
   behaviorTrigger.value = (behavior as any).trigger === "look-at" ? "look-at" : "user-proximity";
+  const isLookAt = (behavior as any).trigger === "look-at";
+
   behaviorDistance.value = String(behavior.distance);
-  behaviorDistanceValue.textContent =
-    (behavior as any).trigger === "look-at" ? "—" : `${behavior.distance.toFixed(1)} m`;
-  behaviorDistance.disabled = (behavior as any).trigger === "look-at";
+  behaviorDistanceValue.textContent = `${behavior.distance.toFixed(1)} m`;
+  behaviorDistance.disabled = isLookAt;
+  behaviorDistance.closest(".behavior-row")?.classList.toggle("hidden", isLookAt);
+
+  const lookAngle = Number((behavior as any).lookAngle ?? 12);
+  behaviorLookAngle.value = String(lookAngle);
+  behaviorLookAngleValue.textContent = `${lookAngle.toFixed(0)}°`;
+  behaviorLookAngleRow.classList.toggle("hidden", !isLookAt);
+
   behaviorEnterAction.value = behavior.enterAction;
   behaviorLeaveAction.value = behavior.leaveAction;
   behaviorEnabled.checked = behavior.enabled;
@@ -1060,10 +1080,12 @@ function applyBehaviorEditorUI() {
 
   (behavior as any).trigger = behaviorTrigger.value;
   behavior.distance = Number(behaviorDistance.value);
+  (behavior as any).lookAngle = Number(behaviorLookAngle.value);
   behavior.enterAction = behaviorEnterAction.value as "play" | "stop";
   behavior.leaveAction = behaviorLeaveAction.value as "play" | "stop";
   behavior.enabled = behaviorEnabled.checked;
   behaviorDistanceValue.textContent = `${behavior.distance.toFixed(1)} m`;
+  behaviorLookAngleValue.textContent = `${Number((behavior as any).lookAngle ?? 12).toFixed(0)}°`;
 
   console.log("[XR BEHAVIOR UPDATED]", {
     mediaId: selectedManagedMediaId,
@@ -1080,6 +1102,7 @@ behaviorTrigger.addEventListener("change", () => {
   refreshBehaviorEditorUI();
 });
 behaviorDistance.addEventListener("input", applyBehaviorEditorUI);
+behaviorLookAngle.addEventListener("input", applyBehaviorEditorUI);
 behaviorEnterAction.addEventListener("change", applyBehaviorEditorUI);
 behaviorLeaveAction.addEventListener("change", applyBehaviorEditorUI);
 behaviorEnabled.addEventListener("change", applyBehaviorEditorUI);
@@ -2272,8 +2295,7 @@ function debugXRMediaManager(label: string) {
 // =========================================================
 
 const lookAtBehaviorState = new Map<string, boolean>();
-const LOOK_AT_HALF_ANGLE_DEG = 12;
-const LOOK_AT_COS_THRESHOLD = Math.cos(LOOK_AT_HALF_ANGLE_DEG * pc.math.DEG_TO_RAD);
+const DEFAULT_LOOK_AT_ANGLE_DEG = 12;
 
 function runXRBehaviorAction(object: any, action: string | undefined) {
   if (action === "play") {
@@ -2306,7 +2328,13 @@ function updateLookAtBehaviors() {
     if (toObject.lengthSq() < 0.000001) continue;
     toObject.normalize();
 
-    const isLooking = forward.dot(toObject) >= LOOK_AT_COS_THRESHOLD;
+    const lookAngle = pc.math.clamp(
+      Number((behavior as any).lookAngle ?? DEFAULT_LOOK_AT_ANGLE_DEG),
+      3,
+      45
+    );
+    const cosThreshold = Math.cos(lookAngle * pc.math.DEG_TO_RAD);
+    const isLooking = forward.dot(toObject) >= cosThreshold;
     const previous = lookAtBehaviorState.get(object.id);
 
     if (previous === undefined) {
@@ -2321,7 +2349,7 @@ function updateLookAtBehaviors() {
       console.log("[XR LOOK AT]", {
         object: object.title,
         isLooking,
-        angle: LOOK_AT_HALF_ANGLE_DEG,
+        angle: lookAngle,
         action: isLooking ? behavior.enterAction : behavior.leaveAction
       });
     }

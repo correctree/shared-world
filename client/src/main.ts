@@ -181,12 +181,7 @@ for (let i = -7; i <= 7; i++) {
   app.root.addChild(lineZ);
 }
 
-const center = new pc.Entity("SharedObject");
-center.addComponent("render", { type: "cylinder" });
-center.setLocalScale(0.8, 0.12, 0.8);
-center.setPosition(0, 0.08, 0);
-center.render!.material = material([0.75, 0.78, 0.82], 0.4);
-app.root.addChild(center);
+// Legacy SharedObject removed in Prototype 0.11 / Stage 3.1
 
 const light = new pc.Entity("Light");
 light.addComponent("light", { type: "directional", intensity: 1.5, castShadows: true });
@@ -200,53 +195,9 @@ camera.lookAt(0, 0, 0);
 app.root.addChild(camera);
 
 // =========================================================
-// Prototype 0.7 / Existing Reactive Artwork
+// Prototype 0.11 / Stage 3.1
+// Legacy artwork removed. All placed media now belongs to XRMediaManager.
 // =========================================================
-
-const artworkPosition = new pc.Vec3(4, 1.8, 0);
-const artworkPlane = new pc.Entity("ReactiveArtwork");
-artworkPlane.addComponent("render", { type: "plane" });
-artworkPlane.setPosition(artworkPosition);
-artworkPlane.setLocalScale(3.2, 1, 3.2);
-artworkPlane.setEulerAngles(90, 0, 0);
-app.root.addChild(artworkPlane);
-artworkPlane.render!.castShadows = true;
-
-const artworkVideo = document.createElement("video");
-artworkVideo.src = "./artworks/delete.webm";
-artworkVideo.loop = true;
-artworkVideo.muted = true;
-artworkVideo.autoplay = true;
-artworkVideo.playsInline = true;
-artworkVideo.preload = "auto";
-
-const artworkTexture = new pc.Texture(app.graphicsDevice, {
-  format: pc.PIXELFORMAT_RGBA8,
-  minFilter: pc.FILTER_LINEAR,
-  magFilter: pc.FILTER_LINEAR,
-  addressU: pc.ADDRESS_CLAMP_TO_EDGE,
-  addressV: pc.ADDRESS_CLAMP_TO_EDGE,
-  mipmaps: false
-});
-artworkTexture.setSource(artworkVideo);
-
-const artworkMaterial = new pc.StandardMaterial();
-artworkMaterial.diffuseMap = artworkTexture;
-artworkMaterial.emissiveMap = artworkTexture;
-artworkMaterial.emissive = new pc.Color(1, 1, 1);
-artworkMaterial.opacityMap = artworkTexture;
-artworkMaterial.opacityMapChannel = "a";
-artworkMaterial.blendType = pc.BLEND_NORMAL;
-artworkMaterial.depthWrite = false;
-artworkMaterial.alphaTest = 0.12;
-artworkMaterial.useLighting = false;
-artworkMaterial.cull = pc.CULLFACE_NONE;
-artworkMaterial.update();
-artworkPlane.render!.material = artworkMaterial;
-
-artworkVideo.play().catch(() => {
-  console.log("Reactive Artwork video will start after user interaction.");
-});
 
 // =========================================================
 // CAMERA + MULTIPLAYER STATE
@@ -2004,10 +1955,6 @@ updatePlacementUI();
 // =========================================================
 
 app.on("update", (dt: number) => {
-  if (artworkVideo.readyState >= 2) {
-    artworkTexture.upload();
-  }
-
   if (
     importedArtworkVideo &&
     importedArtworkTexture &&

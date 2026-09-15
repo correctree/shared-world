@@ -1122,9 +1122,82 @@ function commitActiveArtworkToWorld() {
     const asset = importedGLBAsset;
     const objectURL = importedGLBObjectURL;
 
+    // Prototype 0.12.1 / PER-OBJECT GLB PLAYBACK
+    // Capture the GLB animation state before the temporary import globals are cleared.
+    // After PLACE, proximity behavior must control this committed GLB directly,
+    // rather than the old global importedGLBModelEntity reference.
+    const modelEntity = importedGLBModelEntity;
+    const clips = importedGLBAnimationClips.map((clip) => ({ ...clip }));
+    let selectedIndex = Math.max(
+      0,
+      Math.min(importedGLBSelectedAnimation, Math.max(0, clips.length - 1))
+    );
+    let loop = glbAnimationLoop.checked;
+
+    const media = xrMediaManager.get(committedId);
+
+    const selectedClip = () => clips[selectedIndex] || null;
+
+    const playCommittedGLB = () => {
+      const clip = selectedClip();
+      const anim = modelEntity?.anim;
+      const layer = anim?.baseLayer;
+      if (!anim || !layer || !clip) return;
+
+      anim.assignAnimation(
+        clip.stateName,
+        clip.track,
+        undefined,
+        1,
+        loop
+      );
+      anim.rebind();
+      layer.play(clip.stateName);
+      anim.playing = true;
+    };
+
+    const stopCommittedGLB = () => {
+      const anim = modelEntity?.anim;
+      const layer = anim?.baseLayer;
+      if (!anim || !layer) return;
+
+      layer.pause();
+      layer.activeStateCurrentTime = 0;
+      anim.playing = false;
+    };
+
+    if (media) {
+      media.playback = {
+        play: playCommittedGLB,
+        stop: stopCommittedGLB,
+        setLoop: (nextLoop) => {
+          loop = nextLoop;
+          const clip = selectedClip();
+          const anim = modelEntity?.anim;
+          if (!anim || !clip) return;
+
+          anim.assignAnimation(
+            clip.stateName,
+            clip.track,
+            undefined,
+            1,
+            loop
+          );
+        },
+        getClips: () => clips.map((clip) => clip.displayName),
+        playClip: (name) => {
+          const index = clips.findIndex((clip) => clip.displayName === name);
+          if (index < 0) return;
+          selectedIndex = index;
+          playCommittedGLB();
+        }
+      };
+    }
+
     placedMediaRuntimes.push({
       id: committedId,
       dispose: () => {
+        stopCommittedGLB();
         if (asset) {
           asset.unload();
           app.assets.remove(asset);

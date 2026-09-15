@@ -892,6 +892,7 @@ mediaManagerPanel.innerHTML = `
       <span>Trigger</span>
       <select id="behaviorTrigger">
         <option value="user-proximity">USER PROXIMITY</option>
+        <option value="look-at">LOOK AT</option>
       </select>
     </label>
 
@@ -1016,7 +1017,7 @@ function getSelectedProximityBehavior() {
   const object = xrMediaManager.get(selectedManagedMediaId);
   if (!object) return null;
 
-  let behavior = object.behavior?.find((item) => item.trigger === "user-proximity");
+  let behavior = object.behavior?.[0];
   if (!behavior) {
     behavior = {
       id: "proximity-play",
@@ -1043,9 +1044,11 @@ function refreshBehaviorEditorUI() {
     return;
   }
 
-  behaviorTrigger.value = "user-proximity";
+  behaviorTrigger.value = (behavior as any).trigger === "look-at" ? "look-at" : "user-proximity";
   behaviorDistance.value = String(behavior.distance);
-  behaviorDistanceValue.textContent = `${behavior.distance.toFixed(1)} m`;
+  behaviorDistanceValue.textContent =
+    (behavior as any).trigger === "look-at" ? "—" : `${behavior.distance.toFixed(1)} m`;
+  behaviorDistance.disabled = (behavior as any).trigger === "look-at";
   behaviorEnterAction.value = behavior.enterAction;
   behaviorLeaveAction.value = behavior.leaveAction;
   behaviorEnabled.checked = behavior.enabled;
@@ -1055,6 +1058,7 @@ function applyBehaviorEditorUI() {
   const behavior = getSelectedProximityBehavior();
   if (!behavior) return;
 
+  (behavior as any).trigger = behaviorTrigger.value;
   behavior.distance = Number(behaviorDistance.value);
   behavior.enterAction = behaviorEnterAction.value as "play" | "stop";
   behavior.leaveAction = behaviorLeaveAction.value as "play" | "stop";
@@ -1071,6 +1075,10 @@ function applyBehaviorEditorUI() {
   });
 }
 
+behaviorTrigger.addEventListener("change", () => {
+  applyBehaviorEditorUI();
+  refreshBehaviorEditorUI();
+});
 behaviorDistance.addEventListener("input", applyBehaviorEditorUI);
 behaviorEnterAction.addEventListener("change", applyBehaviorEditorUI);
 behaviorLeaveAction.addEventListener("change", applyBehaviorEditorUI);
@@ -2257,6 +2265,69 @@ function debugXRMediaManager(label: string) {
 // UPDATE LOOP
 // =========================================================
 
+
+// =========================================================
+// Prototype 0.13 / MULTI TRIGGER BEHAVIOR SYSTEM
+// LOOK AT trigger
+// =========================================================
+
+const lookAtBehaviorState = new Map<string, boolean>();
+const LOOK_AT_HALF_ANGLE_DEG = 12;
+const LOOK_AT_COS_THRESHOLD = Math.cos(LOOK_AT_HALF_ANGLE_DEG * pc.math.DEG_TO_RAD);
+
+function runXRBehaviorAction(object: any, action: string | undefined) {
+  if (action === "play") {
+    void object.playback?.play();
+  } else if (action === "stop") {
+    object.playback?.stop();
+  }
+}
+
+function updateLookAtBehaviors() {
+  const yawRad = cameraYaw * pc.math.DEG_TO_RAD;
+  const pitchRad = cameraPitch * pc.math.DEG_TO_RAD;
+  const forward = new pc.Vec3(
+    -Math.sin(yawRad) * Math.cos(pitchRad),
+    Math.sin(pitchRad),
+    -Math.cos(yawRad) * Math.cos(pitchRad)
+  ).normalize();
+  const cameraPosition = camera.getPosition();
+
+  for (const object of xrMediaManager.list()) {
+    const behavior = object.behavior?.find(
+      (item: any) => (item as any).trigger === "look-at" && item.enabled
+    );
+    if (!behavior || !object.entity || !object.entity.enabled) {
+      lookAtBehaviorState.delete(object.id);
+      continue;
+    }
+
+    const toObject = object.entity.getPosition().clone().sub(cameraPosition);
+    if (toObject.lengthSq() < 0.000001) continue;
+    toObject.normalize();
+
+    const isLooking = forward.dot(toObject) >= LOOK_AT_COS_THRESHOLD;
+    const previous = lookAtBehaviorState.get(object.id);
+
+    if (previous === undefined) {
+      lookAtBehaviorState.set(object.id, isLooking);
+      runXRBehaviorAction(object, isLooking ? behavior.enterAction : behavior.leaveAction);
+      continue;
+    }
+
+    if (isLooking !== previous) {
+      lookAtBehaviorState.set(object.id, isLooking);
+      runXRBehaviorAction(object, isLooking ? behavior.enterAction : behavior.leaveAction);
+      console.log("[XR LOOK AT]", {
+        object: object.title,
+        isLooking,
+        angle: LOOK_AT_HALF_ANGLE_DEG,
+        action: isLooking ? behavior.enterAction : behavior.leaveAction
+      });
+    }
+  }
+}
+
 app.on("update", (dt: number) => {
   if (
     importedArtworkVideo &&
@@ -2391,6 +2462,7 @@ app.on("update", (dt: number) => {
   // Evaluate media proximity every frame, even while the user is standing still.
   // XRMediaManager fires playback actions only when inside/outside state changes.
   xrMediaManager.updateUserProximity(localPosition);
+  updateLookAtBehaviors();
 
   let x = 0;
   let z = 0;

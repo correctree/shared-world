@@ -69,6 +69,15 @@ if (isInside !== wasInside) {
     ? behavior.enterAction
     : behavior.leaveAction;
 
+console.log("[XR PROXIMITY]", {
+  object: object.title,
+  distance,
+  threshold: behavior.distance,
+  wasInside,
+  isInside,
+  action
+});
+  
   if (action === "play") {
     void object.playback?.play();
   } else if (action === "stop") {

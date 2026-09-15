@@ -457,6 +457,100 @@ function updatePlayerCount() {
 }
 
 // =========================================================
+// Prototype 0.14.1 / SHARED MEDIA OBJECT
+// Stage 1: synchronize Sprite existence + transform + asset reference.
+// Remote clients render a clearly marked placeholder until Sprite asset
+// distribution is implemented in 0.14.2.
+// =========================================================
+
+const sharedRemoteMediaIds = new Set<string>();
+
+function createSharedSpritePlaceholder(mediaId: string, media: any) {
+  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return;
+
+  const material = new pc.StandardMaterial();
+  material.diffuse = new pc.Color(0.18, 0.72, 1.0);
+  material.emissive = new pc.Color(0.04, 0.18, 0.28);
+  material.useLighting = false;
+  material.cull = pc.CULLFACE_NONE;
+  material.update();
+
+  const plane = new pc.Entity(`SharedSprite_${mediaId}`);
+  plane.addComponent("render", { type: "plane" });
+  plane.render!.material = material;
+  plane.setPosition(media.x, media.y, media.z);
+  plane.setLocalScale(media.scale, 1, media.scale);
+  plane.setEulerAngles(90, media.rotationY, 0);
+  app.root.addChild(plane);
+
+  const remoteMedia = createMediaObject({
+    title: media.title || "Shared Sprite",
+    type: "sprite",
+    entity: plane,
+    playable: false,
+    animated: false,
+    behavior: []
+  });
+  // Keep the authoritative Colyseus media id on every client.
+  remoteMedia.id = mediaId;
+  xrMediaManager.register(remoteMedia);
+
+  managedPlacedMedia.set(mediaId, {
+    id: mediaId,
+    title: `${media.title || "Sprite Artwork"} [SHARED]`,
+    kind: "sprite",
+    entity: plane
+  });
+  sharedRemoteMediaIds.add(mediaId);
+  refreshMediaManagerUI();
+
+  console.log("[SHARED MEDIA ADDED]", mediaId, media.assetRef || "(no asset ref)");
+}
+
+function updateSharedSpritePlaceholder(mediaId: string, media: any) {
+  const item = managedPlacedMedia.get(mediaId);
+  if (!item || !sharedRemoteMediaIds.has(mediaId)) return;
+  item.entity.setPosition(media.x, media.y, media.z);
+  item.entity.setLocalScale(media.scale, 1, media.scale);
+  item.entity.setEulerAngles(90, media.rotationY, 0);
+}
+
+function removeSharedSpritePlaceholder(mediaId: string) {
+  if (!sharedRemoteMediaIds.has(mediaId)) return;
+  const item = managedPlacedMedia.get(mediaId);
+  item?.entity.destroy();
+  xrMediaManager.unregister(mediaId);
+  managedPlacedMedia.delete(mediaId);
+  sharedRemoteMediaIds.delete(mediaId);
+  if (selectedManagedMediaId === mediaId) selectedManagedMediaId = null;
+  refreshMediaManagerUI();
+}
+
+function sendCommittedSpriteToSharedWorld(mediaId: string) {
+  if (!activeRoom) return;
+  const item = managedPlacedMedia.get(mediaId);
+  const media = xrMediaManager.get(mediaId);
+  if (!item || item.kind !== "sprite" || !media) return;
+
+  const position = item.entity.getPosition();
+  const rotation = item.entity.getEulerAngles();
+  const scale = item.entity.getLocalScale();
+
+  activeRoom.send("media:add", {
+    id: mediaId,
+    title: media.title || "Sprite Artwork",
+    type: "sprite",
+    // 0.14.1 only shares a reference label. The ZIP bytes stay local.
+    assetRef: "local-sprite-package",
+    x: position.x,
+    y: position.y,
+    z: position.z,
+    rotationY: rotation.y,
+    scale: scale.x
+  });
+}
+
+// =========================================================
 // ENTER WORLD
 // =========================================================
 
@@ -494,6 +588,22 @@ async function enterWorld() {
     $(room.state).players.onRemove((_player: any, sessionId: string) => {
       removeAvatar(sessionId);
     });
+
+    // Prototype 0.14.1 / Shared Media Object state.
+    const mediaObjects = (room.state as any).mediaObjects;
+    if (mediaObjects) {
+      $(mediaObjects).onAdd((media: any, mediaId: string) => {
+        // The placing client already owns the real local Sprite.
+        if (managedPlacedMedia.has(mediaId)) return;
+
+        createSharedSpritePlaceholder(mediaId, media);
+        $(media).onChange(() => updateSharedSpritePlaceholder(mediaId, media));
+      });
+
+      $(mediaObjects).onRemove((_media: any, mediaId: string) => {
+        removeSharedSpritePlaceholder(mediaId);
+      });
+    }
 
     roomLabel.textContent = `ROOM ${roomCode}`;
     status.textContent = "接続しました";
@@ -1443,6 +1553,11 @@ function commitActiveArtworkToWorld() {
   });
   selectedManagedMediaId = committedId;
   refreshMediaManagerUI();
+
+  // Prototype 0.14.1: only Sprite existence/transform is shared in this stage.
+  if (importedArtworkKind === "sprite") {
+    sendCommittedSpriteToSharedWorld(committedId);
+  }
 
   // The Entity and resources now belong to the committed XRMediaObject.
   // Clear only the editor's references. Do NOT destroy the committed object.

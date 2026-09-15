@@ -1566,7 +1566,17 @@ async function addWebMArtworkToWorld(file: File) {
       stop: () => { video.pause(); },
       setLoop: (loop) => { video.loop = loop; }
     },
-    source: { fileName: file.name }
+    source: { fileName: file.name },
+    behavior: [
+      {
+        id: "proximity-play",
+        trigger: "user-proximity",
+        distance: 3,
+        enterAction: "play",
+        leaveAction: "stop",
+        enabled: true
+      }
+    ]
   }));
   activeXRMediaId = media.id;
 
@@ -1722,7 +1732,17 @@ async function addGLBArtworkToWorld(file: File) {
           }
         }
       },
-      source: { fileName: file.name }
+      source: { fileName: file.name },
+      behavior: [
+        {
+          id: "proximity-play",
+          trigger: "user-proximity",
+          distance: 3,
+          enterAction: "play",
+          leaveAction: "stop",
+          enabled: true
+        }
+      ]
     }));
     activeXRMediaId = media.id;
 
@@ -2143,6 +2163,11 @@ app.on("update", (dt: number) => {
   const me = avatars.get(currentSessionId);
   if (!me) return;
 
+  // Prototype 0.12 / REACTIVE BEHAVIOR CORE
+  // Evaluate media proximity every frame, even while the user is standing still.
+  // XRMediaManager fires playback actions only when inside/outside state changes.
+  xrMediaManager.updateUserProximity(localPosition);
+
   let x = 0;
   let z = 0;
   if (keys.has("w") || keys.has("arrowup")) z -= 1;
@@ -2180,7 +2205,6 @@ app.on("update", (dt: number) => {
     );
 
     me.entity.setPosition(localPosition);
-    xrMediaManager.updateUserProximity(localPosition);
 
     const now = performance.now();
     if (now - lastSend >= 1000 / SEND_HZ) {

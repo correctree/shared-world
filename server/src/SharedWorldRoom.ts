@@ -21,8 +21,13 @@ export class SharedWorldRoom extends Room<WorldState> {
   maxClients = 4;
   state = new WorldState();
 
-  messages = {
-    move: (
+  onCreate(options: { roomCode?: string }) {
+    this.setMetadata({ roomCode: String(options.roomCode || "ART001").toUpperCase() });
+
+    // Prototype 0.14.1.2
+    // Register messages explicitly so custom message types such as
+    // "media:add" are guaranteed to reach this Room on Colyseus 0.18.
+    this.onMessage("move", (
       client: Client,
       payload: { x?: number; z?: number; rotationY?: number }
     ) => {
@@ -46,17 +51,26 @@ export class SharedWorldRoom extends Room<WorldState> {
       player.x = clampedX;
       player.z = clampedZ;
       player.rotationY = nextRotationY;
-    },
+    });
 
-    // Prototype 0.14.1
-    "media:add": (client: Client, payload: AddMediaPayload) => {
-      if (this.state.mediaObjects.size >= MAX_MEDIA_OBJECTS) return;
+    this.onMessage("media:add", (client: Client, payload: AddMediaPayload) => {
+      console.log("[media:add received]", client.sessionId, payload?.id);
+
+      if (this.state.mediaObjects.size >= MAX_MEDIA_OBJECTS) {
+        console.warn("[media:add rejected] media object limit reached");
+        return;
+      }
 
       const id = String(payload?.id || "").trim().slice(0, 80);
-      if (!id || this.state.mediaObjects.has(id)) return;
+      if (!id || this.state.mediaObjects.has(id)) {
+        console.warn("[media:add rejected] invalid or duplicate id", id);
+        return;
+      }
 
-      // 0.14.1 deliberately starts with Sprite metadata only.
-      if (String(payload?.type || "") !== "sprite") return;
+      if (String(payload?.type || "") !== "sprite") {
+        console.warn("[media:add rejected] unsupported type", payload?.type);
+        return;
+      }
 
       const x = Number(payload?.x);
       const y = Number(payload?.y);
@@ -64,7 +78,10 @@ export class SharedWorldRoom extends Room<WorldState> {
       const rotationY = Number(payload?.rotationY);
       const scale = Number(payload?.scale);
 
-      if (![x, y, z, rotationY, scale].every(Number.isFinite)) return;
+      if (![x, y, z, rotationY, scale].every(Number.isFinite)) {
+        console.warn("[media:add rejected] invalid transform", payload);
+        return;
+      }
 
       this.state.mediaObjects.set(id, new SharedMediaObject({
         title: String(payload?.title || "Sprite Artwork").slice(0, 80),
@@ -78,12 +95,10 @@ export class SharedWorldRoom extends Room<WorldState> {
         scale: Math.max(0.05, Math.min(20, scale))
       }));
 
-      console.log(`[media:add] ${id} / ${client.sessionId}`);
-    }
-  };
+      console.log("[media:add stored]", id, "total:", this.state.mediaObjects.size);
+    });
 
-  onCreate(options: { roomCode?: string }) {
-    this.setMetadata({ roomCode: String(options.roomCode || "ART001").toUpperCase() });
+    console.log("[room:create] message handlers ready");
   }
 
   onJoin(client: Client, options: { name?: string }) {

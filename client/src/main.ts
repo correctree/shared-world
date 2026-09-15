@@ -17,6 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
+console.log("[PROTOTYPE 0.14.1.1 DIAGNOSTIC CLIENT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -527,27 +528,56 @@ function removeSharedSpritePlaceholder(mediaId: string) {
 }
 
 function sendCommittedSpriteToSharedWorld(mediaId: string) {
-  if (!activeRoom) return;
+  console.log("[SHARED SEND START]", {
+    mediaId,
+    hasRoom: !!activeRoom,
+    roomId: activeRoom?.roomId,
+    sessionId: activeRoom?.sessionId
+  });
+
+  if (!activeRoom) {
+    console.error("[SHARED SEND ABORT] activeRoom is null");
+    return;
+  }
+
   const item = managedPlacedMedia.get(mediaId);
   const media = xrMediaManager.get(mediaId);
-  if (!item || item.kind !== "sprite" || !media) return;
+
+  console.log("[SHARED SEND CHECK]", {
+    hasManagedItem: !!item,
+    kind: item?.kind,
+    hasXRMedia: !!media
+  });
+
+  if (!item || item.kind !== "sprite" || !media) {
+    console.error("[SHARED SEND ABORT] media lookup/kind failed");
+    return;
+  }
 
   const position = item.entity.getPosition();
   const rotation = item.entity.getEulerAngles();
   const scale = item.entity.getLocalScale();
 
-  activeRoom.send("media:add", {
+  const payload = {
     id: mediaId,
     title: media.title || "Sprite Artwork",
     type: "sprite",
-    // 0.14.1 only shares a reference label. The ZIP bytes stay local.
     assetRef: "local-sprite-package",
     x: position.x,
     y: position.y,
     z: position.z,
     rotationY: rotation.y,
     scale: scale.x
-  });
+  };
+
+  console.log("[SHARED SEND PAYLOAD]", payload);
+
+  try {
+    activeRoom.send("media:add", payload);
+    console.log("[SHARED SEND COMPLETE]", mediaId);
+  } catch (error) {
+    console.error("[SHARED SEND ERROR]", error);
+  }
 }
 
 // =========================================================

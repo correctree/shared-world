@@ -1960,6 +1960,55 @@ addArtworkToWorldButton?.addEventListener("click", async () => {
 updateArtworkModeUI();
 updatePlacementUI();
 
+// ============================================================
+// Prototype 0.12 / STEP 2-35
+// PLACE / XRMediaManager diagnostic
+// ============================================================
+
+function debugXRMediaManager(label: string) {
+    console.group(`[XR DEBUG] ${label}`);
+
+    const objects = xrMediaManager.list();
+
+    console.log("Registered Media Objects:", objects.length);
+    console.log("Active Media ID:", activeXRMediaId);
+    console.log("Local Player Position:", {
+        x: localPosition.x,
+        y: localPosition.y,
+        z: localPosition.z
+    });
+
+    objects.forEach((object, index) => {
+        const entity = object.entity;
+        const position = entity?.getPosition();
+
+        console.log(`Media ${index + 1}`, {
+            id: object.id,
+            title: object.title,
+            type: object.type,
+
+            entityExists: !!entity,
+            entityEnabled: entity?.enabled ?? false,
+
+            position: position
+                ? {
+                    x: position.x,
+                    y: position.y,
+                    z: position.z
+                }
+                : null,
+
+            hasPlayback: !!object.playback,
+            behavior: object.behavior
+        });
+    });
+
+    console.groupEnd();
+}
+
+// Browser Console から手動実行できるようにする
+(window as any).debugXRMediaManager = debugXRMediaManager;
+
 // =========================================================
 // UPDATE LOOP
 // =========================================================

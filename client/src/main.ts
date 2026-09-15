@@ -893,6 +893,7 @@ mediaManagerPanel.innerHTML = `
       <select id="behaviorTrigger">
         <option value="user-proximity">USER PROXIMITY</option>
         <option value="look-at">LOOK AT</option>
+        <option value="touch">TOUCH</option>
       </select>
     </label>
 
@@ -1063,13 +1064,18 @@ function refreshBehaviorEditorUI() {
     return;
   }
 
-  behaviorTrigger.value = (behavior as any).trigger === "look-at" ? "look-at" : "user-proximity";
-  const isLookAt = (behavior as any).trigger === "look-at";
+  const trigger = String((behavior as any).trigger ?? "user-proximity");
+  behaviorTrigger.value =
+    trigger === "look-at" ? "look-at" :
+    trigger === "touch" ? "touch" :
+    "user-proximity";
+  const isLookAt = trigger === "look-at";
+  const isTouch = trigger === "touch";
 
   behaviorDistance.value = String(behavior.distance);
   behaviorDistanceValue.textContent = `${behavior.distance.toFixed(1)} m`;
-  behaviorDistance.disabled = isLookAt;
-  behaviorDistance.closest(".behavior-row")?.classList.toggle("hidden", isLookAt);
+  behaviorDistance.disabled = isLookAt || isTouch;
+  behaviorDistance.closest(".behavior-row")?.classList.toggle("hidden", isLookAt || isTouch);
 
   const lookAngle = Number((behavior as any).lookAngle ?? 12);
   behaviorLookAngle.value = String(lookAngle);
@@ -1079,7 +1085,10 @@ function refreshBehaviorEditorUI() {
   behaviorEnterAction.value = behavior.enterAction;
   behaviorLeaveAction.value = behavior.leaveAction;
   behaviorEnabled.checked = behavior.enabled;
-  behaviorStatus.textContent = behavior.enabled ? "READY" : "DISABLED";
+  behaviorStatus.textContent =
+    !behavior.enabled ? "DISABLED" :
+    isTouch ? "TAP / CLICK OBJECT" :
+    "READY";
 }
 
 function applyBehaviorEditorUI() {
@@ -2367,6 +2376,113 @@ function updateLookAtBehaviors() {
     }
   }
 }
+
+
+// =========================================================
+// Prototype 0.13.3 / TOUCH TRIGGER
+// PC click + mobile tap through one pointer-based spatial input.
+// The Behavior layer remains device-independent for future WebXR input.
+// =========================================================
+
+const touchRayFrom = new pc.Vec3();
+const touchRayTo = new pc.Vec3();
+const touchRayDirection = new pc.Vec3();
+let spatialPointerStart: { id: number; x: number; y: number } | null = null;
+const TOUCH_POINTER_MOVE_TOLERANCE = 10;
+
+function findTouchedMediaObject(clientX: number, clientY: number) {
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+
+  const screenX = (clientX - rect.left) * (canvas.width / rect.width);
+  const screenY = (clientY - rect.top) * (canvas.height / rect.height);
+
+  camera.camera!.screenToWorld(screenX, screenY, camera.camera!.nearClip, touchRayFrom);
+  camera.camera!.screenToWorld(screenX, screenY, camera.camera!.farClip, touchRayTo);
+  touchRayDirection.sub2(touchRayTo, touchRayFrom).normalize();
+
+  let bestObject: any = null;
+  let bestDistance = Infinity;
+
+  // Browser-native fallback hit test using a bounding sphere around each media entity.
+  // This avoids adding a physics dependency and can later be replaced by WebXR hit-test/controller rays.
+  for (const object of xrMediaManager.list()) {
+    const behavior = object.behavior?.find(
+      (item: any) => (item as any).trigger === "touch" && item.enabled
+    );
+    if (!behavior || !object.entity || !object.entity.enabled) continue;
+
+    const center = object.entity.getPosition();
+    const scale = object.entity.getLocalScale();
+    const radius = Math.max(0.35, Math.max(Math.abs(scale.x), Math.abs(scale.y), Math.abs(scale.z)) * 0.55);
+
+    const toCenter = center.clone().sub(touchRayFrom);
+    const projection = toCenter.dot(touchRayDirection);
+    if (projection < 0) continue;
+
+    const closest = touchRayFrom.clone().add(touchRayDirection.clone().mulScalar(projection));
+    const distanceToRay = center.distance(closest);
+
+    if (distanceToRay <= radius && projection < bestDistance) {
+      bestDistance = projection;
+      bestObject = { object, behavior };
+    }
+  }
+
+  return bestObject;
+}
+
+function triggerSpatialTouch(clientX: number, clientY: number) {
+  const hit = findTouchedMediaObject(clientX, clientY);
+  if (!hit) return;
+
+  const { object, behavior } = hit;
+  runXRBehaviorAction(object, behavior.enterAction);
+
+  if (object.id === selectedManagedMediaId) {
+    behaviorStatus.textContent = "TOUCHED / ACTIVE";
+    window.setTimeout(() => {
+      if (selectedManagedMediaId === object.id && behavior.enabled) {
+        behaviorStatus.textContent = "TAP / CLICK OBJECT";
+      }
+    }, 450);
+  }
+
+  console.log("[XR TOUCH]", {
+    object: object.title,
+    action: behavior.enterAction
+  });
+}
+
+canvas.addEventListener("pointerdown", (event) => {
+  // Mouse: left button only. Touch/pen: primary pointer.
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  spatialPointerStart = {
+    id: event.pointerId,
+    x: event.clientX,
+    y: event.clientY
+  };
+});
+
+canvas.addEventListener("pointerup", (event) => {
+  if (!spatialPointerStart || spatialPointerStart.id !== event.pointerId) return;
+
+  const dx = event.clientX - spatialPointerStart.x;
+  const dy = event.clientY - spatialPointerStart.y;
+  const moved = Math.hypot(dx, dy);
+  spatialPointerStart = null;
+
+  // A drag rotates the camera; a short stationary pointer gesture is a TOUCH.
+  if (moved <= TOUCH_POINTER_MOVE_TOLERANCE) {
+    triggerSpatialTouch(event.clientX, event.clientY);
+  }
+});
+
+canvas.addEventListener("pointercancel", (event) => {
+  if (spatialPointerStart?.id === event.pointerId) {
+    spatialPointerStart = null;
+  }
+});
 
 app.on("update", (dt: number) => {
   if (

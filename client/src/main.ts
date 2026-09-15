@@ -913,6 +913,14 @@ mediaManagerPanel.innerHTML = `
       </div>
     </label>
 
+    <label id="behaviorTouchModeRow" class="behavior-row hidden">
+      <span>Touch Mode</span>
+      <select id="behaviorTouchMode">
+        <option value="toggle">TOGGLE</option>
+        <option value="repeat">REPEAT</option>
+      </select>
+    </label>
+
     <label class="behavior-row">
       <span>Enter Action</span>
       <select id="behaviorEnterAction">
@@ -1027,6 +1035,8 @@ const behaviorDistanceValue = mediaManagerPanel.querySelector<HTMLElement>("#beh
 const behaviorLookAngleRow = mediaManagerPanel.querySelector<HTMLElement>("#behaviorLookAngleRow")!;
 const behaviorLookAngle = mediaManagerPanel.querySelector<HTMLInputElement>("#behaviorLookAngle")!;
 const behaviorLookAngleValue = mediaManagerPanel.querySelector<HTMLElement>("#behaviorLookAngleValue")!;
+const behaviorTouchModeRow = mediaManagerPanel.querySelector<HTMLElement>("#behaviorTouchModeRow")!;
+const behaviorTouchMode = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorTouchMode")!;
 const behaviorEnterAction = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorEnterAction")!;
 const behaviorLeaveAction = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorLeaveAction")!;
 const behaviorEnabled = mediaManagerPanel.querySelector<HTMLInputElement>("#behaviorEnabled")!;
@@ -1082,6 +1092,9 @@ function refreshBehaviorEditorUI() {
   behaviorLookAngleValue.textContent = `${lookAngle.toFixed(0)}°`;
   behaviorLookAngleRow.classList.toggle("hidden", !isLookAt);
 
+  behaviorTouchModeRow.classList.toggle("hidden", !isTouch);
+  behaviorTouchMode.value = String((behavior as any).touchMode ?? "toggle");
+
   behaviorEnterAction.value = behavior.enterAction;
   behaviorLeaveAction.value = behavior.leaveAction;
   behaviorEnabled.checked = behavior.enabled;
@@ -1098,6 +1111,7 @@ function applyBehaviorEditorUI() {
   (behavior as any).trigger = behaviorTrigger.value;
   behavior.distance = Number(behaviorDistance.value);
   (behavior as any).lookAngle = Number(behaviorLookAngle.value);
+  (behavior as any).touchMode = behaviorTouchMode.value;
   behavior.enterAction = behaviorEnterAction.value as "play" | "stop";
   behavior.leaveAction = behaviorLeaveAction.value as "play" | "stop";
   behavior.enabled = behaviorEnabled.checked;
@@ -1124,6 +1138,8 @@ behaviorTrigger.addEventListener("change", () => {
     const object = xrMediaManager.get(selectedManagedMediaId);
     object?.playback?.stop();
     lookAtBehaviorState.delete(selectedManagedMediaId);
+    touchInitializedObjects.add(selectedManagedMediaId);
+    touchActiveState.set(selectedManagedMediaId, false);
     behaviorStatus.textContent = "TAP / CLICK OBJECT";
   }
 
@@ -1131,6 +1147,7 @@ behaviorTrigger.addEventListener("change", () => {
 });
 behaviorDistance.addEventListener("input", applyBehaviorEditorUI);
 behaviorLookAngle.addEventListener("input", applyBehaviorEditorUI);
+behaviorTouchMode.addEventListener("change", applyBehaviorEditorUI);
 behaviorEnterAction.addEventListener("change", applyBehaviorEditorUI);
 behaviorLeaveAction.addEventListener("change", applyBehaviorEditorUI);
 behaviorEnabled.addEventListener("change", applyBehaviorEditorUI);
@@ -2444,6 +2461,7 @@ function findTouchedMediaObject(clientX: number, clientY: number) {
 }
 
 const touchInitializedObjects = new Set<string>();
+const touchActiveState = new Map<string, boolean>();
 
 function initializeTouchBehaviorPlayback() {
   for (const object of xrMediaManager.list()) {
@@ -2454,10 +2472,14 @@ function initializeTouchBehaviorPlayback() {
 
     object.playback?.stop();
     touchInitializedObjects.add(object.id);
+    touchActiveState.set(object.id, false);
   }
 
   for (const id of Array.from(touchInitializedObjects)) {
-    if (!xrMediaManager.get(id)) touchInitializedObjects.delete(id);
+    if (!xrMediaManager.get(id)) {
+      touchInitializedObjects.delete(id);
+      touchActiveState.delete(id);
+    }
   }
 }
 
@@ -2466,20 +2488,45 @@ function triggerSpatialTouch(clientX: number, clientY: number) {
   if (!hit) return;
 
   const { object, behavior } = hit;
-  runXRBehaviorAction(object, behavior.enterAction);
+  const touchMode = String((behavior as any).touchMode ?? "toggle");
+
+  if (touchMode === "repeat") {
+    runXRBehaviorAction(object, behavior.enterAction);
+
+    if (object.id === selectedManagedMediaId) {
+      behaviorStatus.textContent = "TOUCHED / REPEAT";
+      window.setTimeout(() => {
+        if (selectedManagedMediaId === object.id && behavior.enabled) {
+          behaviorStatus.textContent = "TAP / CLICK OBJECT";
+        }
+      }, 450);
+    }
+
+    console.log("[XR TOUCH]", {
+      object: object.title,
+      mode: "repeat",
+      action: behavior.enterAction
+    });
+    return;
+  }
+
+  // TOGGLE: first touch = Enter Action, second touch = Leave Action.
+  const wasActive = touchActiveState.get(object.id) ?? false;
+  const isActive = !wasActive;
+  touchActiveState.set(object.id, isActive);
+
+  const action = isActive ? behavior.enterAction : behavior.leaveAction;
+  runXRBehaviorAction(object, action);
 
   if (object.id === selectedManagedMediaId) {
-    behaviorStatus.textContent = "TOUCHED / ACTIVE";
-    window.setTimeout(() => {
-      if (selectedManagedMediaId === object.id && behavior.enabled) {
-        behaviorStatus.textContent = "TAP / CLICK OBJECT";
-      }
-    }, 450);
+    behaviorStatus.textContent = isActive ? "TOUCHED / ON" : "TOUCHED / OFF";
   }
 
   console.log("[XR TOUCH]", {
     object: object.title,
-    action: behavior.enterAction
+    mode: "toggle",
+    state: isActive ? "on" : "off",
+    action
   });
 }
 

@@ -883,8 +883,10 @@ mediaManagerPanel.innerHTML = `
   </div>
   <div id="mediaManagerList"></div>
 
-  <div id="behaviorEditor" class="behavior-editor hidden">
+  <div id="behaviorEditor" class="behavior-editor">
     <div class="behavior-editor-title">BEHAVIOR</div>
+    <div id="behaviorEditorStatus" class="behavior-editor-status">SELECT A MEDIA OBJECT</div>
+    <div id="behaviorEditorControls" class="behavior-editor-controls hidden">
 
     <label class="behavior-row">
       <span>Trigger</span>
@@ -921,6 +923,7 @@ mediaManagerPanel.innerHTML = `
       <span>Enabled</span>
       <input id="behaviorEnabled" type="checkbox" checked>
     </label>
+    </div>
   </div>
 
   <div class="media-manager-actions">
@@ -965,6 +968,8 @@ mediaManagerStyle.textContent = `
     background:#0d131b;
   }
   .behavior-editor.hidden { display:none; }
+  .behavior-editor-status { opacity:.55; font-size:11px; padding:4px 0 2px; }
+  .behavior-editor-controls.hidden { display:none; }
   .behavior-editor-title {
     margin-bottom:10px; font-size:11px; font-weight:800; letter-spacing:.08em; opacity:.72;
   }
@@ -997,6 +1002,8 @@ const deleteManagedMediaButton = mediaManagerPanel.querySelector<HTMLButtonEleme
 
 // Prototype 0.12.3 / BEHAVIOR EDITOR
 const behaviorEditor = mediaManagerPanel.querySelector<HTMLElement>("#behaviorEditor")!;
+const behaviorEditorStatus = mediaManagerPanel.querySelector<HTMLElement>("#behaviorEditorStatus")!;
+const behaviorEditorControls = mediaManagerPanel.querySelector<HTMLElement>("#behaviorEditorControls")!;
 const behaviorTrigger = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorTrigger")!;
 const behaviorDistance = mediaManagerPanel.querySelector<HTMLInputElement>("#behaviorDistance")!;
 const behaviorDistanceValue = mediaManagerPanel.querySelector<HTMLElement>("#behaviorDistanceValue")!;
@@ -1028,8 +1035,13 @@ function refreshBehaviorEditorUI() {
   const behavior = getSelectedProximityBehavior();
   const hasSelection = !!selectedManagedMediaId && managedPlacedMedia.has(selectedManagedMediaId);
 
-  behaviorEditor.classList.toggle("hidden", !hasSelection || !behavior);
-  if (!behavior) return;
+  behaviorEditor.classList.remove("hidden");
+  behaviorEditorStatus.classList.toggle("hidden", hasSelection && !!behavior);
+  behaviorEditorControls.classList.toggle("hidden", !hasSelection || !behavior);
+  if (!behavior) {
+    behaviorEditorStatus.textContent = "SELECT A MEDIA OBJECT";
+    return;
+  }
 
   behaviorTrigger.value = "user-proximity";
   behaviorDistance.value = String(behavior.distance);

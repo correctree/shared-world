@@ -882,6 +882,47 @@ mediaManagerPanel.innerHTML = `
     <button id="closeMediaManagerButton" type="button">×</button>
   </div>
   <div id="mediaManagerList"></div>
+
+  <div id="behaviorEditor" class="behavior-editor hidden">
+    <div class="behavior-editor-title">BEHAVIOR</div>
+
+    <label class="behavior-row">
+      <span>Trigger</span>
+      <select id="behaviorTrigger">
+        <option value="user-proximity">USER PROXIMITY</option>
+      </select>
+    </label>
+
+    <label class="behavior-row">
+      <span>Distance</span>
+      <div class="behavior-distance-control">
+        <input id="behaviorDistance" type="range" min="0.5" max="20" step="0.5" value="3">
+        <strong id="behaviorDistanceValue">3.0 m</strong>
+      </div>
+    </label>
+
+    <label class="behavior-row">
+      <span>Enter Action</span>
+      <select id="behaviorEnterAction">
+        <option value="play">PLAY</option>
+        <option value="stop">STOP</option>
+      </select>
+    </label>
+
+    <label class="behavior-row">
+      <span>Leave Action</span>
+      <select id="behaviorLeaveAction">
+        <option value="stop">STOP</option>
+        <option value="play">PLAY</option>
+      </select>
+    </label>
+
+    <label class="behavior-enabled-row">
+      <span>Enabled</span>
+      <input id="behaviorEnabled" type="checkbox" checked>
+    </label>
+  </div>
+
   <div class="media-manager-actions">
     <button id="editManagedMediaButton" type="button" disabled>EDIT</button>
     <button id="deleteManagedMediaButton" type="button" disabled>DELETE</button>
@@ -919,6 +960,26 @@ mediaManagerStyle.textContent = `
   .media-manager-kind { opacity:.62; font-size:10px; font-weight:800; }
   .media-manager-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   .media-manager-empty { opacity:.55; padding:18px 6px; text-align:center; font-size:12px; }
+  .behavior-editor {
+    margin-top:12px; padding:12px; border:1px solid #343d49; border-radius:12px;
+    background:#0d131b;
+  }
+  .behavior-editor.hidden { display:none; }
+  .behavior-editor-title {
+    margin-bottom:10px; font-size:11px; font-weight:800; letter-spacing:.08em; opacity:.72;
+  }
+  .behavior-row, .behavior-enabled-row {
+    display:grid; grid-template-columns:92px 1fr; align-items:center; gap:8px;
+    margin-top:9px; font-size:11px;
+  }
+  .behavior-row select {
+    width:100%; min-width:0; box-sizing:border-box; padding:7px 8px;
+    border:1px solid #3d4653; border-radius:8px; background:#151d28; color:#fff;
+  }
+  .behavior-distance-control { display:grid; grid-template-columns:1fr 48px; align-items:center; gap:8px; }
+  #behaviorDistance { width:100%; min-width:0; }
+  #behaviorDistanceValue { text-align:right; font-size:11px; white-space:nowrap; }
+  #behaviorEnabled { justify-self:start; width:18px !important; height:18px; }
   .media-manager-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
   .media-manager-actions button { width:100% !important; }
   #deleteManagedMediaButton { border-color:#7b3940; }
@@ -933,6 +994,75 @@ const closeMediaManagerButton = mediaManagerPanel.querySelector<HTMLButtonElemen
 const mediaManagerList = mediaManagerPanel.querySelector<HTMLElement>("#mediaManagerList")!;
 const editManagedMediaButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#editManagedMediaButton")!;
 const deleteManagedMediaButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#deleteManagedMediaButton")!;
+
+// Prototype 0.12.3 / BEHAVIOR EDITOR
+const behaviorEditor = mediaManagerPanel.querySelector<HTMLElement>("#behaviorEditor")!;
+const behaviorTrigger = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorTrigger")!;
+const behaviorDistance = mediaManagerPanel.querySelector<HTMLInputElement>("#behaviorDistance")!;
+const behaviorDistanceValue = mediaManagerPanel.querySelector<HTMLElement>("#behaviorDistanceValue")!;
+const behaviorEnterAction = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorEnterAction")!;
+const behaviorLeaveAction = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorLeaveAction")!;
+const behaviorEnabled = mediaManagerPanel.querySelector<HTMLInputElement>("#behaviorEnabled")!;
+
+function getSelectedProximityBehavior() {
+  if (!selectedManagedMediaId) return null;
+  const object = xrMediaManager.get(selectedManagedMediaId);
+  if (!object) return null;
+
+  let behavior = object.behavior?.find((item) => item.trigger === "user-proximity");
+  if (!behavior) {
+    behavior = {
+      id: "proximity-play",
+      trigger: "user-proximity",
+      distance: 3,
+      enterAction: "play",
+      leaveAction: "stop",
+      enabled: true
+    };
+    object.behavior = [...(object.behavior ?? []), behavior];
+  }
+  return behavior;
+}
+
+function refreshBehaviorEditorUI() {
+  const behavior = getSelectedProximityBehavior();
+  const hasSelection = !!selectedManagedMediaId && managedPlacedMedia.has(selectedManagedMediaId);
+
+  behaviorEditor.classList.toggle("hidden", !hasSelection || !behavior);
+  if (!behavior) return;
+
+  behaviorTrigger.value = "user-proximity";
+  behaviorDistance.value = String(behavior.distance);
+  behaviorDistanceValue.textContent = `${behavior.distance.toFixed(1)} m`;
+  behaviorEnterAction.value = behavior.enterAction;
+  behaviorLeaveAction.value = behavior.leaveAction;
+  behaviorEnabled.checked = behavior.enabled;
+}
+
+function applyBehaviorEditorUI() {
+  const behavior = getSelectedProximityBehavior();
+  if (!behavior) return;
+
+  behavior.distance = Number(behaviorDistance.value);
+  behavior.enterAction = behaviorEnterAction.value as "play" | "stop";
+  behavior.leaveAction = behaviorLeaveAction.value as "play" | "stop";
+  behavior.enabled = behaviorEnabled.checked;
+  behaviorDistanceValue.textContent = `${behavior.distance.toFixed(1)} m`;
+
+  console.log("[XR BEHAVIOR UPDATED]", {
+    mediaId: selectedManagedMediaId,
+    trigger: behavior.trigger,
+    distance: behavior.distance,
+    enterAction: behavior.enterAction,
+    leaveAction: behavior.leaveAction,
+    enabled: behavior.enabled
+  });
+}
+
+behaviorDistance.addEventListener("input", applyBehaviorEditorUI);
+behaviorEnterAction.addEventListener("change", applyBehaviorEditorUI);
+behaviorLeaveAction.addEventListener("change", applyBehaviorEditorUI);
+behaviorEnabled.addEventListener("change", applyBehaviorEditorUI);
 
 function refreshMediaManagerUI() {
   mediaManagerList.innerHTML = "";
@@ -962,6 +1092,7 @@ function refreshMediaManagerUI() {
   const hasSelection = !!selectedManagedMediaId && managedPlacedMedia.has(selectedManagedMediaId);
   editManagedMediaButton.disabled = !hasSelection;
   deleteManagedMediaButton.disabled = !hasSelection;
+  refreshBehaviorEditorUI();
 }
 
 function disposePlacedRuntime(id: string) {

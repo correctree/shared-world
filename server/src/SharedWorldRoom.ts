@@ -1,8 +1,21 @@
 import { Room, type Client } from "colyseus";
-import { Player, WorldState } from "./state.js";
+import { Player, SharedMediaObject, WorldState } from "./state.js";
 
 const WORLD_LIMIT = 6.5;
 const MAX_STEP = 0.75;
+const MAX_MEDIA_OBJECTS = 64;
+
+type AddMediaPayload = {
+  id?: string;
+  title?: string;
+  type?: string;
+  assetRef?: string;
+  x?: number;
+  y?: number;
+  z?: number;
+  rotationY?: number;
+  scale?: number;
+};
 
 export class SharedWorldRoom extends Room<WorldState> {
   maxClients = 4;
@@ -10,18 +23,17 @@ export class SharedWorldRoom extends Room<WorldState> {
 
   messages = {
     move: (
-  client: Client,
-  payload: { x?: number; z?: number; rotationY?: number }
-) => {
+      client: Client,
+      payload: { x?: number; z?: number; rotationY?: number }
+    ) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
 
       const nextX = Number(payload?.x);
       const nextZ = Number(payload?.z);
+      const nextRotationY = Number(payload?.rotationY);
       if (!Number.isFinite(nextX) || !Number.isFinite(nextZ)) return;
-  
-  const nextRotationY = Number(payload?.rotationY);
-  if (!Number.isFinite(nextRotationY)) return;
+      if (!Number.isFinite(nextRotationY)) return;
 
       const clampedX = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, nextX));
       const clampedZ = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, nextZ));
@@ -29,12 +41,44 @@ export class SharedWorldRoom extends Room<WorldState> {
       const dz = clampedZ - player.z;
       const distance = Math.hypot(dx, dz);
 
-      // Prototype-level sanity check against large teleports.
       if (distance > MAX_STEP) return;
 
       player.x = clampedX;
       player.z = clampedZ;
-  player.rotationY = nextRotationY;
+      player.rotationY = nextRotationY;
+    },
+
+    // Prototype 0.14.1
+    "media:add": (client: Client, payload: AddMediaPayload) => {
+      if (this.state.mediaObjects.size >= MAX_MEDIA_OBJECTS) return;
+
+      const id = String(payload?.id || "").trim().slice(0, 80);
+      if (!id || this.state.mediaObjects.has(id)) return;
+
+      // 0.14.1 deliberately starts with Sprite metadata only.
+      if (String(payload?.type || "") !== "sprite") return;
+
+      const x = Number(payload?.x);
+      const y = Number(payload?.y);
+      const z = Number(payload?.z);
+      const rotationY = Number(payload?.rotationY);
+      const scale = Number(payload?.scale);
+
+      if (![x, y, z, rotationY, scale].every(Number.isFinite)) return;
+
+      this.state.mediaObjects.set(id, new SharedMediaObject({
+        title: String(payload?.title || "Sprite Artwork").slice(0, 80),
+        type: "sprite",
+        assetRef: String(payload?.assetRef || "").slice(0, 240),
+        ownerSessionId: client.sessionId,
+        x: Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, x)),
+        y: Math.max(-10, Math.min(20, y)),
+        z: Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, z)),
+        rotationY,
+        scale: Math.max(0.05, Math.min(20, scale))
+      }));
+
+      console.log(`[media:add] ${id} / ${client.sessionId}`);
     }
   };
 

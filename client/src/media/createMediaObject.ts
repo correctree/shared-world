@@ -1,11 +1,11 @@
 import type * as pc from "playcanvas";
 import {
-  createDefaultTransform,
-  type XRMediaObject,
-  type XRMediaType,
-  type XRPlaybackController
+    createDefaultTransform,
+    type XRMediaObject,
+    type XRMediaType,
+    type XRPlaybackController,
+    type XRMediaBehavior
 } from "../core/XRMediaObject";
-
 let sequence = 0;
 
 export function createMediaObject(options: {
@@ -18,6 +18,7 @@ export function createMediaObject(options: {
   spatial?: boolean;
   live?: boolean;
   source?: unknown;
+  behavior?: XRMediaBehavior[];
 }): XRMediaObject {
   sequence += 1;
   return {
@@ -34,6 +35,6 @@ export function createMediaObject(options: {
     },
     playback: options.playback,
     source: options.source,
-    behavior: []
+    behavior: options.behavior ?? []  
   };
 }

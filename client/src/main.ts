@@ -881,6 +881,172 @@ glbAnimationLoop.addEventListener("change", () => {
   }
 });
 
+// =========================================================
+// Prototype 0.11 / Stage 2
+// MULTI MEDIA OBJECT RUNTIME
+// =========================================================
+
+type PlacedMediaRuntime = {
+  id: string;
+  update?: (dt: number) => void;
+  dispose?: () => void;
+};
+
+const placedMediaRuntimes: PlacedMediaRuntime[] = [];
+
+/**
+ * PLACE commits the currently edited media object to the world.
+ * Its resources are detached from the temporary import globals instead of
+ * being destroyed, so the next import can coexist with earlier artworks.
+ */
+function commitActiveArtworkToWorld() {
+  if (!importedArtworkEntity || !activeXRMediaId || !importedArtworkKind) {
+    return;
+  }
+
+  const committedId = activeXRMediaId;
+
+  if (importedArtworkKind === "webm") {
+    const video = importedArtworkVideo;
+    const texture = importedArtworkTexture;
+    const objectURL = importedArtworkObjectURL;
+
+    placedMediaRuntimes.push({
+      id: committedId,
+      update: () => {
+        if (video && texture && video.readyState >= 2) {
+          texture.upload();
+        }
+      },
+      dispose: () => {
+        video?.pause();
+        texture?.destroy();
+        if (objectURL) URL.revokeObjectURL(objectURL);
+      }
+    });
+  }
+
+  if (importedArtworkKind === "sprite") {
+    const image = importedSpriteImage;
+    const canvas = importedSpriteCanvas;
+    const context = importedSpriteContext;
+    const texture = importedArtworkTexture;
+    const imageURL = importedSpriteImageURL;
+    const frameCount = importedSpriteFrameCount;
+    const columns = importedSpriteColumns;
+    const frameWidth = importedSpriteFrameWidth;
+    const frameHeight = importedSpriteFrameHeight;
+    const fps = importedSpriteFPS;
+
+    let frame = importedSpriteFrame;
+    let elapsed = importedSpriteElapsed;
+    let playing = importedSpritePlaying;
+
+    const media = xrMediaManager.get(committedId);
+    if (media) {
+      media.playback = {
+        play: () => { playing = true; },
+        stop: () => { playing = false; },
+        setLoop: () => { /* Sprite currently loops by design. */ }
+      };
+    }
+
+    const drawCommittedFrame = (frameIndex: number) => {
+      if (!image || !canvas || !context || frameCount <= 0) return;
+
+      const safeFrame = ((frameIndex % frameCount) + frameCount) % frameCount;
+      const column = safeFrame % columns;
+      const row = Math.floor(safeFrame / columns);
+
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(
+        image,
+        column * frameWidth,
+        row * frameHeight,
+        frameWidth,
+        frameHeight,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+    };
+
+    placedMediaRuntimes.push({
+      id: committedId,
+      update: (dt: number) => {
+        if (!playing || !texture || frameCount <= 0 || fps <= 0) return;
+
+        elapsed += dt;
+        const frameDuration = 1 / fps;
+        let changed = false;
+
+        while (elapsed >= frameDuration) {
+          elapsed -= frameDuration;
+          frame = (frame + 1) % frameCount;
+          changed = true;
+        }
+
+        if (changed) {
+          drawCommittedFrame(frame);
+          texture.upload();
+        }
+      },
+      dispose: () => {
+        texture?.destroy();
+        if (imageURL) URL.revokeObjectURL(imageURL);
+      }
+    });
+  }
+
+  if (importedArtworkKind === "glb") {
+    const asset = importedGLBAsset;
+    const objectURL = importedGLBObjectURL;
+
+    placedMediaRuntimes.push({
+      id: committedId,
+      dispose: () => {
+        if (asset) {
+          asset.unload();
+          app.assets.remove(asset);
+        }
+        if (objectURL) URL.revokeObjectURL(objectURL);
+      }
+    });
+  }
+
+  // The Entity and resources now belong to the committed XRMediaObject.
+  // Clear only the editor's references. Do NOT destroy the committed object.
+  importedArtworkEntity = null;
+  importedArtworkVideo = null;
+  importedArtworkTexture = null;
+  importedArtworkObjectURL = null;
+
+  importedGLBModelEntity = null;
+  importedGLBAsset = null;
+  importedGLBObjectURL = null;
+
+  importedSpriteImageURL = null;
+  importedSpriteMeta = null;
+  importedSpriteImage = null;
+  importedSpriteCanvas = null;
+  importedSpriteContext = null;
+  importedSpriteFrame = 0;
+  importedSpriteElapsed = 0;
+  importedSpritePlaying = false;
+
+  importedArtworkKind = null;
+  activeXRMediaId = null;
+  resetGLBAnimationUI();
+
+  console.log(
+    "XR Media committed:",
+    committedId,
+    "total:",
+    xrMediaManager.list().length
+  );
+}
+
 function clearImportedArtwork() {
   if (activeXRMediaId) {
     xrMediaManager.unregister(activeXRMediaId);
@@ -1539,8 +1705,9 @@ artworkRotationY?.addEventListener("input", () => {
 });
 
 placeArtworkButton?.addEventListener("click", () => {
+  commitActiveArtworkToWorld();
   artworkPlacementPanel?.classList.add("hidden");
-  console.log("Artwork placement confirmed.");
+  console.log("Artwork placement confirmed and committed to XR Media World.");
 });
 
 cancelPlacementButton?.addEventListener("click", () => {
@@ -1668,6 +1835,11 @@ app.on("update", (dt: number) => {
       drawSpriteFrame(importedSpriteFrame);
       importedArtworkTexture.upload();
     }
+  }
+
+  // Prototype 0.11 / Stage 2 / keep all placed animated media alive.
+  for (const runtime of placedMediaRuntimes) {
+    runtime.update?.(dt);
   }
 
   const cameraTarget =

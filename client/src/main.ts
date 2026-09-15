@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.1.1 DIAGNOSTIC CLIENT LOADED]");
+console.log("[PROTOTYPE 0.14.2 SHARED MEDIA RECEIVE FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -619,21 +619,32 @@ async function enterWorld() {
       removeAvatar(sessionId);
     });
 
-    // Prototype 0.14.1 / Shared Media Object state.
-    const mediaObjects = (room.state as any).mediaObjects;
-    if (mediaObjects) {
-      $(mediaObjects).onAdd((media: any, mediaId: string) => {
-        // The placing client already owns the real local Sprite.
-        if (managedPlacedMedia.has(mediaId)) return;
+    // Prototype 0.14.2 / Shared Media Receive Fix.
+    // Colyseus 0.18: subscribe through the state callback proxy/path.
+    const sharedMedia = $(room.state as any).mediaObjects;
 
+    sharedMedia.onAdd((media: any, mediaId: string) => {
+      console.log("[SHARED RECEIVE ADD]", mediaId, media);
+
+      // The placing client already owns the real local Sprite.
+      if (!managedPlacedMedia.has(mediaId)) {
         createSharedSpritePlaceholder(mediaId, media);
-        $(media).onChange(() => updateSharedSpritePlaceholder(mediaId, media));
-      });
+      }
 
-      $(mediaObjects).onRemove((_media: any, mediaId: string) => {
-        removeSharedSpritePlaceholder(mediaId);
+      $(media).onChange(() => {
+        console.log("[SHARED RECEIVE CHANGE]", mediaId);
+        if (sharedSpritePlaceholders.has(mediaId)) {
+          updateSharedSpritePlaceholder(mediaId, media);
+        }
       });
-    }
+    });
+
+    sharedMedia.onRemove((_media: any, mediaId: string) => {
+      console.log("[SHARED RECEIVE REMOVE]", mediaId);
+      removeSharedSpritePlaceholder(mediaId);
+    });
+
+    console.log("[SHARED RECEIVE LISTENER READY]");
 
     roomLabel.textContent = `ROOM ${roomCode}`;
     status.textContent = "接続しました";

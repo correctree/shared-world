@@ -14,6 +14,18 @@ export type XRMediaCapabilities = {
   spatial?: boolean;
   live?: boolean;
 };
+export type XRBehaviorTrigger = "user-proximity";
+
+export type XRBehaviorAction = "play" | "stop";
+
+export interface XRMediaBehavior {
+  id: string;
+  trigger: XRBehaviorTrigger;
+  distance: number;
+  enterAction?: XRBehaviorAction;
+  leaveAction?: XRBehaviorAction;
+  enabled: boolean;
+}
 
 export interface XRPlaybackController {
   play(): void | Promise<void>;
@@ -32,7 +44,7 @@ export interface XRMediaObject {
   capabilities: XRMediaCapabilities;
   playback?: XRPlaybackController;
   source?: unknown;
-  behavior?: unknown[];
+  behavior?: XRMediaBehavior[];
 }
 
 export function createDefaultTransform(): XRTransform {

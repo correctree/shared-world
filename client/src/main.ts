@@ -932,6 +932,8 @@ mediaManagerPanel.innerHTML = `
       <span>Enabled</span>
       <input id="behaviorEnabled" type="checkbox" checked>
     </label>
+
+    <div id="behaviorStatus" class="behavior-status">READY</div>
     </div>
   </div>
 
@@ -995,6 +997,10 @@ mediaManagerStyle.textContent = `
   #behaviorDistance { width:100%; min-width:0; }
   #behaviorDistanceValue { text-align:right; font-size:11px; white-space:nowrap; }
   #behaviorEnabled { justify-self:start; width:18px !important; height:18px; }
+  .behavior-status {
+    margin-top:10px; padding-top:9px; border-top:1px solid #28313d;
+    font-size:10px; font-weight:800; letter-spacing:.08em; opacity:.7;
+  }
   .media-manager-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
   .media-manager-actions button { width:100% !important; }
   #deleteManagedMediaButton { border-color:#7b3940; }
@@ -1023,6 +1029,7 @@ const behaviorLookAngleValue = mediaManagerPanel.querySelector<HTMLElement>("#be
 const behaviorEnterAction = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorEnterAction")!;
 const behaviorLeaveAction = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorLeaveAction")!;
 const behaviorEnabled = mediaManagerPanel.querySelector<HTMLInputElement>("#behaviorEnabled")!;
+const behaviorStatus = mediaManagerPanel.querySelector<HTMLElement>("#behaviorStatus")!;
 
 function getSelectedProximityBehavior() {
   if (!selectedManagedMediaId) return null;
@@ -1072,6 +1079,7 @@ function refreshBehaviorEditorUI() {
   behaviorEnterAction.value = behavior.enterAction;
   behaviorLeaveAction.value = behavior.leaveAction;
   behaviorEnabled.checked = behavior.enabled;
+  behaviorStatus.textContent = behavior.enabled ? "READY" : "DISABLED";
 }
 
 function applyBehaviorEditorUI() {
@@ -2336,6 +2344,10 @@ function updateLookAtBehaviors() {
     const cosThreshold = Math.cos(lookAngle * pc.math.DEG_TO_RAD);
     const isLooking = forward.dot(toObject) >= cosThreshold;
     const previous = lookAtBehaviorState.get(object.id);
+
+    if (object.id === selectedManagedMediaId && (behavior as any).trigger === "look-at") {
+      behaviorStatus.textContent = isLooking ? "LOOKING / ACTIVE" : "NOT LOOKING";
+    }
 
     if (previous === undefined) {
       lookAtBehaviorState.set(object.id, isLooking);

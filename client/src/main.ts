@@ -1116,6 +1116,17 @@ function applyBehaviorEditorUI() {
 
 behaviorTrigger.addEventListener("change", () => {
   applyBehaviorEditorUI();
+
+  // Prototype 0.13.3.1 / TOUCH INITIAL STATE FIX
+  // TOUCH is an event trigger: selecting it must not inherit the media's
+  // previous autoplay / proximity / look-at playback state.
+  if (behaviorTrigger.value === "touch" && selectedManagedMediaId) {
+    const object = xrMediaManager.get(selectedManagedMediaId);
+    object?.playback?.stop();
+    lookAtBehaviorState.delete(selectedManagedMediaId);
+    behaviorStatus.textContent = "TAP / CLICK OBJECT";
+  }
+
   refreshBehaviorEditorUI();
 });
 behaviorDistance.addEventListener("input", applyBehaviorEditorUI);
@@ -2432,6 +2443,24 @@ function findTouchedMediaObject(clientX: number, clientY: number) {
   return bestObject;
 }
 
+const touchInitializedObjects = new Set<string>();
+
+function initializeTouchBehaviorPlayback() {
+  for (const object of xrMediaManager.list()) {
+    const behavior = object.behavior?.find(
+      (item: any) => (item as any).trigger === "touch" && item.enabled
+    );
+    if (!behavior || touchInitializedObjects.has(object.id)) continue;
+
+    object.playback?.stop();
+    touchInitializedObjects.add(object.id);
+  }
+
+  for (const id of Array.from(touchInitializedObjects)) {
+    if (!xrMediaManager.get(id)) touchInitializedObjects.delete(id);
+  }
+}
+
 function triggerSpatialTouch(clientX: number, clientY: number) {
   const hit = findTouchedMediaObject(clientX, clientY);
   if (!hit) return;
@@ -2619,6 +2648,7 @@ app.on("update", (dt: number) => {
   // XRMediaManager fires playback actions only when inside/outside state changes.
   xrMediaManager.updateUserProximity(localPosition);
   updateLookAtBehaviors();
+  initializeTouchBehaviorPlayback();
 
   let x = 0;
   let z = 0;

@@ -1482,8 +1482,18 @@ function addSpriteArtworkToWorld() {
       play: () => { importedSpritePlaying = true; },
       stop: () => { importedSpritePlaying = false; },
       setLoop: () => { /* Sprite currently loops by design. */ }
-    }
-  }));
+    },
+    behavior: [
+        {
+            id: "proximity-play",
+            trigger: "user-proximity",
+            distance: 3,
+            enterAction: "play",
+            leaveAction: "stop",
+            enabled: true
+        }
+    ]
+}));
   activeXRMediaId = media.id;
 
   console.log("Sprite artwork added.");
@@ -2121,6 +2131,7 @@ app.on("update", (dt: number) => {
     );
 
     me.entity.setPosition(localPosition);
+    xrMediaManager.updateUserProximity(localPosition);
 
     const now = performance.now();
     if (now - lastSend >= 1000 / SEND_HZ) {

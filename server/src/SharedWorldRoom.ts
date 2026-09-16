@@ -68,7 +68,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
 
       const mediaType = String(payload?.type || "");
-      if (mediaType !== "sprite" && mediaType !== "glb") {
+      if (mediaType !== "sprite" && mediaType !== "glb" && mediaType !== "webm") {
         console.warn("[media:add rejected] unsupported type", payload?.type);
         return;
       }

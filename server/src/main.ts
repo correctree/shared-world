@@ -2,15 +2,102 @@ import { defineRoom, defineServer } from "colyseus";
 import { SharedWorldRoom } from "./SharedWorldRoom.js";
 
 const port = Number(process.env.PORT || 2567);
+const MAX_ASSET_BYTES = 20 * 1024 * 1024;
+const sharedAssets = new Map<string, Buffer>();
+
+function safeAssetId(raw: string) {
+  return String(raw || "").replace(/\.zip$/i, "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
+}
 
 const server = defineServer({
   rooms: {
     shared_world: defineRoom(SharedWorldRoom).filterBy(["roomCode"])
   },
+
   express: (app) => {
-    app.get("/health", (_req, res) => res.json({ ok: true, service: "shared-world-0.1" }));
+    app.use("/assets", (_req, res, next) => {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, PUT, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Cache-Control", "no-store");
+      next();
+    });
+
+    app.options("/assets/:id", (_req, res) => {
+      res.sendStatus(204);
+    });
+
+    app.put("/assets/:id", (req, res) => {
+      const assetId = safeAssetId(req.params.id);
+      if (!assetId) {
+        res.status(400).json({ ok: false, error: "invalid asset id" });
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      let size = 0;
+      let rejected = false;
+
+      req.on("data", (chunk: Buffer) => {
+        if (rejected) return;
+        size += chunk.length;
+        if (size > MAX_ASSET_BYTES) {
+          rejected = true;
+          res.status(413).json({ ok: false, error: "asset too large" });
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
+
+      req.on("end", () => {
+        if (rejected) return;
+        const data = Buffer.concat(chunks);
+        if (data.length === 0) {
+          res.status(400).json({ ok: false, error: "empty asset" });
+          return;
+        }
+
+        sharedAssets.set(assetId, data);
+        console.log(`[asset:put] ${assetId} / ${data.length} bytes`);
+        res.json({
+          ok: true,
+          assetRef: `/assets/${assetId}.zip`,
+          bytes: data.length
+        });
+      });
+
+      req.on("error", (error) => {
+        console.error("[asset:put error]", assetId, error);
+        if (!res.headersSent) {
+          res.status(500).json({ ok: false, error: "upload failed" });
+        }
+      });
+    });
+
+    app.get("/assets/:id", (req, res) => {
+      const assetId = safeAssetId(req.params.id);
+      const data = sharedAssets.get(assetId);
+      if (!data) {
+        res.status(404).json({ ok: false, error: "asset not found" });
+        return;
+      }
+
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Length", String(data.length));
+      res.send(data);
+    });
+
+    app.get("/health", (_req, res) =>
+      res.json({
+        ok: true,
+        service: "shared-world-0.14.3",
+        sharedAssets: sharedAssets.size
+      })
+    );
   }
 });
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
+console.log("[Prototype 0.14.3] Shared Asset HTTP store ready");

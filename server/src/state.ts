@@ -15,6 +15,7 @@ export const SharedMediaObject = schema({
   title: t.string().default("Shared Artwork"),
   type: t.string().default("sprite"),
   assetRef: t.string().default(""),
+  fallbackRef: t.string().default(""),
   ownerSessionId: t.string().default(""),
   x: t.number().default(0),
   y: t.number().default(1.8),

@@ -5,8 +5,18 @@ const port = Number(process.env.PORT || 2567);
 const MAX_ASSET_BYTES = 20 * 1024 * 1024;
 const sharedAssets = new Map<string, Buffer>();
 
-function safeAssetId(raw: string) {
-  return String(raw || "").replace(/\.zip$/i, "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
+function parseAssetName(raw: string) {
+  const clean = String(raw || "")
+    .replace(/[^a-zA-Z0-9_.-]/g, "")
+    .slice(0, 96);
+
+  const match = clean.match(/^([a-zA-Z0-9_-]{1,80})\.(zip|glb)$/i);
+  if (!match) return null;
+
+  return {
+    id: match[1],
+    ext: match[2].toLowerCase() as "zip" | "glb"
+  };
 }
 
 const server = defineServer({

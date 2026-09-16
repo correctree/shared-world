@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.4 SHARED GLB ASSET LOADED]");
+console.log("[PROTOTYPE 0.14.4.3 UNIFIED SHARED GLB LOADER LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -787,81 +787,147 @@ async function createSharedGLBFromAsset(mediaId: string, media: any) {
 
   const assetRef = String(media.assetRef || "");
   if (!assetRef) {
-    console.error("[SHARED GLB] missing assetRef", mediaId);
+    console.error("[SHARED GLB 01 RECEIVE] missing assetRef", mediaId);
     return;
   }
 
-  try {
-    console.log("[SHARED GLB FETCH]", mediaId, assetRef);
-    const response = await fetch(assetRef, { cache: "no-store" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const glbBlob = await response.blob();
-    const glbURL = URL.createObjectURL(glbBlob);
+  console.log("[SHARED GLB 01 RECEIVE]", mediaId, {
+    assetRef,
+    x: media.x, y: media.y, z: media.z,
+    rotationY: media.rotationY,
+    scale: media.scale
+  });
 
-    const asset = new pc.Asset(`SharedGLB_${mediaId}`, "container", { url: glbURL });
+  let glbURL: string | null = null;
+  let asset: pc.Asset | null = null;
+
+  try {
+    // 02-03: fetch the exact GLB bytes first. This path works consistently
+    // across desktop Chrome and iOS Safari and gives us a concrete byte check.
+    console.log("[SHARED GLB 02 FETCH START]", assetRef);
+    const response = await fetch(assetRef, { cache: "no-store", mode: "cors" });
+    if (!response.ok) throw new Error(`GLB HTTP ${response.status}`);
+
+    const glbBuffer = await response.arrayBuffer();
+    console.log("[SHARED GLB 03 BYTES]", mediaId, glbBuffer.byteLength);
+    if (glbBuffer.byteLength < 20) throw new Error("GLB payload is empty/too small.");
+
+    const glbBlob = new Blob([glbBuffer], { type: "model/gltf-binary" });
+    glbURL = URL.createObjectURL(glbBlob);
+
+    // 04: use PlayCanvas' proven Container Asset loader, same family of
+    // loading used by the local GLB importer.
+    asset = new pc.Asset(
+      `SharedGLBAsset_${mediaId}`,
+      "container",
+      { url: glbURL, filename: `${mediaId}.glb` }
+    );
     app.assets.add(asset);
 
+    console.log("[SHARED GLB 04 ASSET LOAD START]", mediaId);
     await new Promise<void>((resolve, reject) => {
-      asset.once("load", () => resolve());
-      asset.once("error", (err: unknown) => reject(err));
-      app.assets.load(asset);
+      const onLoad = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (err: unknown) => {
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
+      const cleanup = () => {
+        asset?.off("load", onLoad);
+        asset?.off("error", onError);
+      };
+      asset!.once("load", onLoad);
+      asset!.once("error", onError);
+      app.assets.load(asset!);
     });
 
-    const resource: any = asset.resource;
-    const entity: pc.Entity = resource.instantiateRenderEntity
-      ? resource.instantiateRenderEntity()
-      : resource.instantiateModelEntity();
+    const container: any = asset.resource;
+    console.log("[SHARED GLB 05 RESOURCE]", mediaId, {
+      hasResource: !!container,
+      hasRenderFactory: !!container?.instantiateRenderEntity,
+      hasModelFactory: !!container?.instantiateModelEntity,
+      animations: Array.isArray(container?.animations) ? container.animations.length : 0
+    });
+    if (!container) throw new Error("PlayCanvas container resource is missing.");
+
+    // Prefer RenderEntity, but retain ModelEntity fallback for older/variant
+    // container resources.
+    let entity: pc.Entity;
+    if (typeof container.instantiateRenderEntity === "function") {
+      entity = container.instantiateRenderEntity();
+    } else if (typeof container.instantiateModelEntity === "function") {
+      entity = container.instantiateModelEntity();
+    } else {
+      throw new Error("Container has no supported instantiate method.");
+    }
+
+    console.log("[SHARED GLB 06 ENTITY]", mediaId, entity.name);
 
     entity.name = `SharedGLB_${mediaId}`;
-    entity.setPosition(media.x, media.y, media.z);
-    entity.setEulerAngles(0, media.rotationY, 0);
-    entity.setLocalScale(media.scale, media.scale, media.scale);
+    entity.setPosition(Number(media.x), Number(media.y), Number(media.z));
+    entity.setEulerAngles(0, Number(media.rotationY), 0);
+    const sharedScale = Math.max(0.0001, Number(media.scale) || 1);
+    entity.setLocalScale(sharedScale, sharedScale, sharedScale);
     app.root.addChild(entity);
 
-    const animationAssets: any[] = Array.isArray(resource.animations)
-      ? resource.animations
+    console.log("[SHARED GLB 07 SCENE ADD]", mediaId, {
+      position: entity.getPosition().toString(),
+      scale: entity.getLocalScale().toString()
+    });
+
+    // 08-10: animation hookup follows the already-proven local GLB pattern:
+    // entry.resource ?? entry, internal safe state names, explicit layer.play.
+    const animationEntries: any[] = Array.isArray(container.animations)
+      ? container.animations
       : [];
-    const clipNames = animationAssets.map((entry: any, index: number) =>
-      String(entry?.name || entry?.resource?.name || `GLB_Animation_${index + 1}`)
+    const clipNames = animationEntries.map((entry: any, index: number) =>
+      String(entry?.name || entry?.resource?.name || `GLB Animation ${index + 1}`)
     );
 
     let anim: any = null;
-    if (animationAssets.length > 0) {
+    let activeClipIndex = 0;
+    let loopEnabled = true;
+
+    if (animationEntries.length > 0) {
       entity.addComponent("anim", { activate: false });
       anim = entity.anim;
 
-      const stateGraph = {
+      const states = animationEntries.map((_entry: any, index: number) => ({
+        name: `GLB_Animation_${index + 1}`,
+        speed: 1,
+        loop: loopEnabled
+      }));
+
+      anim.loadStateGraph({
         layers: [{
           name: "Base",
-          states: [
-            { name: "START" },
-            ...animationAssets.map((_entry: any, index: number) => ({
-              name: `GLB_Animation_${index + 1}`,
-              speed: 1,
-              loop: true
-            }))
-          ],
+          states: [{ name: "START" }, ...states],
           transitions: []
         }],
         parameters: {}
-      };
+      } as any);
 
-      anim.loadStateGraph(stateGraph as any);
       const layer: any = anim.baseLayer;
-
-      animationAssets.forEach((entry: any, index: number) => {
-        const resourceClip = entry?.resource ?? entry;
-        layer.assignAnimation(`GLB_Animation_${index + 1}`, resourceClip);
+      animationEntries.forEach((entry: any, index: number) => {
+        layer.assignAnimation(
+          `GLB_Animation_${index + 1}`,
+          entry?.resource ?? entry
+        );
       });
 
       layer.play("GLB_Animation_1");
       anim.playing = true;
+      console.log("[SHARED GLB 08 ANIMATION]", mediaId, clipNames);
+    } else {
+      console.log("[SHARED GLB 08 ANIMATION] no clips", mediaId);
     }
 
-    const playClip = (name: string) => {
-      if (!anim || animationAssets.length === 0) return;
-      const index = Math.max(0, clipNames.indexOf(name));
-      anim.baseLayer.play(`GLB_Animation_${index + 1}`);
+    const playIndex = (index: number) => {
+      if (!anim || animationEntries.length === 0) return;
+      activeClipIndex = Math.max(0, Math.min(animationEntries.length - 1, index));
+      anim.baseLayer.play(`GLB_Animation_${activeClipIndex + 1}`);
       anim.playing = true;
     };
 
@@ -869,24 +935,27 @@ async function createSharedGLBFromAsset(mediaId: string, media: any) {
       title: media.title || "Shared GLB",
       type: "glb",
       entity,
-      playable: animationAssets.length > 0,
-      animated: animationAssets.length > 0,
-      playback: animationAssets.length > 0 ? {
-        play: () => {
-          if (!anim) return;
-          if (!anim.playing) anim.playing = true;
-          else anim.baseLayer.play("GLB_Animation_1");
-        },
+      playable: animationEntries.length > 0,
+      animated: animationEntries.length > 0,
+      playback: animationEntries.length > 0 ? {
+        play: () => playIndex(activeClipIndex),
         stop: () => {
           if (anim) anim.playing = false;
         },
         setLoop: (loop: boolean) => {
-          if (!anim) return;
-          const state = anim.baseLayer?.activeState;
-          if (state) state.loop = loop;
+          loopEnabled = loop;
+          // Rebuild is unnecessary for the current single-loop use case;
+          // update active state's loop flag when exposed by the runtime.
+          const activeState: any = anim?.baseLayer?.activeState;
+          if (activeState && typeof activeState === "object") {
+            activeState.loop = loopEnabled;
+          }
         },
         getClips: () => [...clipNames],
-        playClip
+        playClip: (name: string) => {
+          const index = clipNames.indexOf(name);
+          playIndex(index >= 0 ? index : 0);
+        }
       } : undefined,
       behavior: []
     });
@@ -900,24 +969,37 @@ async function createSharedGLBFromAsset(mediaId: string, media: any) {
       entity
     });
     sharedRemoteMediaIds.add(mediaId);
-    refreshMediaManagerUI();
 
     placedMediaRuntimes.push({
       id: mediaId,
       update: () => {},
       dispose: () => {
-        URL.revokeObjectURL(glbURL);
-        asset.unload();
-        app.assets.remove(asset);
+        entity.destroy();
+        if (asset) {
+          asset.unload();
+          app.assets.remove(asset);
+        }
+        if (glbURL) URL.revokeObjectURL(glbURL);
       }
     });
 
-    console.log("[SHARED GLB READY]", mediaId, {
-      animations: animationAssets.length,
+    refreshMediaManagerUI();
+    console.log("[SHARED GLB 09 REGISTERED]", mediaId);
+    console.log("[SHARED GLB 10 READY]", mediaId, {
+      animations: animationEntries.length,
       clips: clipNames
     });
   } catch (error) {
     console.error("[SHARED GLB LOAD ERROR]", mediaId, error);
+
+    // Clean partial resources but leave the rest of the world alive.
+    if (asset) {
+      try { asset.unload(); } catch {}
+      try { app.assets.remove(asset); } catch {}
+    }
+    if (glbURL) {
+      try { URL.revokeObjectURL(glbURL); } catch {}
+    }
   }
 }
 
@@ -1025,6 +1107,7 @@ async function enterWorld() {
         if (sharedType === "sprite") {
           void createSharedSpriteFromAsset(mediaId, media);
         } else if (sharedType === "glb") {
+          console.log("[SHARED GLB DISPATCH]", mediaId, media.assetRef);
           void createSharedGLBFromAsset(mediaId, media);
         } else {
           console.warn("[SHARED RECEIVE] unsupported media type", sharedType, mediaId);

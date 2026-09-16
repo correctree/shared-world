@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.2 SHARED MEDIA RECEIVE FIX LOADED]");
+console.log("[PROTOTYPE 0.14.3 SHARED ASSET SYSTEM LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -458,27 +458,31 @@ function updatePlayerCount() {
 }
 
 // =========================================================
-// Prototype 0.14.1 / SHARED MEDIA OBJECT
-// Stage 1: synchronize Sprite existence + transform + asset reference.
-// Remote clients render a clearly marked placeholder until Sprite asset
-// distribution is implemented in 0.14.2.
+// Prototype 0.14.3 / SHARED ASSET SYSTEM
+// Sprite ZIP is uploaded to the Render server over HTTP.
+// Colyseus synchronizes only the assetRef + transform.
+// Remote clients fetch the ZIP and rebuild the animated Sprite locally.
 // =========================================================
 
 const sharedRemoteMediaIds = new Set<string>();
 
+function sharedAssetURL(mediaId: string) {
+  return `${SERVER_URL.replace(/\/$/, "")}/assets/${encodeURIComponent(mediaId)}.zip`;
+}
+
 function createSharedSpritePlaceholder(mediaId: string, media: any) {
   if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return;
 
-  const material = new pc.StandardMaterial();
-  material.diffuse = new pc.Color(0.18, 0.72, 1.0);
-  material.emissive = new pc.Color(0.04, 0.18, 0.28);
-  material.useLighting = false;
-  material.cull = pc.CULLFACE_NONE;
-  material.update();
+  const placeholderMaterial = new pc.StandardMaterial();
+  placeholderMaterial.diffuse = new pc.Color(0.18, 0.72, 1.0);
+  placeholderMaterial.emissive = new pc.Color(0.04, 0.18, 0.28);
+  placeholderMaterial.useLighting = false;
+  placeholderMaterial.cull = pc.CULLFACE_NONE;
+  placeholderMaterial.update();
 
   const plane = new pc.Entity(`SharedSprite_${mediaId}`);
   plane.addComponent("render", { type: "plane" });
-  plane.render!.material = material;
+  plane.render!.material = placeholderMaterial;
   plane.setPosition(media.x, media.y, media.z);
   plane.setLocalScale(media.scale, 1, media.scale);
   plane.setEulerAngles(90, media.rotationY, 0);
@@ -492,7 +496,6 @@ function createSharedSpritePlaceholder(mediaId: string, media: any) {
     animated: false,
     behavior: []
   });
-  // Keep the authoritative Colyseus media id on every client.
   remoteMedia.id = mediaId;
   xrMediaManager.register(remoteMedia);
 
@@ -505,7 +508,196 @@ function createSharedSpritePlaceholder(mediaId: string, media: any) {
   sharedRemoteMediaIds.add(mediaId);
   refreshMediaManagerUI();
 
-  console.log("[SHARED MEDIA ADDED]", mediaId, media.assetRef || "(no asset ref)");
+  console.log("[SHARED PLACEHOLDER ADDED]", mediaId, media.assetRef || "(no asset ref)");
+}
+
+async function createSharedSpriteFromAsset(mediaId: string, media: any) {
+  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return;
+
+  const assetRef = String(media.assetRef || "");
+  if (!assetRef) {
+    createSharedSpritePlaceholder(mediaId, media);
+    return;
+  }
+
+  try {
+    console.log("[SHARED ASSET FETCH]", mediaId, assetRef);
+    const response = await fetch(assetRef, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const zipBlob = await response.blob();
+    const zip = await JSZip.loadAsync(zipBlob);
+    const entries = Object.values(zip.files);
+
+    const pngEntry = entries.find(
+      (entry) => !entry.dir && entry.name.toLowerCase().endsWith(".png")
+    );
+    const jsonEntry = entries.find(
+      (entry) => !entry.dir && entry.name.toLowerCase().endsWith(".json")
+    );
+    if (!pngEntry || !jsonEntry) {
+      throw new Error("Shared Sprite ZIP requires PNG + JSON.");
+    }
+
+    const pngBlob = await pngEntry.async("blob");
+    const jsonText = await jsonEntry.async("text");
+    const meta = JSON.parse(jsonText);
+
+    const imageURL = URL.createObjectURL(pngBlob);
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("Shared Sprite PNG load failed."));
+      image.src = imageURL;
+    });
+
+    const frameWidth = Number(meta.frameWidth);
+    const frameHeight = Number(meta.frameHeight);
+    const columns = Number(meta.columns);
+    const rows = Number(meta.rows);
+    const declaredFrames = Number(meta.frames);
+    const maxFrames = columns * rows;
+    const frameCount = Math.max(1, Math.min(declaredFrames, maxFrames));
+    const declaredFPS = Number(meta.fps);
+    const durationMs = Number(meta.duration);
+    const fps =
+      declaredFPS > 0
+        ? declaredFPS
+        : durationMs > 0
+          ? frameCount / (durationMs / 1000)
+          : 4;
+
+    if (
+      !Number.isFinite(frameWidth) || frameWidth <= 0 ||
+      !Number.isFinite(frameHeight) || frameHeight <= 0 ||
+      !Number.isFinite(columns) || columns <= 0 ||
+      !Number.isFinite(rows) || rows <= 0 ||
+      !Number.isFinite(frameCount) || frameCount <= 0 ||
+      !Number.isFinite(fps) || fps <= 0
+    ) {
+      URL.revokeObjectURL(imageURL);
+      throw new Error("Shared Sprite JSON is invalid.");
+    }
+
+    const spriteCanvas = document.createElement("canvas");
+    spriteCanvas.width = frameWidth;
+    spriteCanvas.height = frameHeight;
+    const context = spriteCanvas.getContext("2d", { alpha: true });
+    if (!context) {
+      URL.revokeObjectURL(imageURL);
+      throw new Error("Shared Sprite Canvas unavailable.");
+    }
+    context.imageSmoothingEnabled = true;
+
+    const texture = new pc.Texture(app.graphicsDevice, {
+      format: pc.PIXELFORMAT_RGBA8,
+      minFilter: pc.FILTER_LINEAR,
+      magFilter: pc.FILTER_LINEAR,
+      addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+      addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+      mipmaps: false
+    });
+    texture.setSource(spriteCanvas);
+
+    const spriteMaterial = new pc.StandardMaterial();
+    spriteMaterial.diffuseMap = texture;
+    spriteMaterial.emissiveMap = texture;
+    spriteMaterial.emissive = new pc.Color(1, 1, 1);
+    spriteMaterial.opacityMap = texture;
+    spriteMaterial.opacityMapChannel = "a";
+    spriteMaterial.blendType = pc.BLEND_NORMAL;
+    spriteMaterial.depthWrite = false;
+    spriteMaterial.alphaTest = 0.12;
+    spriteMaterial.useLighting = false;
+    spriteMaterial.cull = pc.CULLFACE_NONE;
+    spriteMaterial.update();
+
+    const plane = new pc.Entity(`SharedSprite_${mediaId}`);
+    plane.addComponent("render", { type: "plane" });
+    plane.render!.material = spriteMaterial;
+    plane.setPosition(media.x, media.y, media.z);
+    plane.setLocalScale(media.scale, 1, media.scale);
+    plane.setEulerAngles(90, media.rotationY, 0);
+    app.root.addChild(plane);
+
+    let frame = 0;
+    let elapsed = 0;
+    let playing = true;
+
+    const drawFrame = (frameIndex: number) => {
+      const safeFrame = ((frameIndex % frameCount) + frameCount) % frameCount;
+      const column = safeFrame % columns;
+      const row = Math.floor(safeFrame / columns);
+      context.clearRect(0, 0, spriteCanvas.width, spriteCanvas.height);
+      context.drawImage(
+        image,
+        column * frameWidth,
+        row * frameHeight,
+        frameWidth,
+        frameHeight,
+        0,
+        0,
+        spriteCanvas.width,
+        spriteCanvas.height
+      );
+    };
+
+    drawFrame(0);
+    texture.upload();
+
+    const remoteMedia = createMediaObject({
+      title: media.title || "Shared Sprite",
+      type: "sprite",
+      entity: plane,
+      playable: true,
+      animated: true,
+      playback: {
+        play: () => { playing = true; },
+        stop: () => { playing = false; },
+        setLoop: () => { /* Sprite loops by design. */ }
+      },
+      behavior: []
+    });
+    remoteMedia.id = mediaId;
+    xrMediaManager.register(remoteMedia);
+
+    managedPlacedMedia.set(mediaId, {
+      id: mediaId,
+      title: `${media.title || "Sprite Artwork"} [SHARED]`,
+      kind: "sprite",
+      entity: plane
+    });
+    sharedRemoteMediaIds.add(mediaId);
+
+    placedMediaRuntimes.push({
+      id: mediaId,
+      update: (dt: number) => {
+        if (!playing) return;
+        elapsed += dt;
+        const frameDuration = 1 / fps;
+        let changed = false;
+        while (elapsed >= frameDuration) {
+          elapsed -= frameDuration;
+          frame = (frame + 1) % frameCount;
+          changed = true;
+        }
+        if (changed) {
+          drawFrame(frame);
+          texture.upload();
+        }
+      },
+      dispose: () => {
+        texture.destroy();
+        URL.revokeObjectURL(imageURL);
+      }
+    });
+
+    refreshMediaManagerUI();
+    console.log("[SHARED SPRITE READY]", mediaId, { frameCount, fps });
+  } catch (error) {
+    console.error("[SHARED ASSET LOAD ERROR]", mediaId, error);
+    createSharedSpritePlaceholder(mediaId, media);
+  }
 }
 
 function updateSharedSpritePlaceholder(mediaId: string, media: any) {
@@ -520,6 +712,13 @@ function removeSharedSpritePlaceholder(mediaId: string) {
   if (!sharedRemoteMediaIds.has(mediaId)) return;
   const item = managedPlacedMedia.get(mediaId);
   item?.entity.destroy();
+
+  const runtimeIndex = placedMediaRuntimes.findIndex((runtime) => runtime.id === mediaId);
+  if (runtimeIndex >= 0) {
+    const [runtime] = placedMediaRuntimes.splice(runtimeIndex, 1);
+    runtime.dispose?.();
+  }
+
   xrMediaManager.unregister(mediaId);
   managedPlacedMedia.delete(mediaId);
   sharedRemoteMediaIds.delete(mediaId);
@@ -527,56 +726,58 @@ function removeSharedSpritePlaceholder(mediaId: string) {
   refreshMediaManagerUI();
 }
 
-function sendCommittedSpriteToSharedWorld(mediaId: string) {
-  console.log("[SHARED SEND START]", {
-    mediaId,
-    hasRoom: !!activeRoom,
-    roomId: activeRoom?.roomId,
-    sessionId: activeRoom?.sessionId
-  });
+async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob: Blob | null) {
+  console.log("[SHARED PUBLISH START]", mediaId);
 
-  if (!activeRoom) {
-    console.error("[SHARED SEND ABORT] activeRoom is null");
+  if (!activeRoom || !packageBlob) {
+    console.error("[SHARED PUBLISH ABORT]", {
+      hasRoom: !!activeRoom,
+      hasPackage: !!packageBlob
+    });
     return;
   }
 
   const item = managedPlacedMedia.get(mediaId);
   const media = xrMediaManager.get(mediaId);
-
-  console.log("[SHARED SEND CHECK]", {
-    hasManagedItem: !!item,
-    kind: item?.kind,
-    hasXRMedia: !!media
-  });
-
   if (!item || item.kind !== "sprite" || !media) {
-    console.error("[SHARED SEND ABORT] media lookup/kind failed");
+    console.error("[SHARED PUBLISH ABORT] media lookup/kind failed");
     return;
   }
 
-  const position = item.entity.getPosition();
-  const rotation = item.entity.getEulerAngles();
-  const scale = item.entity.getLocalScale();
-
-  const payload = {
-    id: mediaId,
-    title: media.title || "Sprite Artwork",
-    type: "sprite",
-    assetRef: "local-sprite-package",
-    x: position.x,
-    y: position.y,
-    z: position.z,
-    rotationY: rotation.y,
-    scale: scale.x
-  };
-
-  console.log("[SHARED SEND PAYLOAD]", payload);
+  const assetRef = sharedAssetURL(mediaId);
 
   try {
-    activeRoom.send("media:add", payload);
-    console.log("[SHARED SEND COMPLETE]", mediaId);
+    const uploadResponse = await fetch(assetRef, {
+      method: "PUT",
+      headers: { "Content-Type": "application/zip" },
+      body: packageBlob
+    });
+
+    if (!uploadResponse.ok) {
+      throw new Error(`Asset upload failed: HTTP ${uploadResponse.status}`);
+    }
+
+    console.log("[SHARED ASSET UPLOADED]", mediaId, assetRef);
+
+    const position = item.entity.getPosition();
+    const rotation = item.entity.getEulerAngles();
+    const scale = item.entity.getLocalScale();
+
+    activeRoom.send("media:add", {
+      id: mediaId,
+      title: media.title || "Sprite Artwork",
+      type: "sprite",
+      assetRef,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      rotationY: rotation.y,
+      scale: scale.x
+    });
+
+    console.log("[SHARED MEDIA SENT]", mediaId);
   } catch (error) {
-    console.error("[SHARED SEND ERROR]", error);
+    console.error("[SHARED PUBLISH ERROR]", mediaId, error);
   }
 }
 
@@ -628,12 +829,12 @@ async function enterWorld() {
 
       // The placing client already owns the real local Sprite.
       if (!managedPlacedMedia.has(mediaId)) {
-        createSharedSpritePlaceholder(mediaId, media);
+        void createSharedSpriteFromAsset(mediaId, media);
       }
 
       $(media).onChange(() => {
         console.log("[SHARED RECEIVE CHANGE]", mediaId);
-        if (sharedSpritePlaceholders.has(mediaId)) {
+        if (sharedRemoteMediaIds.has(mediaId)) {
           updateSharedSpritePlaceholder(mediaId, media);
         }
       });
@@ -1595,9 +1796,10 @@ function commitActiveArtworkToWorld() {
   selectedManagedMediaId = committedId;
   refreshMediaManagerUI();
 
-  // Prototype 0.14.1: only Sprite existence/transform is shared in this stage.
+  // Prototype 0.14.3: publish the Sprite ZIP over HTTP, then share assetRef via Colyseus.
   if (importedArtworkKind === "sprite") {
-    sendCommittedSpriteToSharedWorld(committedId);
+    const packageBlob = importedSpritePackageBlob;
+    void publishCommittedSpriteToSharedWorld(committedId, packageBlob);
   }
 
   // The Entity and resources now belong to the committed XRMediaObject.
@@ -1611,6 +1813,7 @@ function commitActiveArtworkToWorld() {
   importedGLBAsset = null;
   importedGLBObjectURL = null;
 
+  importedSpritePackageBlob = null;
   importedSpriteImageURL = null;
   importedSpriteMeta = null;
   importedSpriteImage = null;
@@ -1681,6 +1884,7 @@ function clearImportedArtwork() {
 // SPRITE ZIP IMPORT CORE
 // =========================================================
 
+let importedSpritePackageBlob: Blob | null = null;
 let importedSpriteImageURL: string | null = null;
 let importedSpriteMeta: any = null;
 let importedSpriteImage: HTMLImageElement | null = null;
@@ -1715,6 +1919,7 @@ function clearImportedSpriteResources() {
 async function loadSpriteZipPackage(file: File) {
 
   clearImportedSpriteResources();
+  importedSpritePackageBlob = file;
 
   const zip = await JSZip.loadAsync(file);
 

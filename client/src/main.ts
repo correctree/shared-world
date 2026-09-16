@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.4.3 UNIFIED SHARED GLB LOADER LOADED]");
+console.log("[PROTOTYPE 0.14.5 SHARED WEBM ASSET LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -466,7 +466,7 @@ function updatePlayerCount() {
 
 const sharedRemoteMediaIds = new Set<string>();
 
-function sharedAssetURL(mediaId: string, extension: "zip" | "glb") {
+function sharedAssetURL(mediaId: string, extension: "zip" | "glb" | "webm") {
   return `${SERVER_URL.replace(/\/$/, "")}/assets/${encodeURIComponent(mediaId)}.${extension}`;
 }
 
@@ -704,8 +704,13 @@ function updateSharedSpritePlaceholder(mediaId: string, media: any) {
   const item = managedPlacedMedia.get(mediaId);
   if (!item || !sharedRemoteMediaIds.has(mediaId)) return;
   item.entity.setPosition(media.x, media.y, media.z);
-  item.entity.setLocalScale(media.scale, 1, media.scale);
-  item.entity.setEulerAngles(90, media.rotationY, 0);
+  if (item.kind === "glb") {
+    item.entity.setLocalScale(media.scale, media.scale, media.scale);
+    item.entity.setEulerAngles(0, media.rotationY, 0);
+  } else {
+    item.entity.setLocalScale(media.scale, 1, media.scale);
+    item.entity.setEulerAngles(90, media.rotationY, 0);
+  }
 }
 
 function removeSharedSpritePlaceholder(mediaId: string) {
@@ -781,6 +786,214 @@ async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob:
   }
 }
 
+
+
+async function createSharedWebMFromAsset(mediaId: string, media: any) {
+  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return;
+
+  const assetRef = String(media.assetRef || "");
+  if (!assetRef) {
+    console.error("[SHARED WEBM 01 RECEIVE] missing assetRef", mediaId);
+    return;
+  }
+
+  let objectURL: string | null = null;
+  let texture: pc.Texture | null = null;
+  let video: HTMLVideoElement | null = null;
+
+  try {
+    console.log("[SHARED WEBM 01 RECEIVE]", mediaId, assetRef);
+    console.log("[SHARED WEBM 02 FETCH START]", assetRef);
+
+    const response = await fetch(assetRef, { cache: "no-store", mode: "cors" });
+    if (!response.ok) throw new Error(`WebM HTTP ${response.status}`);
+
+    const bytes = await response.arrayBuffer();
+    console.log("[SHARED WEBM 03 FETCH OK]", mediaId, {
+      bytes: bytes.byteLength,
+      contentType: response.headers.get("content-type")
+    });
+    if (bytes.byteLength < 16) throw new Error("WebM payload is empty/too small.");
+
+    const blob = new Blob([bytes], { type: "video/webm" });
+    objectURL = URL.createObjectURL(blob);
+
+    video = document.createElement("video");
+    video.src = objectURL;
+    video.loop = true;
+    video.muted = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.crossOrigin = "anonymous";
+
+    await new Promise<void>((resolve, reject) => {
+      const onReady = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error(`Shared WebM decode/load failed. mediaError=${video?.error?.code ?? "unknown"}`));
+      };
+      const cleanup = () => {
+        video?.removeEventListener("loadeddata", onReady);
+        video?.removeEventListener("canplay", onReady);
+        video?.removeEventListener("error", onError);
+      };
+      video!.addEventListener("loadeddata", onReady, { once: true });
+      video!.addEventListener("canplay", onReady, { once: true });
+      video!.addEventListener("error", onError, { once: true });
+      video!.load();
+    });
+
+    console.log("[SHARED WEBM 04 VIDEO READY]", mediaId, {
+      width: video.videoWidth,
+      height: video.videoHeight,
+      duration: video.duration
+    });
+
+    try {
+      await video.play();
+      console.log("[SHARED WEBM 05 PLAY OK]", mediaId);
+    } catch (error) {
+      // Muted inline playback normally succeeds. If Safari blocks it,
+      // the media object still loads and can be started by a later interaction.
+      console.warn("[SHARED WEBM 05 PLAY WAIT]", mediaId, error);
+    }
+
+    texture = new pc.Texture(app.graphicsDevice, {
+      format: pc.PIXELFORMAT_RGBA8,
+      minFilter: pc.FILTER_LINEAR,
+      magFilter: pc.FILTER_LINEAR,
+      addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+      addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+      mipmaps: false
+    });
+    texture.setSource(video);
+
+    const material = new pc.StandardMaterial();
+    material.diffuseMap = texture;
+    material.emissiveMap = texture;
+    material.emissive = new pc.Color(1, 1, 1);
+    material.opacityMap = texture;
+    material.opacityMapChannel = "a";
+    material.blendType = pc.BLEND_NORMAL;
+    material.depthWrite = false;
+    material.alphaTest = 0.12;
+    material.useLighting = false;
+    material.cull = pc.CULLFACE_NONE;
+    material.update();
+
+    const plane = new pc.Entity(`SharedWebM_${mediaId}`);
+    plane.addComponent("render", { type: "plane" });
+    plane.render!.material = material;
+    plane.render!.castShadows = true;
+    plane.setPosition(Number(media.x), Number(media.y), Number(media.z));
+    plane.setLocalScale(Number(media.scale) || 1, 1, Number(media.scale) || 1);
+    plane.setEulerAngles(90, Number(media.rotationY) || 0, 0);
+    app.root.addChild(plane);
+
+    console.log("[SHARED WEBM 06 SCENE ADD]", mediaId);
+
+    const remoteMedia = createMediaObject({
+      title: media.title || "Shared WebM",
+      type: "webm",
+      entity: plane,
+      playable: true,
+      animated: true,
+      playback: {
+        play: async () => { await video!.play(); },
+        stop: () => { video!.pause(); },
+        setLoop: (loop: boolean) => { video!.loop = loop; }
+      },
+      behavior: []
+    });
+    remoteMedia.id = mediaId;
+    xrMediaManager.register(remoteMedia);
+
+    managedPlacedMedia.set(mediaId, {
+      id: mediaId,
+      title: `${media.title || "WebM Artwork"} [SHARED]`,
+      kind: "webm",
+      entity: plane
+    });
+    sharedRemoteMediaIds.add(mediaId);
+
+    placedMediaRuntimes.push({
+      id: mediaId,
+      update: () => {
+        if (video && texture && video.readyState >= 2) texture.upload();
+      },
+      dispose: () => {
+        video?.pause();
+        texture?.destroy();
+        if (objectURL) URL.revokeObjectURL(objectURL);
+      }
+    });
+
+    refreshMediaManagerUI();
+    console.log("[SHARED WEBM 07 REGISTERED]", mediaId);
+    console.log("[SHARED WEBM 08 READY]", mediaId);
+  } catch (error) {
+    console.error("[SHARED WEBM LOAD ERROR]", mediaId, error);
+    video?.pause();
+    texture?.destroy();
+    if (objectURL) URL.revokeObjectURL(objectURL);
+  }
+}
+
+async function publishCommittedWebMToSharedWorld(mediaId: string, webmBlob: Blob | null) {
+  console.log("[SHARED WEBM PUBLISH START]", mediaId);
+
+  if (!activeRoom || !webmBlob) {
+    console.error("[SHARED WEBM PUBLISH ABORT]", {
+      hasRoom: !!activeRoom,
+      hasWebM: !!webmBlob
+    });
+    return;
+  }
+
+  const item = managedPlacedMedia.get(mediaId);
+  const media = xrMediaManager.get(mediaId);
+  if (!item || item.kind !== "webm" || !media) {
+    console.error("[SHARED WEBM PUBLISH ABORT] media lookup/kind failed");
+    return;
+  }
+
+  const assetRef = sharedAssetURL(mediaId, "webm");
+
+  try {
+    const uploadResponse = await fetch(assetRef, {
+      method: "PUT",
+      headers: { "Content-Type": "video/webm" },
+      body: webmBlob
+    });
+    if (!uploadResponse.ok) {
+      throw new Error(`WebM upload failed: HTTP ${uploadResponse.status}`);
+    }
+
+    const position = item.entity.getPosition();
+    const rotation = item.entity.getEulerAngles();
+    const scale = item.entity.getLocalScale();
+
+    activeRoom.send("media:add", {
+      id: mediaId,
+      title: media.title || "WebM Artwork",
+      type: "webm",
+      assetRef,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      rotationY: rotation.y,
+      scale: scale.x
+    });
+
+    console.log("[SHARED WEBM MEDIA SENT]", mediaId, assetRef);
+  } catch (error) {
+    console.error("[SHARED WEBM PUBLISH ERROR]", mediaId, error);
+  }
+}
 
 async function createSharedGLBFromAsset(mediaId: string, media: any) {
   if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return;
@@ -1106,6 +1319,9 @@ async function enterWorld() {
         const sharedType = String(media.type || "");
         if (sharedType === "sprite") {
           void createSharedSpriteFromAsset(mediaId, media);
+        } else if (sharedType === "webm") {
+          console.log("[SHARED WEBM DISPATCH]", mediaId, media.assetRef);
+          void createSharedWebMFromAsset(mediaId, media);
         } else if (sharedType === "glb") {
           console.log("[SHARED GLB DISPATCH]", mediaId, media.assetRef);
           void createSharedGLBFromAsset(mediaId, media);
@@ -2085,6 +2301,9 @@ function commitActiveArtworkToWorld() {
   } else if (importedArtworkKind === "glb") {
     const glbBlob = importedGLBPackageBlob;
     void publishCommittedGLBToSharedWorld(committedId, glbBlob);
+  } else if (importedArtworkKind === "webm") {
+    const webmBlob = importedWebMPackageBlob;
+    void publishCommittedWebMToSharedWorld(committedId, webmBlob);
   }
 
   // The Entity and resources now belong to the committed XRMediaObject.
@@ -2100,6 +2319,7 @@ function commitActiveArtworkToWorld() {
 
   importedSpritePackageBlob = null;
   importedGLBPackageBlob = null;
+  importedWebMPackageBlob = null;
   importedSpriteImageURL = null;
   importedSpriteMeta = null;
   importedSpriteImage = null;
@@ -2172,6 +2392,7 @@ function clearImportedArtwork() {
 
 let importedSpritePackageBlob: Blob | null = null;
 let importedGLBPackageBlob: Blob | null = null;
+let importedWebMPackageBlob: Blob | null = null;
 let importedSpriteImageURL: string | null = null;
 let importedSpriteMeta: any = null;
 let importedSpriteImage: HTMLImageElement | null = null;
@@ -2450,6 +2671,7 @@ function addSpriteArtworkToWorld() {
 async function addWebMArtworkToWorld(file: File) {
   clearImportedSpriteResources();
   clearImportedArtwork();
+  importedWebMPackageBlob = file;
   importedArtworkObjectURL = URL.createObjectURL(file);
 
   const video = document.createElement("video");

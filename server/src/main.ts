@@ -10,12 +10,12 @@ function parseAssetName(raw: string) {
     .replace(/[^a-zA-Z0-9_.-]/g, "")
     .slice(0, 96);
 
-  const match = clean.match(/^([a-zA-Z0-9_-]{1,80})\.(zip|glb)$/i);
+  const match = clean.match(/^([a-zA-Z0-9_-]{1,80})\.(zip|glb|webm)$/i);
   if (!match) return null;
 
   return {
     id: match[1],
-    ext: match[2].toLowerCase() as "zip" | "glb"
+    ext: match[2].toLowerCase() as "zip" | "glb" | "webm"
   };
 }
 
@@ -96,7 +96,11 @@ const server = defineServer({
 
       res.setHeader(
         "Content-Type",
-        parsed.ext === "glb" ? "model/gltf-binary" : "application/zip"
+        parsed.ext === "glb"
+          ? "model/gltf-binary"
+          : parsed.ext === "webm"
+            ? "video/webm"
+            : "application/zip"
       );
       res.setHeader("Content-Length", String(data.length));
       res.send(data);
@@ -105,7 +109,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.14.4",
+        service: "shared-world-0.14.5",
         sharedAssets: sharedAssets.size
       })
     );
@@ -114,4 +118,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.14.4] Shared Sprite + GLB Asset store ready");
+console.log("[Prototype 0.14.5] Shared Sprite + GLB + WebM Asset store ready");

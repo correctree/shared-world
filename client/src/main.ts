@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.3 SHARED ASSET SYSTEM LOADED]");
+console.log("[PROTOTYPE 0.14.4 SHARED GLB ASSET LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -466,8 +466,8 @@ function updatePlayerCount() {
 
 const sharedRemoteMediaIds = new Set<string>();
 
-function sharedAssetURL(mediaId: string) {
-  return `${SERVER_URL.replace(/\/$/, "")}/assets/${encodeURIComponent(mediaId)}.zip`;
+function sharedAssetURL(mediaId: string, extension: "zip" | "glb") {
+  return `${SERVER_URL.replace(/\/$/, "")}/assets/${encodeURIComponent(mediaId)}.${extension}`;
 }
 
 function createSharedSpritePlaceholder(mediaId: string, media: any) {
@@ -744,7 +744,7 @@ async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob:
     return;
   }
 
-  const assetRef = sharedAssetURL(mediaId);
+  const assetRef = sharedAssetURL(mediaId, "zip");
 
   try {
     const uploadResponse = await fetch(assetRef, {
@@ -778,6 +778,198 @@ async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob:
     console.log("[SHARED MEDIA SENT]", mediaId);
   } catch (error) {
     console.error("[SHARED PUBLISH ERROR]", mediaId, error);
+  }
+}
+
+
+async function createSharedGLBFromAsset(mediaId: string, media: any) {
+  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return;
+
+  const assetRef = String(media.assetRef || "");
+  if (!assetRef) {
+    console.error("[SHARED GLB] missing assetRef", mediaId);
+    return;
+  }
+
+  try {
+    console.log("[SHARED GLB FETCH]", mediaId, assetRef);
+    const response = await fetch(assetRef, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const glbBlob = await response.blob();
+    const glbURL = URL.createObjectURL(glbBlob);
+
+    const asset = new pc.Asset(`SharedGLB_${mediaId}`, "container", { url: glbURL });
+    app.assets.add(asset);
+
+    await new Promise<void>((resolve, reject) => {
+      asset.once("load", () => resolve());
+      asset.once("error", (err: unknown) => reject(err));
+      app.assets.load(asset);
+    });
+
+    const resource: any = asset.resource;
+    const entity: pc.Entity = resource.instantiateRenderEntity
+      ? resource.instantiateRenderEntity()
+      : resource.instantiateModelEntity();
+
+    entity.name = `SharedGLB_${mediaId}`;
+    entity.setPosition(media.x, media.y, media.z);
+    entity.setEulerAngles(0, media.rotationY, 0);
+    entity.setLocalScale(media.scale, media.scale, media.scale);
+    app.root.addChild(entity);
+
+    const animationAssets: any[] = Array.isArray(resource.animations)
+      ? resource.animations
+      : [];
+    const clipNames = animationAssets.map((entry: any, index: number) =>
+      String(entry?.name || entry?.resource?.name || `GLB_Animation_${index + 1}`)
+    );
+
+    let anim: any = null;
+    if (animationAssets.length > 0) {
+      entity.addComponent("anim", { activate: false });
+      anim = entity.anim;
+
+      const stateGraph = {
+        layers: [{
+          name: "Base",
+          states: [
+            { name: "START" },
+            ...animationAssets.map((_entry: any, index: number) => ({
+              name: `GLB_Animation_${index + 1}`,
+              speed: 1,
+              loop: true
+            }))
+          ],
+          transitions: []
+        }],
+        parameters: {}
+      };
+
+      anim.loadStateGraph(stateGraph as any);
+      const layer: any = anim.baseLayer;
+
+      animationAssets.forEach((entry: any, index: number) => {
+        const resourceClip = entry?.resource ?? entry;
+        layer.assignAnimation(`GLB_Animation_${index + 1}`, resourceClip);
+      });
+
+      layer.play("GLB_Animation_1");
+      anim.playing = true;
+    }
+
+    const playClip = (name: string) => {
+      if (!anim || animationAssets.length === 0) return;
+      const index = Math.max(0, clipNames.indexOf(name));
+      anim.baseLayer.play(`GLB_Animation_${index + 1}`);
+      anim.playing = true;
+    };
+
+    const remoteMedia = createMediaObject({
+      title: media.title || "Shared GLB",
+      type: "glb",
+      entity,
+      playable: animationAssets.length > 0,
+      animated: animationAssets.length > 0,
+      playback: animationAssets.length > 0 ? {
+        play: () => {
+          if (!anim) return;
+          if (!anim.playing) anim.playing = true;
+          else anim.baseLayer.play("GLB_Animation_1");
+        },
+        stop: () => {
+          if (anim) anim.playing = false;
+        },
+        setLoop: (loop: boolean) => {
+          if (!anim) return;
+          const state = anim.baseLayer?.activeState;
+          if (state) state.loop = loop;
+        },
+        getClips: () => [...clipNames],
+        playClip
+      } : undefined,
+      behavior: []
+    });
+    remoteMedia.id = mediaId;
+    xrMediaManager.register(remoteMedia);
+
+    managedPlacedMedia.set(mediaId, {
+      id: mediaId,
+      title: `${media.title || "GLB Artwork"} [SHARED]`,
+      kind: "glb",
+      entity
+    });
+    sharedRemoteMediaIds.add(mediaId);
+    refreshMediaManagerUI();
+
+    placedMediaRuntimes.push({
+      id: mediaId,
+      update: () => {},
+      dispose: () => {
+        URL.revokeObjectURL(glbURL);
+        asset.unload();
+        app.assets.remove(asset);
+      }
+    });
+
+    console.log("[SHARED GLB READY]", mediaId, {
+      animations: animationAssets.length,
+      clips: clipNames
+    });
+  } catch (error) {
+    console.error("[SHARED GLB LOAD ERROR]", mediaId, error);
+  }
+}
+
+async function publishCommittedGLBToSharedWorld(mediaId: string, glbBlob: Blob | null) {
+  console.log("[SHARED GLB PUBLISH START]", mediaId);
+
+  if (!activeRoom || !glbBlob) {
+    console.error("[SHARED GLB PUBLISH ABORT]", {
+      hasRoom: !!activeRoom,
+      hasGLB: !!glbBlob
+    });
+    return;
+  }
+
+  const item = managedPlacedMedia.get(mediaId);
+  const media = xrMediaManager.get(mediaId);
+  if (!item || item.kind !== "glb" || !media) {
+    console.error("[SHARED GLB PUBLISH ABORT] media lookup/kind failed");
+    return;
+  }
+
+  const assetRef = sharedAssetURL(mediaId, "glb");
+
+  try {
+    const uploadResponse = await fetch(assetRef, {
+      method: "PUT",
+      headers: { "Content-Type": "model/gltf-binary" },
+      body: glbBlob
+    });
+    if (!uploadResponse.ok) {
+      throw new Error(`GLB upload failed: HTTP ${uploadResponse.status}`);
+    }
+
+    const position = item.entity.getPosition();
+    const rotation = item.entity.getEulerAngles();
+    const scale = item.entity.getLocalScale();
+
+    activeRoom.send("media:add", {
+      id: mediaId,
+      title: media.title || "GLB Artwork",
+      type: "glb",
+      assetRef,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      rotationY: rotation.y,
+      scale: scale.x
+    });
+
+    console.log("[SHARED GLB MEDIA SENT]", mediaId, assetRef);
+  } catch (error) {
+    console.error("[SHARED GLB PUBLISH ERROR]", mediaId, error);
   }
 }
 
@@ -829,7 +1021,14 @@ async function enterWorld() {
 
       // The placing client already owns the real local Sprite.
       if (!managedPlacedMedia.has(mediaId)) {
-        void createSharedSpriteFromAsset(mediaId, media);
+        const sharedType = String(media.type || "");
+        if (sharedType === "sprite") {
+          void createSharedSpriteFromAsset(mediaId, media);
+        } else if (sharedType === "glb") {
+          void createSharedGLBFromAsset(mediaId, media);
+        } else {
+          console.warn("[SHARED RECEIVE] unsupported media type", sharedType, mediaId);
+        }
       }
 
       $(media).onChange(() => {
@@ -1800,6 +1999,9 @@ function commitActiveArtworkToWorld() {
   if (importedArtworkKind === "sprite") {
     const packageBlob = importedSpritePackageBlob;
     void publishCommittedSpriteToSharedWorld(committedId, packageBlob);
+  } else if (importedArtworkKind === "glb") {
+    const glbBlob = importedGLBPackageBlob;
+    void publishCommittedGLBToSharedWorld(committedId, glbBlob);
   }
 
   // The Entity and resources now belong to the committed XRMediaObject.
@@ -1814,6 +2016,7 @@ function commitActiveArtworkToWorld() {
   importedGLBObjectURL = null;
 
   importedSpritePackageBlob = null;
+  importedGLBPackageBlob = null;
   importedSpriteImageURL = null;
   importedSpriteMeta = null;
   importedSpriteImage = null;
@@ -1885,6 +2088,7 @@ function clearImportedArtwork() {
 // =========================================================
 
 let importedSpritePackageBlob: Blob | null = null;
+let importedGLBPackageBlob: Blob | null = null;
 let importedSpriteImageURL: string | null = null;
 let importedSpriteMeta: any = null;
 let importedSpriteImage: HTMLImageElement | null = null;
@@ -2332,6 +2536,7 @@ function normalizeImportedGLB(
 }
 
 async function addGLBArtworkToWorld(file: File) {
+  importedGLBPackageBlob = file;
   clearImportedSpriteResources();
   clearImportedArtwork();
 

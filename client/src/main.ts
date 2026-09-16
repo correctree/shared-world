@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.6.1 TRANSFORM + SPRITE PLAYBACK FIX LOADED]");
+console.log("[PROTOTYPE 0.14.7 SESSION + WORLD RECOVERY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -465,6 +465,8 @@ function updatePlayerCount() {
 // =========================================================
 
 const sharedRemoteMediaIds = new Set<string>();
+const sharedMediaLoadingIds = new Set<string>();
+const SHARED_ASSET_RETRY_DELAYS = [0, 700, 1600, 3200];
 
 function sharedAssetURL(mediaId: string, extension: "zip" | "glb" | "webm") {
   return `${SERVER_URL.replace(/\/$/, "")}/assets/${encodeURIComponent(mediaId)}.${extension}`;
@@ -512,7 +514,8 @@ function createSharedSpritePlaceholder(mediaId: string, media: any) {
 }
 
 async function createSharedSpriteFromAsset(mediaId: string, media: any) {
-  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return;
+  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
+  sharedMediaLoadingIds.add(mediaId);
 
   const assetRef = String(media.assetRef || "");
   if (!assetRef) {
@@ -522,8 +525,7 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
 
   try {
     console.log("[SHARED ASSET FETCH]", mediaId, assetRef);
-    const response = await fetch(assetRef, { cache: "no-store" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const response = await fetchSharedAssetWithRetry(assetRef, `sprite:${mediaId}`);
 
     const zipBlob = await response.blob();
     const zip = await JSZip.loadAsync(zipBlob);
@@ -692,9 +694,11 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
       }
     });
 
+    sharedMediaLoadingIds.delete(mediaId);
     refreshMediaManagerUI();
     console.log("[SHARED SPRITE READY]", mediaId, { frameCount, fps });
   } catch (error) {
+    sharedMediaLoadingIds.delete(mediaId);
     console.error("[SHARED ASSET LOAD ERROR]", mediaId, error);
     createSharedSpritePlaceholder(mediaId, media);
   }
@@ -789,7 +793,7 @@ async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob:
 
 
 async function createSharedWebMFromAsset(mediaId: string, media: any) {
-  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return;
+  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
 
   const fallbackRef=String(media.fallbackRef || "");
   if(isIOSLikeDevice() && fallbackRef){
@@ -798,6 +802,7 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
     return;
   }
 
+  sharedMediaLoadingIds.add(mediaId);
   const assetRef = String(media.assetRef || "");
   if (!assetRef) {
     console.error("[SHARED WEBM 01 RECEIVE] missing assetRef", mediaId);
@@ -812,8 +817,7 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
     console.log("[SHARED WEBM 01 RECEIVE]", mediaId, assetRef);
     console.log("[SHARED WEBM 02 FETCH START]", assetRef);
 
-    const response = await fetch(assetRef, { cache: "no-store", mode: "cors" });
-    if (!response.ok) throw new Error(`WebM HTTP ${response.status}`);
+    const response = await fetchSharedAssetWithRetry(assetRef, `webm:${mediaId}`);
 
     const bytes = await response.arrayBuffer();
     console.log("[SHARED WEBM 03 FETCH OK]", mediaId, {
@@ -939,10 +943,12 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
       }
     });
 
+    sharedMediaLoadingIds.delete(mediaId);
     refreshMediaManagerUI();
     console.log("[SHARED WEBM 07 REGISTERED]", mediaId);
     console.log("[SHARED WEBM 08 READY]", mediaId);
   } catch (error) {
+    sharedMediaLoadingIds.delete(mediaId);
     console.error("[SHARED WEBM LOAD ERROR]", mediaId, error);
     video?.pause();
     texture?.destroy();
@@ -1014,9 +1020,13 @@ async function publishCommittedWebMToSharedWorld(mediaId:string,webmBlob:Blob|nu
 }
 
 async function createSharedGLBFromAsset(mediaId: string, media: any) {
-  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return;
+  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
+  sharedMediaLoadingIds.add(mediaId);
   const assetRef = String(media.assetRef || "");
-  if (!assetRef) return;
+  if (!assetRef) {
+    sharedMediaLoadingIds.delete(mediaId);
+    return;
+  }
 
   let glbURL: string | null = null;
   let asset: pc.Asset | null = null;
@@ -1024,8 +1034,7 @@ async function createSharedGLBFromAsset(mediaId: string, media: any) {
 
   try {
     console.log("[SHARED GLB 01 RECEIVE]", mediaId, media);
-    const response = await fetch(assetRef, { cache: "no-store", mode: "cors" });
-    if (!response.ok) throw new Error(`GLB HTTP ${response.status}`);
+    const response = await fetchSharedAssetWithRetry(assetRef, `glb:${mediaId}`);
     const buffer = await response.arrayBuffer();
     if (buffer.byteLength < 20) throw new Error("GLB payload too small.");
     glbURL = URL.createObjectURL(new Blob([buffer], { type: "model/gltf-binary" }));
@@ -1137,9 +1146,12 @@ async function createSharedGLBFromAsset(mediaId: string, media: any) {
       }
     });
 
+    sharedMediaLoadingIds.delete(mediaId);
     refreshMediaManagerUI();
     console.log("[SHARED GLB READY / TRANSFORM PARITY]", mediaId);
+    console.log("[WORLD RECOVERY MEDIA READY]", mediaId, "glb");
   } catch (error) {
+    sharedMediaLoadingIds.delete(mediaId);
     console.error("[SHARED GLB LOAD ERROR]", mediaId, error);
     if (holder?.parent) holder.destroy();
     if (asset) { try { asset.unload(); } catch {} try { app.assets.remove(asset); } catch {} }
@@ -1199,6 +1211,49 @@ async function publishCommittedGLBToSharedWorld(mediaId: string, glbBlob: Blob |
   }
 }
 
+
+async function fetchSharedAssetWithRetry(url: string, label: string): Promise<Response> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < SHARED_ASSET_RETRY_DELAYS.length; attempt++) {
+    const delay = SHARED_ASSET_RETRY_DELAYS[attempt];
+    if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+    try {
+      console.log("[ASSET RECOVERY TRY]", label, attempt + 1, url);
+      const response = await fetch(url, { cache: "no-store", mode: "cors" });
+      if (response.ok) {
+        console.log("[ASSET RECOVERY OK]", label, attempt + 1);
+        return response;
+      }
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Asset recovery failed: ${label}`);
+}
+
+function resetClientWorldForReentry() {
+  console.log("[WORLD RECOVERY RESET START]");
+
+  // Remove every avatar from the previous local room view.
+  for (const sessionId of Array.from(avatars.keys())) {
+    removeAvatar(sessionId);
+  }
+
+  // Remove only remote/shared reconstructions. Local creator objects are
+  // allowed to remain until the page itself is replaced; on a fresh reload
+  // this collection is empty.
+  for (const mediaId of Array.from(sharedRemoteMediaIds)) {
+    removeSharedSpritePlaceholder(mediaId);
+  }
+
+  sharedMediaLoadingIds.clear();
+  selectedManagedMediaId = null;
+  editingManagedMediaId = null;
+  refreshMediaManagerUI();
+  console.log("[WORLD RECOVERY RESET DONE]");
+}
+
 // =========================================================
 // ENTER WORLD
 // =========================================================
@@ -1206,6 +1261,18 @@ async function publishCommittedGLBToSharedWorld(mediaId: string, glbBlob: Blob |
 async function enterWorld() {
   enterButton.disabled = true;
   status.textContent = "接続しています…";
+
+  if (activeRoom) {
+    try {
+      console.log("[SESSION REENTRY] leaving previous room", activeRoom.sessionId);
+      await activeRoom.leave(true);
+    } catch (error) {
+      console.warn("[SESSION REENTRY] previous leave warning", error);
+    }
+    activeRoom = null;
+    currentSessionId = "";
+  }
+  resetClientWorldForReentry();
 
   const name = (nameInput.value.trim() || "Guest").slice(0, 16);
   const roomCode = (roomInput.value.trim() || "ART001")
@@ -1271,10 +1338,16 @@ async function enterWorld() {
 
     sharedMedia.onRemove((_media: any, mediaId: string) => {
       console.log("[SHARED RECEIVE REMOVE]", mediaId);
+      sharedMediaLoadingIds.delete(mediaId);
       removeSharedSpritePlaceholder(mediaId);
     });
 
     console.log("[SHARED RECEIVE LISTENER READY]");
+    console.log("[WORLD SNAPSHOT READY]", {
+      sessionId: room.sessionId,
+      players: (room.state as any).players?.size ?? "callback-managed",
+      mediaObjects: (room.state as any).mediaObjects?.size ?? "callback-managed"
+    });
 
     roomLabel.textContent = `ROOM ${roomCode}`;
     status.textContent = "接続しました";
@@ -1286,6 +1359,13 @@ async function enterWorld() {
     enterButton.disabled = false;
   }
 }
+
+window.addEventListener("pagehide", () => {
+  if (activeRoom) {
+    console.log("[SESSION PAGEHIDE LEAVE]", activeRoom.sessionId);
+    void activeRoom.leave(true).catch(() => {});
+  }
+});
 
 enterButton.addEventListener("click", enterWorld);
 roomInput.addEventListener("keydown", (e) => { if (e.key === "Enter") enterWorld(); });

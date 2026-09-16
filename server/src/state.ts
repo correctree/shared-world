@@ -9,9 +9,8 @@ export const Player = schema({
 }, "Player");
 export type Player = SchemaType<typeof Player>;
 
-// Prototype 0.14.1 / SHARED MEDIA OBJECT
-// This first stage shares existence + transform + asset reference.
-// Binary Sprite ZIP transfer is intentionally deferred to the next stage.
+// Prototype 0.14.3 / SHARED MEDIA OBJECT
+// assetRef now points to a fetchable HTTP asset on the Render server.
 export const SharedMediaObject = schema({
   title: t.string().default("Shared Artwork"),
   type: t.string().default("sprite"),

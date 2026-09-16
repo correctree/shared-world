@@ -10,12 +10,18 @@ type AddMediaPayload = {
   title?: string;
   type?: string;
   assetRef?: string;
+  fallbackRef?: string;
   x?: number;
   y?: number;
   z?: number;
   rotationY?: number;
   scale?: number;
 };
+
+type UpdateMediaPayload = {
+  id?: string; x?: number; y?: number; z?: number; rotationY?: number; scale?: number;
+};
+type DeleteMediaPayload = { id?: string };
 
 export class SharedWorldRoom extends Room<WorldState> {
   maxClients = 4;
@@ -88,6 +94,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         title: String(payload?.title || "Sprite Artwork").slice(0, 80),
         type: mediaType,
         assetRef: String(payload?.assetRef || "").slice(0, 240),
+        fallbackRef: String(payload?.fallbackRef || "").slice(0, 240),
         ownerSessionId: client.sessionId,
         x: Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, x)),
         y: Math.max(-10, Math.min(20, y)),
@@ -97,6 +104,36 @@ export class SharedWorldRoom extends Room<WorldState> {
       }));
 
       console.log("[media:add stored]", id, "total:", this.state.mediaObjects.size);
+    });
+
+
+    this.onMessage("media:update", (client: Client, payload: UpdateMediaPayload) => {
+      const id = String(payload?.id || "").trim().slice(0, 80);
+      const media = this.state.mediaObjects.get(id);
+      if (!media || media.ownerSessionId !== client.sessionId) {
+        console.warn("[media:update rejected]", id);
+        return;
+      }
+      const x=Number(payload?.x), y=Number(payload?.y), z=Number(payload?.z);
+      const rotationY=Number(payload?.rotationY), scale=Number(payload?.scale);
+      if (![x,y,z,rotationY,scale].every(Number.isFinite)) return;
+      media.x=Math.max(-WORLD_LIMIT,Math.min(WORLD_LIMIT,x));
+      media.y=Math.max(-10,Math.min(20,y));
+      media.z=Math.max(-WORLD_LIMIT,Math.min(WORLD_LIMIT,z));
+      media.rotationY=rotationY;
+      media.scale=Math.max(0.05,Math.min(20,scale));
+      console.log("[media:update stored]", id);
+    });
+
+    this.onMessage("media:delete", (client: Client, payload: DeleteMediaPayload) => {
+      const id=String(payload?.id || "").trim().slice(0,80);
+      const media=this.state.mediaObjects.get(id);
+      if (!media || media.ownerSessionId !== client.sessionId) {
+        console.warn("[media:delete rejected]", id);
+        return;
+      }
+      this.state.mediaObjects.delete(id);
+      console.log("[media:delete stored]", id, "total:", this.state.mediaObjects.size);
     });
 
     console.log("[room:create] message handlers ready");

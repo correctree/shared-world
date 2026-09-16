@@ -28,12 +28,13 @@ const server = defineServer({
     });
 
     app.put("/assets/:id", (req, res) => {
-      const assetId = safeAssetId(req.params.id);
-      if (!assetId) {
-        res.status(400).json({ ok: false, error: "invalid asset id" });
+      const parsed = parseAssetName(req.params.id);
+      if (!parsed) {
+        res.status(400).json({ ok: false, error: "invalid asset name" });
         return;
       }
 
+      const key = `${parsed.id}.${parsed.ext}`;
       const chunks: Buffer[] = [];
       let size = 0;
       let rejected = false;
@@ -58,32 +59,35 @@ const server = defineServer({
           return;
         }
 
-        sharedAssets.set(assetId, data);
-        console.log(`[asset:put] ${assetId} / ${data.length} bytes`);
-        res.json({
-          ok: true,
-          assetRef: `/assets/${assetId}.zip`,
-          bytes: data.length
-        });
+        sharedAssets.set(key, data);
+        console.log(`[asset:put] ${key} / ${data.length} bytes`);
+        res.json({ ok: true, assetRef: `/assets/${key}`, bytes: data.length });
       });
 
       req.on("error", (error) => {
-        console.error("[asset:put error]", assetId, error);
-        if (!res.headersSent) {
-          res.status(500).json({ ok: false, error: "upload failed" });
-        }
+        console.error("[asset:put error]", key, error);
+        if (!res.headersSent) res.status(500).json({ ok: false, error: "upload failed" });
       });
     });
 
     app.get("/assets/:id", (req, res) => {
-      const assetId = safeAssetId(req.params.id);
-      const data = sharedAssets.get(assetId);
+      const parsed = parseAssetName(req.params.id);
+      if (!parsed) {
+        res.status(400).json({ ok: false, error: "invalid asset name" });
+        return;
+      }
+
+      const key = `${parsed.id}.${parsed.ext}`;
+      const data = sharedAssets.get(key);
       if (!data) {
         res.status(404).json({ ok: false, error: "asset not found" });
         return;
       }
 
-      res.setHeader("Content-Type", "application/zip");
+      res.setHeader(
+        "Content-Type",
+        parsed.ext === "glb" ? "model/gltf-binary" : "application/zip"
+      );
       res.setHeader("Content-Length", String(data.length));
       res.send(data);
     });
@@ -91,7 +95,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.14.3",
+        service: "shared-world-0.14.4",
         sharedAssets: sharedAssets.size
       })
     );
@@ -100,4 +104,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.14.3] Shared Asset HTTP store ready");
+console.log("[Prototype 0.14.4] Shared Sprite + GLB Asset store ready");

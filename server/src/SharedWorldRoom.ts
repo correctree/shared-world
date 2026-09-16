@@ -159,4 +159,16 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.state.players.delete(client.sessionId);
     console.log(`[leave] ${name}`);
   }
+
+
+  async onLeave(client: Client, consented: boolean) {
+    const player = this.state.players.get(client.sessionId);
+    const name = player?.name || "Guest";
+    console.log("[leave]", name, client.sessionId, { consented });
+
+    // Remove immediately. Re-entry creates one fresh avatar/session.
+    // This avoids ghost avatars accumulating on mobile Safari reloads.
+    this.state.players.delete(client.sessionId);
+    console.log("[SESSION CLEANUP]", client.sessionId, "players:", this.state.players.size);
+  }
 }

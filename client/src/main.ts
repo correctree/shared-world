@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.6 SHARED MEDIA LIFECYCLE LOADED]");
+console.log("[PROTOTYPE 0.14.6.1 TRANSFORM + SPRITE PLAYBACK FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1015,189 +1015,114 @@ async function publishCommittedWebMToSharedWorld(mediaId:string,webmBlob:Blob|nu
 
 async function createSharedGLBFromAsset(mediaId: string, media: any) {
   if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return;
-
   const assetRef = String(media.assetRef || "");
-  if (!assetRef) {
-    console.error("[SHARED GLB 01 RECEIVE] missing assetRef", mediaId);
-    return;
-  }
-
-  console.log("[SHARED GLB 01 RECEIVE]", mediaId, {
-    assetRef,
-    x: media.x, y: media.y, z: media.z,
-    rotationY: media.rotationY,
-    scale: media.scale
-  });
+  if (!assetRef) return;
 
   let glbURL: string | null = null;
   let asset: pc.Asset | null = null;
+  let holder: pc.Entity | null = null;
 
   try {
-    // 02-03: fetch the exact GLB bytes first. This path works consistently
-    // across desktop Chrome and iOS Safari and gives us a concrete byte check.
-    console.log("[SHARED GLB 02 FETCH START]", assetRef);
+    console.log("[SHARED GLB 01 RECEIVE]", mediaId, media);
     const response = await fetch(assetRef, { cache: "no-store", mode: "cors" });
     if (!response.ok) throw new Error(`GLB HTTP ${response.status}`);
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength < 20) throw new Error("GLB payload too small.");
+    glbURL = URL.createObjectURL(new Blob([buffer], { type: "model/gltf-binary" }));
 
-    const glbBuffer = await response.arrayBuffer();
-    console.log("[SHARED GLB 03 BYTES]", mediaId, glbBuffer.byteLength);
-    if (glbBuffer.byteLength < 20) throw new Error("GLB payload is empty/too small.");
-
-    const glbBlob = new Blob([glbBuffer], { type: "model/gltf-binary" });
-    glbURL = URL.createObjectURL(glbBlob);
-
-    // 04: use PlayCanvas' proven Container Asset loader, same family of
-    // loading used by the local GLB importer.
-    asset = new pc.Asset(
-      `SharedGLBAsset_${mediaId}`,
-      "container",
-      { url: glbURL, filename: `${mediaId}.glb` }
-    );
-    app.assets.add(asset);
-
-    console.log("[SHARED GLB 04 ASSET LOAD START]", mediaId);
-    await new Promise<void>((resolve, reject) => {
-      const onLoad = () => {
-        cleanup();
-        resolve();
-      };
-      const onError = (err: unknown) => {
-        cleanup();
-        reject(err instanceof Error ? err : new Error(String(err)));
-      };
-      const cleanup = () => {
-        asset?.off("load", onLoad);
-        asset?.off("error", onError);
-      };
-      asset!.once("load", onLoad);
-      asset!.once("error", onError);
-      app.assets.load(asset!);
+    asset = await new Promise<pc.Asset>((resolve, reject) => {
+      app.assets.loadFromUrlAndFilename(glbURL!, `${mediaId}.glb`, "container", (error, loaded) => {
+        if (error || !loaded) reject(error instanceof Error ? error : new Error(String(error || "GLB load failed")));
+        else resolve(loaded);
+      });
     });
 
     const container: any = asset.resource;
-    console.log("[SHARED GLB 05 RESOURCE]", mediaId, {
-      hasResource: !!container,
-      hasRenderFactory: !!container?.instantiateRenderEntity,
-      hasModelFactory: !!container?.instantiateModelEntity,
-      animations: Array.isArray(container?.animations) ? container.animations.length : 0
-    });
-    if (!container) throw new Error("PlayCanvas container resource is missing.");
+    if (!container?.instantiateRenderEntity) throw new Error("No RenderEntity factory.");
 
-    // Prefer RenderEntity, but retain ModelEntity fallback for older/variant
-    // container resources.
-    let entity: pc.Entity;
-    if (typeof container.instantiateRenderEntity === "function") {
-      entity = container.instantiateRenderEntity();
-    } else if (typeof container.instantiateModelEntity === "function") {
-      entity = container.instantiateModelEntity();
-    } else {
-      throw new Error("Container has no supported instantiate method.");
-    }
+    const modelEntity = container.instantiateRenderEntity() as pc.Entity;
+    holder = new pc.Entity(`SharedGLB_${mediaId}`);
+    const normalizer = new pc.Entity(`SharedGLBNormalizer_${mediaId}`);
+    holder.addChild(normalizer);
+    normalizer.addChild(modelEntity);
+    app.root.addChild(holder);
 
-    console.log("[SHARED GLB 06 ENTITY]", mediaId, entity.name);
+    // Exact same normalization as local GLB import.
+    normalizeImportedGLB(modelEntity, normalizer);
 
-    entity.name = `SharedGLB_${mediaId}`;
-    entity.setPosition(Number(media.x), Number(media.y), Number(media.z));
-    entity.setEulerAngles(0, Number(media.rotationY), 0);
-    const sharedScale = Math.max(0.0001, Number(media.scale) || 1);
-    entity.setLocalScale(sharedScale, sharedScale, sharedScale);
-    app.root.addChild(entity);
+    const s = Math.max(0.0001, Number(media.scale) || 1);
+    holder.setPosition(Number(media.x), Number(media.y), Number(media.z));
+    holder.setEulerAngles(0, Number(media.rotationY) || 0, 0);
+    holder.setLocalScale(s, s, s);
 
-    console.log("[SHARED GLB 07 SCENE ADD]", mediaId, {
-      position: entity.getPosition().toString(),
-      scale: entity.getLocalScale().toString()
+    console.log("[SHARED GLB NORMALIZATION PARITY]", mediaId, {
+      holder: holder.getPosition().toString(),
+      normalizer: normalizer.getLocalPosition().toString()
     });
 
-    // 08-10: animation hookup follows the already-proven local GLB pattern:
-    // entry.resource ?? entry, internal safe state names, explicit layer.play.
-    const animationEntries: any[] = Array.isArray(container.animations)
-      ? container.animations
-      : [];
-    const clipNames = animationEntries.map((entry: any, index: number) =>
-      String(entry?.name || entry?.resource?.name || `GLB Animation ${index + 1}`)
-    );
+    const entries: any[] = Array.isArray(container.animations) ? container.animations : [];
+    const clips = entries.map((entry: any, index: number) => ({
+      track: entry?.resource ?? entry,
+      displayName: String(entry?.resource?.name || entry?.name || `Animation ${index + 1}`),
+      stateName: `GLB_Animation_${index + 1}`
+    })).filter((clip: any) => !!clip.track);
 
     let anim: any = null;
-    let activeClipIndex = 0;
-    let loopEnabled = true;
+    let selected = 0;
+    let loop = true;
 
-    if (animationEntries.length > 0) {
-      entity.addComponent("anim", { activate: false });
-      anim = entity.anim;
-
-      const states = animationEntries.map((_entry: any, index: number) => ({
-        name: `GLB_Animation_${index + 1}`,
-        speed: 1,
-        loop: loopEnabled
-      }));
-
-      anim.loadStateGraph({
-        layers: [{
-          name: "Base",
-          states: [{ name: "START" }, ...states],
-          transitions: []
-        }],
-        parameters: {}
-      } as any);
-
-      const layer: any = anim.baseLayer;
-      animationEntries.forEach((entry: any, index: number) => {
-        layer.assignAnimation(
-          `GLB_Animation_${index + 1}`,
-          entry?.resource ?? entry
-        );
-      });
-
-      layer.play("GLB_Animation_1");
+    if (clips.length) {
+      modelEntity.addComponent("anim", { activate: false, speed: 1 });
+      anim = modelEntity.anim;
+      anim.rootBone = modelEntity;
+      clips.forEach((clip: any) => anim.assignAnimation(clip.stateName, clip.track, undefined, 1, loop));
+      anim.rebind();
+      anim.baseLayer.play(clips[0].stateName);
       anim.playing = true;
-      console.log("[SHARED GLB 08 ANIMATION]", mediaId, clipNames);
-    } else {
-      console.log("[SHARED GLB 08 ANIMATION] no clips", mediaId);
     }
 
-    const playIndex = (index: number) => {
-      if (!anim || animationEntries.length === 0) return;
-      activeClipIndex = Math.max(0, Math.min(animationEntries.length - 1, index));
-      anim.baseLayer.play(`GLB_Animation_${activeClipIndex + 1}`);
+    const play = () => {
+      if (!anim || !clips.length) return;
+      const clip = clips[selected] || clips[0];
+      anim.assignAnimation(clip.stateName, clip.track, undefined, 1, loop);
+      anim.rebind();
+      anim.baseLayer.play(clip.stateName);
       anim.playing = true;
     };
+    const stop = () => {
+      if (!anim) return;
+      anim.baseLayer.pause();
+      anim.baseLayer.activeStateCurrentTime = 0;
+      anim.playing = false;
+    };
 
-    const remoteMedia = createMediaObject({
+    const remote = createMediaObject({
       title: media.title || "Shared GLB",
       type: "glb",
-      entity,
-      playable: animationEntries.length > 0,
-      animated: animationEntries.length > 0,
-      playback: animationEntries.length > 0 ? {
-        play: () => playIndex(activeClipIndex),
-        stop: () => {
-          if (anim) anim.playing = false;
-        },
-        setLoop: (loop: boolean) => {
-          loopEnabled = loop;
-          // Rebuild is unnecessary for the current single-loop use case;
-          // update active state's loop flag when exposed by the runtime.
-          const activeState: any = anim?.baseLayer?.activeState;
-          if (activeState && typeof activeState === "object") {
-            activeState.loop = loopEnabled;
-          }
-        },
-        getClips: () => [...clipNames],
+      entity: holder,
+      playable: clips.length > 0,
+      animated: clips.length > 0,
+      playback: clips.length ? {
+        play,
+        stop,
+        setLoop: (v: boolean) => { loop = v; },
+        getClips: () => clips.map((c: any) => c.displayName),
         playClip: (name: string) => {
-          const index = clipNames.indexOf(name);
-          playIndex(index >= 0 ? index : 0);
+          const i = clips.findIndex((c: any) => c.displayName === name);
+          selected = i >= 0 ? i : 0;
+          play();
         }
       } : undefined,
       behavior: []
     });
-    remoteMedia.id = mediaId;
-    xrMediaManager.register(remoteMedia);
+    remote.id = mediaId;
+    xrMediaManager.register(remote);
 
     managedPlacedMedia.set(mediaId, {
       id: mediaId,
       title: `${media.title || "GLB Artwork"} [SHARED]`,
       kind: "glb",
-      entity
+      entity: holder
     });
     sharedRemoteMediaIds.add(mediaId);
 
@@ -1205,32 +1130,20 @@ async function createSharedGLBFromAsset(mediaId: string, media: any) {
       id: mediaId,
       update: () => {},
       dispose: () => {
-        entity.destroy();
-        if (asset) {
-          asset.unload();
-          app.assets.remove(asset);
-        }
+        stop();
+        if (holder?.parent) holder.destroy();
+        if (asset) { asset.unload(); app.assets.remove(asset); }
         if (glbURL) URL.revokeObjectURL(glbURL);
       }
     });
 
     refreshMediaManagerUI();
-    console.log("[SHARED GLB 09 REGISTERED]", mediaId);
-    console.log("[SHARED GLB 10 READY]", mediaId, {
-      animations: animationEntries.length,
-      clips: clipNames
-    });
+    console.log("[SHARED GLB READY / TRANSFORM PARITY]", mediaId);
   } catch (error) {
     console.error("[SHARED GLB LOAD ERROR]", mediaId, error);
-
-    // Clean partial resources but leave the rest of the world alive.
-    if (asset) {
-      try { asset.unload(); } catch {}
-      try { app.assets.remove(asset); } catch {}
-    }
-    if (glbURL) {
-      try { URL.revokeObjectURL(glbURL); } catch {}
-    }
+    if (holder?.parent) holder.destroy();
+    if (asset) { try { asset.unload(); } catch {} try { app.assets.remove(asset); } catch {} }
+    if (glbURL) try { URL.revokeObjectURL(glbURL); } catch {}
   }
 }
 
@@ -2167,7 +2080,8 @@ function commitActiveArtworkToWorld() {
 
     let frame = importedSpriteFrame;
     let elapsed = importedSpriteElapsed;
-    let playing = importedSpritePlaying;
+    // Keep creator playback aligned with remote Shared Sprite.
+    let playing = true;
 
     const media = xrMediaManager.get(committedId);
     if (media) {
@@ -2690,7 +2604,7 @@ function addSpriteArtworkToWorld() {
             distance: 3,
             enterAction: "play",
             leaveAction: "stop",
-            enabled: true
+            enabled: false
         }
     ]
 }));
@@ -3076,7 +2990,7 @@ placeArtworkButton?.addEventListener("click", () => {
     sendSharedMediaTransform(editedId);
     refreshMediaManagerUI();
     artworkPlacementPanel?.classList.add("hidden");
-    console.log("XR Media edit confirmed:", editedId);
+    console.log("[0.14.6.1 EDIT CONFIRMED / PLAYBACK PRESERVED]", editedId);
     return;
   }
 

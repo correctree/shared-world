@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.5 SHARED WEBM ASSET LOADED]");
+console.log("[PROTOTYPE 0.14.6 SHARED MEDIA LIFECYCLE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -791,6 +791,13 @@ async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob:
 async function createSharedWebMFromAsset(mediaId: string, media: any) {
   if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return;
 
+  const fallbackRef=String(media.fallbackRef || "");
+  if(isIOSLikeDevice() && fallbackRef){
+    console.log("[SHARED WEBM ALPHA FALLBACK -> SPRITE]",mediaId,fallbackRef);
+    await createSharedSpriteFromAsset(mediaId,{title:media.title,assetRef:fallbackRef,x:media.x,y:media.y,z:media.z,rotationY:media.rotationY,scale:media.scale});
+    return;
+  }
+
   const assetRef = String(media.assetRef || "");
   if (!assetRef) {
     console.error("[SHARED WEBM 01 RECEIVE] missing assetRef", mediaId);
@@ -943,56 +950,67 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
   }
 }
 
-async function publishCommittedWebMToSharedWorld(mediaId: string, webmBlob: Blob | null) {
-  console.log("[SHARED WEBM PUBLISH START]", mediaId);
-
-  if (!activeRoom || !webmBlob) {
-    console.error("[SHARED WEBM PUBLISH ABORT]", {
-      hasRoom: !!activeRoom,
-      hasWebM: !!webmBlob
+function isIOSLikeDevice() {
+  return /iPad|iPhone|iPod/i.test(navigator.userAgent||"") ||
+    (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
+}
+function canvasToPNGBlob(canvas:HTMLCanvasElement):Promise<Blob>{
+  return new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("PNG encode failed")),"image/png"));
+}
+async function buildWebMAlphaFallbackZip(webmBlob:Blob):Promise<Blob|null>{
+  const url=URL.createObjectURL(webmBlob), video=document.createElement("video");
+  video.src=url; video.muted=true; video.playsInline=true; video.preload="auto";
+  try{
+    await new Promise<void>((resolve,reject)=>{
+      const ok=()=>{clean();resolve()}, bad=()=>{clean();reject(new Error("metadata failed"))};
+      const clean=()=>{video.removeEventListener("loadedmetadata",ok);video.removeEventListener("error",bad)};
+      video.addEventListener("loadedmetadata",ok,{once:true}); video.addEventListener("error",bad,{once:true}); video.load();
     });
-    return;
-  }
-
-  const item = managedPlacedMedia.get(mediaId);
-  const media = xrMediaManager.get(mediaId);
-  if (!item || item.kind !== "webm" || !media) {
-    console.error("[SHARED WEBM PUBLISH ABORT] media lookup/kind failed");
-    return;
-  }
-
-  const assetRef = sharedAssetURL(mediaId, "webm");
-
-  try {
-    const uploadResponse = await fetch(assetRef, {
-      method: "PUT",
-      headers: { "Content-Type": "video/webm" },
-      body: webmBlob
+    const duration=Number.isFinite(video.duration)&&video.duration>0?video.duration:2;
+    const fps=6, frames=Math.max(2,Math.min(48,Math.ceil(duration*fps)));
+    const sw=Math.max(1,video.videoWidth||512), sh=Math.max(1,video.videoHeight||512);
+    const k=Math.min(1,384/Math.max(sw,sh)), fw=Math.max(1,Math.round(sw*k)), fh=Math.max(1,Math.round(sh*k));
+    const columns=Math.ceil(Math.sqrt(frames)), rows=Math.ceil(frames/columns);
+    const sheet=document.createElement("canvas"); sheet.width=fw*columns; sheet.height=fh*rows;
+    const ctx=sheet.getContext("2d",{alpha:true}); if(!ctx) throw new Error("canvas unavailable");
+    const seek=async(t:number)=>new Promise<void>((resolve,reject)=>{
+      const ok=()=>{clean();resolve()}, bad=()=>{clean();reject(new Error("seek failed"))};
+      const clean=()=>{video.removeEventListener("seeked",ok);video.removeEventListener("error",bad)};
+      video.addEventListener("seeked",ok,{once:true});video.addEventListener("error",bad,{once:true});
+      video.currentTime=Math.min(Math.max(0,t),Math.max(0,duration-.001));
     });
-    if (!uploadResponse.ok) {
-      throw new Error(`WebM upload failed: HTTP ${uploadResponse.status}`);
+    for(let i=0;i<frames;i++){await seek(i/frames*duration);ctx.drawImage(video,(i%columns)*fw,Math.floor(i/columns)*fh,fw,fh)}
+    const png=await canvasToPNGBlob(sheet), zip=new JSZip();
+    zip.file("fallback.png",png);
+    zip.file("fallback.json",JSON.stringify({frameWidth:fw,frameHeight:fh,columns,rows,frames,fps,duration:duration*1000},null,2));
+    const out=await zip.generateAsync({type:"blob",compression:"DEFLATE"});
+    console.log("[WEBM ALPHA FALLBACK BUILT]",{frames,fps,bytes:out.size}); return out;
+  }catch(e){console.warn("[WEBM ALPHA FALLBACK BUILD FAILED]",e);return null}
+  finally{video.pause();video.removeAttribute("src");video.load();URL.revokeObjectURL(url)}
+}
+
+async function publishCommittedWebMToSharedWorld(mediaId:string,webmBlob:Blob|null){
+  console.log("[SHARED WEBM PUBLISH START]",mediaId);
+  if(!activeRoom||!webmBlob)return;
+  const item=managedPlacedMedia.get(mediaId), media=xrMediaManager.get(mediaId);
+  if(!item||item.kind!=="webm"||!media)return;
+  const assetRef=sharedAssetURL(mediaId,"webm");
+  const fallbackRef=sharedAssetURL(`${mediaId}-fallback`,"zip");
+  try{
+    const fallbackPromise=buildWebMAlphaFallbackZip(webmBlob);
+    const up=await fetch(assetRef,{method:"PUT",headers:{"Content-Type":"video/webm"},body:webmBlob});
+    if(!up.ok)throw new Error(`WebM upload HTTP ${up.status}`);
+    let sharedFallback="";
+    const zip=await fallbackPromise;
+    if(zip){
+      const fu=await fetch(fallbackRef,{method:"PUT",headers:{"Content-Type":"application/zip"},body:zip});
+      if(fu.ok){sharedFallback=fallbackRef;console.log("[SHARED WEBM FALLBACK UPLOADED]",fallbackRef)}
     }
-
-    const position = item.entity.getPosition();
-    const rotation = item.entity.getEulerAngles();
-    const scale = item.entity.getLocalScale();
-
-    activeRoom.send("media:add", {
-      id: mediaId,
-      title: media.title || "WebM Artwork",
-      type: "webm",
-      assetRef,
-      x: position.x,
-      y: position.y,
-      z: position.z,
-      rotationY: rotation.y,
-      scale: scale.x
-    });
-
-    console.log("[SHARED WEBM MEDIA SENT]", mediaId, assetRef);
-  } catch (error) {
-    console.error("[SHARED WEBM PUBLISH ERROR]", mediaId, error);
-  }
+    const p=item.entity.getPosition(),r=item.entity.getEulerAngles(),s=item.entity.getLocalScale();
+    activeRoom.send("media:add",{id:mediaId,title:media.title||"WebM Artwork",type:"webm",
+      assetRef,fallbackRef:sharedFallback,x:p.x,y:p.y,z:p.z,rotationY:r.y,scale:s.x});
+    console.log("[SHARED WEBM MEDIA SENT]",mediaId,{assetRef,fallbackRef:sharedFallback||"(none)"});
+  }catch(e){console.error("[SHARED WEBM PUBLISH ERROR]",mediaId,e)}
 }
 
 async function createSharedGLBFromAsset(mediaId: string, media: any) {
@@ -2041,10 +2059,23 @@ function disposePlacedRuntime(id: string) {
   }
 }
 
+function sendSharedMediaTransform(id: string) {
+  if (!activeRoom) return;
+  const item=managedPlacedMedia.get(id);
+  if (!item || sharedRemoteMediaIds.has(id)) return;
+  const p=item.entity.getPosition(), r=item.entity.getEulerAngles(), s=item.entity.getLocalScale();
+  activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationY:r.y,scale:s.x});
+  console.log("[SHARED MEDIA UPDATE SENT]",id);
+}
+
 function deleteManagedMedia(id: string) {
   const item = managedPlacedMedia.get(id);
   if (!item) return;
 
+  if (activeRoom && !sharedRemoteMediaIds.has(id)) {
+    activeRoom.send("media:delete",{id});
+    console.log("[SHARED MEDIA DELETE SENT]",id);
+  }
   disposePlacedRuntime(id);
   item.entity.destroy();
   xrMediaManager.unregister(id);
@@ -3042,6 +3073,7 @@ placeArtworkButton?.addEventListener("click", () => {
     importedArtworkEntity = null;
     importedArtworkKind = null;
     selectedManagedMediaId = editedId;
+    sendSharedMediaTransform(editedId);
     refreshMediaManagerUI();
     artworkPlacementPanel?.classList.add("hidden");
     console.log("XR Media edit confirmed:", editedId);

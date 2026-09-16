@@ -67,7 +67,8 @@ export class SharedWorldRoom extends Room<WorldState> {
         return;
       }
 
-      if (String(payload?.type || "") !== "sprite") {
+      const mediaType = String(payload?.type || "");
+      if (mediaType !== "sprite" && mediaType !== "glb") {
         console.warn("[media:add rejected] unsupported type", payload?.type);
         return;
       }
@@ -85,7 +86,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
       this.state.mediaObjects.set(id, new SharedMediaObject({
         title: String(payload?.title || "Sprite Artwork").slice(0, 80),
-        type: "sprite",
+        type: mediaType,
         assetRef: String(payload?.assetRef || "").slice(0, 240),
         ownerSessionId: client.sessionId,
         x: Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, x)),

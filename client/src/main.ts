@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.7.4.1 BUILD FIX LOADED]");
+console.log("[PROTOTYPE 0.14.7.4.2 SPRITE INITIALIZATION FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -730,27 +730,6 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     }
     context.imageSmoothingEnabled = true;
 
-    const spriteMaterial = new pc.StandardMaterial();
-    spriteMaterial.diffuseMap = texture;
-    spriteMaterial.emissiveMap = texture;
-    spriteMaterial.emissive = new pc.Color(1, 1, 1);
-    spriteMaterial.opacityMap = texture;
-    spriteMaterial.opacityMapChannel = "a";
-    spriteMaterial.blendType = pc.BLEND_NORMAL;
-    spriteMaterial.depthWrite = false;
-    spriteMaterial.alphaTest = 0.05;
-    spriteMaterial.useLighting = false;
-    spriteMaterial.cull = pc.CULLFACE_NONE;
-    spriteMaterial.update();
-
-    const plane = new pc.Entity(`SharedSprite_${mediaId}`);
-    plane.addComponent("render", { type: "plane" });
-    plane.render!.material = spriteMaterial;
-    plane.setPosition(media.x, media.y, media.z);
-    plane.setLocalScale(media.scale, 1, media.scale);
-    plane.setEulerAngles(90, media.rotationY, 0);
-    app.root.addChild(plane);
-
     let frame = 0;
     let elapsed = 0;
     let playing = true;
@@ -788,6 +767,31 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     texture.setSource(spriteCanvas);
     texture.upload();
     console.log("[SPRITE RECOVERY 05 TEXTURE]", mediaId, spriteCanvas.width, spriteCanvas.height);
+
+    // 0.14.7.4.2: initialize Texture before Material references it.
+    const spriteMaterial = new pc.StandardMaterial();
+    spriteMaterial.diffuseMap = texture;
+    spriteMaterial.emissiveMap = texture;
+    spriteMaterial.emissive = new pc.Color(1, 1, 1);
+    spriteMaterial.opacityMap = texture;
+    spriteMaterial.opacityMapChannel = "a";
+    spriteMaterial.blendType = pc.BLEND_NORMAL;
+    spriteMaterial.depthWrite = false;
+    spriteMaterial.alphaTest = 0.05;
+    spriteMaterial.useLighting = false;
+    spriteMaterial.cull = pc.CULLFACE_NONE;
+    spriteMaterial.update();
+
+    const plane = new pc.Entity(`SharedSprite_${mediaId}`);
+    plane.addComponent("render", { type: "plane" });
+    plane.render!.material = spriteMaterial;
+    plane.render!.castShadows = false;
+    plane.setPosition(Number(media.x) || 0, Number(media.y) || 0, Number(media.z) || 0);
+    const sharedScale = Number(media.scale) || 1;
+    plane.setLocalScale(sharedScale, 1, sharedScale);
+    plane.setEulerAngles(90, Number(media.rotationY) || 0, 0);
+    app.root.addChild(plane);
+    console.log("[SPRITE RECOVERY 05.5 PLANE READY]", mediaId);
 
     const remoteMedia = createMediaObject({
       title: media.title || "Shared Sprite",

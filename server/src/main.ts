@@ -109,7 +109,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.14.7",
+        service: "shared-world-0.14.7.1",
         sharedAssets: sharedAssets.size
       })
     );
@@ -118,4 +118,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.14.7] Session + World Recovery ready");
+console.log("[Prototype 0.14.7.1] Session + World Recovery ready");

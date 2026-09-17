@@ -24,13 +24,17 @@ type UpdateMediaPayload = {
 type DeleteMediaPayload = { id?: string };
 
 export class SharedWorldRoom extends Room<WorldState> {
-  maxClients = 4;
+  // Transport headroom is intentionally larger than the UI's logical 4-user target.
+  // It prevents a stale mobile WebSocket from forcing joinOrCreate() into a second room
+  // before the server can de-duplicate the returning client.
+  maxClients = 12;
+  autoDispose = false;
   state = new WorldState();
 
   onCreate(options: { roomCode?: string }) {
     this.setMetadata({ roomCode: String(options.roomCode || "ART001").toUpperCase() });
 
-    // Prototype 0.14.1.2
+    // Prototype 0.14.7.1
     // Register messages explicitly so custom message types such as
     // "media:add" are guaranteed to reach this Room on Colyseus 0.18.
     this.onMessage("move", (
@@ -96,6 +100,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         assetRef: String(payload?.assetRef || "").slice(0, 240),
         fallbackRef: String(payload?.fallbackRef || "").slice(0, 240),
         ownerSessionId: client.sessionId,
+        ownerClientId: this.state.players.get(client.sessionId)?.clientId || "",
         x: Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, x)),
         y: Math.max(-10, Math.min(20, y)),
         z: Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, z)),
@@ -110,7 +115,12 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.onMessage("media:update", (client: Client, payload: UpdateMediaPayload) => {
       const id = String(payload?.id || "").trim().slice(0, 80);
       const media = this.state.mediaObjects.get(id);
-      if (!media || media.ownerSessionId !== client.sessionId) {
+      const player = this.state.players.get(client.sessionId);
+      const authorized = !!media && (
+        media.ownerSessionId === client.sessionId ||
+        (!!media.ownerClientId && !!player?.clientId && media.ownerClientId === player.clientId)
+      );
+      if (!media || !authorized) {
         console.warn("[media:update rejected]", id);
         return;
       }
@@ -128,7 +138,12 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.onMessage("media:delete", (client: Client, payload: DeleteMediaPayload) => {
       const id=String(payload?.id || "").trim().slice(0,80);
       const media=this.state.mediaObjects.get(id);
-      if (!media || media.ownerSessionId !== client.sessionId) {
+      const player = this.state.players.get(client.sessionId);
+      const authorized = !!media && (
+        media.ownerSessionId === client.sessionId ||
+        (!!media.ownerClientId && !!player?.clientId && media.ownerClientId === player.clientId)
+      );
+      if (!media || !authorized) {
         console.warn("[media:delete rejected]", id);
         return;
       }
@@ -139,36 +154,46 @@ export class SharedWorldRoom extends Room<WorldState> {
     console.log("[room:create] message handlers ready");
   }
 
-  onJoin(client: Client, options: { name?: string }) {
+  onJoin(client: Client, options: { name?: string; clientId?: string }) {
     const angle = Math.random() * Math.PI * 2;
     const radius = 1.8 + Math.random() * 1.5;
     const safeName = String(options.name || "Guest").trim().slice(0, 16) || "Guest";
+    const clientId = String(options.clientId || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
+
+    // Authoritative session replacement:
+    // a reload/re-entry from the same browser identity immediately removes
+    // the previous avatar state, even if Safari's old socket has not closed yet.
+    if (clientId) {
+      for (const [oldSessionId, oldPlayer] of this.state.players) {
+        if (oldSessionId !== client.sessionId && oldPlayer.clientId === clientId) {
+          this.state.players.delete(oldSessionId);
+          console.log("[SESSION REPLACED]", clientId, oldSessionId, "->", client.sessionId);
+        }
+      }
+    }
 
     this.state.players.set(client.sessionId, new Player({
       name: safeName,
+      clientId,
       x: Math.cos(angle) * radius,
       y: 0.65,
       z: Math.sin(angle) * radius
     }));
 
-    console.log(`[join] ${safeName} / ${client.sessionId}`);
+    console.log(`[join] ${safeName} / ${client.sessionId} / client:${clientId || "legacy"}`);
+    console.log("[AUTHORITATIVE SNAPSHOT]", {
+      players: this.state.players.size,
+      mediaObjects: this.state.mediaObjects.size
+    });
   }
 
-  onLeave(client: Client) {
-    const name = this.state.players.get(client.sessionId)?.name || client.sessionId;
-    this.state.players.delete(client.sessionId);
-    console.log(`[leave] ${name}`);
-  }
-
-
-  async onLeave(client: Client, consented: boolean) {
+  onLeave(client: Client, consented: boolean) {
     const player = this.state.players.get(client.sessionId);
     const name = player?.name || "Guest";
-    console.log("[leave]", name, client.sessionId, { consented });
 
-    // Remove immediately. Re-entry creates one fresh avatar/session.
-    // This avoids ghost avatars accumulating on mobile Safari reloads.
+    // If this session was already replaced, deleting by its old sessionId is harmless.
     this.state.players.delete(client.sessionId);
-    console.log("[SESSION CLEANUP]", client.sessionId, "players:", this.state.players.size);
+    console.log("[SESSION CLEANUP]", name, client.sessionId, { consented, players: this.state.players.size });
   }
+
 }

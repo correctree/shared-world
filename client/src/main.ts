@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.7.2 SHARED MEDIA RECOVERY FIX LOADED]");
+console.log("[PROTOTYPE 0.14.7.3 SPRITE RECOVERY FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -635,20 +635,22 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
 
   const assetRef = String(media.assetRef || "");
   if (!assetRef) {
+    sharedMediaLoadingIds.delete(mediaId);
+    console.warn("[SPRITE RECOVERY NO ASSET REF]", mediaId);
     createSharedSpritePlaceholder(mediaId, media);
     return;
   }
 
   try {
-    console.log("[SHARED ASSET FETCH]", mediaId, assetRef);
+    console.log("[SPRITE RECOVERY 01 START]", mediaId, assetRef);
     const response = await fetchSharedAssetWithRetry(assetRef, `sprite:${mediaId}`);
     if (!isSharedMediaGenerationCurrent(mediaId, loadGeneration)) {
-      console.log("[MEDIA LOAD CANCELLED / GENERATION]", mediaId);
-      sharedMediaLoadingIds.delete(mediaId);
+      console.log("[SPRITE RECOVERY CANCELLED / GENERATION]", mediaId);
       return;
     }
 
     const zipBlob = await response.blob();
+    console.log("[SPRITE RECOVERY 02 ZIP]", mediaId, zipBlob.size);
     const zip = await JSZip.loadAsync(zipBlob);
     const entries = Object.values(zip.files);
 
@@ -665,6 +667,7 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     const pngBlob = await pngEntry.async("blob");
     const jsonText = await jsonEntry.async("text");
     const meta = JSON.parse(jsonText);
+    console.log("[SPRITE RECOVERY 03 ENTRIES]", mediaId, { png: pngEntry.name, json: jsonEntry.name });
 
     const imageURL = URL.createObjectURL(pngBlob);
     const image = new Image();
@@ -673,6 +676,8 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
       image.onerror = () => reject(new Error("Shared Sprite PNG load failed."));
       image.src = imageURL;
     });
+    try { if (typeof image.decode === "function") await image.decode(); } catch {}
+    console.log("[SPRITE RECOVERY 04 IMAGE]", mediaId, image.naturalWidth, image.naturalHeight);
 
     const frameWidth = Number(meta.frameWidth);
     const frameHeight = Number(meta.frameHeight);
@@ -712,16 +717,6 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     }
     context.imageSmoothingEnabled = true;
 
-    const texture = new pc.Texture(app.graphicsDevice, {
-      format: pc.PIXELFORMAT_RGBA8,
-      minFilter: pc.FILTER_LINEAR,
-      magFilter: pc.FILTER_LINEAR,
-      addressU: pc.ADDRESS_CLAMP_TO_EDGE,
-      addressV: pc.ADDRESS_CLAMP_TO_EDGE,
-      mipmaps: false
-    });
-    texture.setSource(spriteCanvas);
-
     const spriteMaterial = new pc.StandardMaterial();
     spriteMaterial.diffuseMap = texture;
     spriteMaterial.emissiveMap = texture;
@@ -730,7 +725,7 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     spriteMaterial.opacityMapChannel = "a";
     spriteMaterial.blendType = pc.BLEND_NORMAL;
     spriteMaterial.depthWrite = false;
-    spriteMaterial.alphaTest = 0.12;
+    spriteMaterial.alphaTest = 0.05;
     spriteMaterial.useLighting = false;
     spriteMaterial.cull = pc.CULLFACE_NONE;
     spriteMaterial.update();
@@ -766,7 +761,20 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     };
 
     drawFrame(0);
+
+    // iOS Safari robustness: the canvas contains real RGBA pixels before
+    // it becomes the PlayCanvas texture source.
+    const texture = new pc.Texture(app.graphicsDevice, {
+      format: pc.PIXELFORMAT_RGBA8,
+      minFilter: pc.FILTER_LINEAR,
+      magFilter: pc.FILTER_LINEAR,
+      addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+      addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+      mipmaps: false
+    });
+    texture.setSource(spriteCanvas);
     texture.upload();
+    console.log("[SPRITE RECOVERY 05 TEXTURE]", mediaId, spriteCanvas.width, spriteCanvas.height);
 
     const remoteMedia = createMediaObject({
       title: media.title || "Shared Sprite",
@@ -815,13 +823,16 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
       }
     });
 
-    sharedMediaLoadingIds.delete(mediaId);
     refreshMediaManagerUI();
-    console.log("[SHARED SPRITE READY]", mediaId, { frameCount, fps });
-  } catch (error) {
+    console.log("[SPRITE RECOVERY 06 READY]", mediaId, { frameCount, fps });
     sharedMediaLoadingIds.delete(mediaId);
-    console.error("[SHARED ASSET LOAD ERROR]", mediaId, error);
-    createSharedSpritePlaceholder(mediaId, media);
+  } catch (error) {
+    console.error("[SPRITE RECOVERY ERROR]", mediaId, error);
+    if (isSharedMediaGenerationCurrent(mediaId, loadGeneration)) {
+      createSharedSpritePlaceholder(mediaId, media);
+    }
+  } finally {
+    sharedMediaLoadingIds.delete(mediaId);
   }
 }
 

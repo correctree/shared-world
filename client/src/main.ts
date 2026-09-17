@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.7.1 AUTHORITATIVE WORLD RECOVERY LOADED]");
+console.log("[PROTOTYPE 0.14.7.2 SHARED MEDIA RECOVERY FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -504,16 +504,49 @@ function getAuthoritativeMediaMap() {
 }
 
 function authoritativeMediaExists(mediaId: string) {
-  const map = getAuthoritativeMediaMap();
-  return !!map?.has?.(mediaId);
+  const map: any = getAuthoritativeMediaMap();
+  if (!map) return false;
+
+  // MapSchema compatibility: prefer get(), then has(), then forEach().
+  // This helper is diagnostic/reconciliation-only. Asset loaders no longer
+  // abort solely because this second lookup briefly disagrees with onAdd.
+  try {
+    if (typeof map.get === "function" && map.get(mediaId)) return true;
+    if (typeof map.has === "function" && map.has(mediaId)) return true;
+    let found = false;
+    if (typeof map.forEach === "function") {
+      map.forEach((_media: any, id: string) => { if (id === mediaId) found = true; });
+    }
+    return found;
+  } catch {
+    return false;
+  }
 }
 
 async function ensureSharedMediaFromState(mediaId: string, media: any) {
-  if (!media || managedPlacedMedia.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
+  if (!media) {
+    console.warn("[MEDIA RECOVERY SKIP / NO MEDIA]", mediaId);
+    return;
+  }
+  if (managedPlacedMedia.has(mediaId)) {
+    console.log("[MEDIA RECOVERY SKIP / ALREADY MANAGED]", mediaId);
+    return;
+  }
+  if (sharedMediaLoadingIds.has(mediaId)) {
+    console.log("[MEDIA RECOVERY SKIP / LOADING]", mediaId);
+    return;
+  }
+
   const sharedType = String(media.type || "");
+  console.log("[MEDIA RECOVERY DISPATCH]", mediaId, sharedType, {
+    assetRef: String(media.assetRef || ""),
+    fallbackRef: String(media.fallbackRef || "")
+  });
+
   if (sharedType === "sprite") await createSharedSpriteFromAsset(mediaId, media);
   else if (sharedType === "webm") await createSharedWebMFromAsset(mediaId, media);
   else if (sharedType === "glb") await createSharedGLBFromAsset(mediaId, media);
+  else console.warn("[MEDIA RECOVERY UNSUPPORTED TYPE]", mediaId, sharedType);
 }
 
 function reconcileWorldFromServerState() {
@@ -522,15 +555,21 @@ function reconcileWorldFromServerState() {
   if (!mediaMap) return;
 
   const authoritativeIds = new Set<string>();
-  mediaMap.forEach((media: any, mediaId: string) => {
-    authoritativeIds.add(mediaId);
-    if (!managedPlacedMedia.has(mediaId) && !sharedMediaLoadingIds.has(mediaId)) {
-      console.log("[WORLD RECONCILE ADD]", mediaId);
-      void ensureSharedMediaFromState(mediaId, media);
-    } else if (sharedRemoteMediaIds.has(mediaId)) {
-      updateSharedSpritePlaceholder(mediaId, media);
-    }
-  });
+  try {
+    mediaMap.forEach((media: any, mediaId: string) => {
+      authoritativeIds.add(mediaId);
+      if (!managedPlacedMedia.has(mediaId) && !sharedMediaLoadingIds.has(mediaId)) {
+        console.log("[WORLD RECONCILE ADD]", mediaId, String(media?.type || ""));
+        void ensureSharedMediaFromState(mediaId, media);
+      } else if (sharedRemoteMediaIds.has(mediaId)) {
+        updateSharedSpritePlaceholder(mediaId, media);
+      }
+    });
+  } catch (error) {
+    console.error("[WORLD RECONCILE ITERATION ERROR]", error);
+  }
+
+  console.log("[WORLD RECONCILE IDS]", Array.from(authoritativeIds));
 
   for (const mediaId of Array.from(sharedRemoteMediaIds)) {
     if (!authoritativeIds.has(mediaId)) {
@@ -603,8 +642,10 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
   try {
     console.log("[SHARED ASSET FETCH]", mediaId, assetRef);
     const response = await fetchSharedAssetWithRetry(assetRef, `sprite:${mediaId}`);
-    if (!isSharedMediaGenerationCurrent(mediaId, loadGeneration) || !authoritativeMediaExists(mediaId)) {
-      sharedMediaLoadingIds.delete(mediaId); return;
+    if (!isSharedMediaGenerationCurrent(mediaId, loadGeneration)) {
+      console.log("[MEDIA LOAD CANCELLED / GENERATION]", mediaId);
+      sharedMediaLoadingIds.delete(mediaId);
+      return;
     }
 
     const zipBlob = await response.blob();
@@ -1117,8 +1158,10 @@ async function createSharedGLBFromAsset(mediaId: string, media: any) {
   try {
     console.log("[SHARED GLB 01 RECEIVE]", mediaId, media);
     const response = await fetchSharedAssetWithRetry(assetRef, `glb:${mediaId}`);
-    if (!isSharedMediaGenerationCurrent(mediaId, loadGeneration) || !authoritativeMediaExists(mediaId)) {
-      sharedMediaLoadingIds.delete(mediaId); return;
+    if (!isSharedMediaGenerationCurrent(mediaId, loadGeneration)) {
+      console.log("[MEDIA LOAD CANCELLED / GENERATION]", mediaId);
+      sharedMediaLoadingIds.delete(mediaId);
+      return;
     }
     const buffer = await response.arrayBuffer();
     if (buffer.byteLength < 20) throw new Error("GLB payload too small.");
@@ -1401,7 +1444,11 @@ async function enterWorld() {
     sharedMedia.onAdd((media: any, mediaId: string) => {
       console.log("[SHARED RECEIVE ADD]", mediaId, media);
 
-      // Event delivery is only a fast path. Periodic reconciliation below is authoritative.
+      // onAdd already carries the authoritative media object. Do not perform
+      // a second raw MapSchema lookup before dispatching it.
+      console.log("[MEDIA ONADD DIRECT]", mediaId, String(media?.type || ""), {
+        stateVisible: authoritativeMediaExists(mediaId)
+      });
       if (!managedPlacedMedia.has(mediaId)) {
         void ensureSharedMediaFromState(mediaId, media);
       }
@@ -1419,6 +1466,7 @@ async function enterWorld() {
       bumpSharedMediaGeneration(mediaId);
       sharedMediaLoadingIds.delete(mediaId);
       removeSharedSpritePlaceholder(mediaId);
+      window.setTimeout(() => reconcileWorldFromServerState(), 80);
     });
 
     console.log("[SHARED RECEIVE LISTENER READY]");

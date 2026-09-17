@@ -2,6 +2,7 @@ import { schema, t, type SchemaType } from "@colyseus/schema";
 
 export const Player = schema({
   name: t.string().default("Guest"),
+  clientId: t.string().default(""),
   x: t.number().default(0),
   y: t.number().default(0.65),
   z: t.number().default(0),
@@ -17,6 +18,7 @@ export const SharedMediaObject = schema({
   assetRef: t.string().default(""),
   fallbackRef: t.string().default(""),
   ownerSessionId: t.string().default(""),
+  ownerClientId: t.string().default(""),
   x: t.number().default(0),
   y: t.number().default(1.8),
   z: t.number().default(-3),

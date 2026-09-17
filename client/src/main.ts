@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.7 SESSION + WORLD RECOVERY LOADED]");
+console.log("[PROTOTYPE 0.14.7.1 AUTHORITATIVE WORLD RECOVERY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -228,6 +228,21 @@ const avatars = new Map<string, Avatar>();
 const keys = new Set<string>();
 let currentSessionId = "";
 let activeRoom: Room | null = null;
+
+const CLIENT_ID_STORAGE_KEY = "shared-world-client-id-v1";
+function getOrCreateClientId() {
+  try {
+    let id = localStorage.getItem(CLIENT_ID_STORAGE_KEY) || "";
+    if (!id) {
+      id = `client-${crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+      localStorage.setItem(CLIENT_ID_STORAGE_KEY, id);
+    }
+    return id;
+  } catch {
+    return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+const persistentClientId = getOrCreateClientId();
 let localPosition = new pc.Vec3();
 let lastSend = 0;
 
@@ -467,9 +482,70 @@ function updatePlayerCount() {
 const sharedRemoteMediaIds = new Set<string>();
 const sharedMediaLoadingIds = new Set<string>();
 const SHARED_ASSET_RETRY_DELAYS = [0, 700, 1600, 3200];
+let sharedWorldReconcileTimer: number | null = null;
+const sharedMediaLoadGeneration = new Map<string, number>();
 
 function sharedAssetURL(mediaId: string, extension: "zip" | "glb" | "webm") {
   return `${SERVER_URL.replace(/\/$/, "")}/assets/${encodeURIComponent(mediaId)}.${extension}`;
+}
+
+function bumpSharedMediaGeneration(mediaId: string) {
+  const next = (sharedMediaLoadGeneration.get(mediaId) || 0) + 1;
+  sharedMediaLoadGeneration.set(mediaId, next);
+  return next;
+}
+
+function isSharedMediaGenerationCurrent(mediaId: string, generation: number) {
+  return (sharedMediaLoadGeneration.get(mediaId) || 0) === generation;
+}
+
+function getAuthoritativeMediaMap() {
+  return activeRoom ? (activeRoom.state as any).mediaObjects : null;
+}
+
+function authoritativeMediaExists(mediaId: string) {
+  const map = getAuthoritativeMediaMap();
+  return !!map?.has?.(mediaId);
+}
+
+async function ensureSharedMediaFromState(mediaId: string, media: any) {
+  if (!media || managedPlacedMedia.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
+  const sharedType = String(media.type || "");
+  if (sharedType === "sprite") await createSharedSpriteFromAsset(mediaId, media);
+  else if (sharedType === "webm") await createSharedWebMFromAsset(mediaId, media);
+  else if (sharedType === "glb") await createSharedGLBFromAsset(mediaId, media);
+}
+
+function reconcileWorldFromServerState() {
+  if (!activeRoom) return;
+  const mediaMap: any = (activeRoom.state as any).mediaObjects;
+  if (!mediaMap) return;
+
+  const authoritativeIds = new Set<string>();
+  mediaMap.forEach((media: any, mediaId: string) => {
+    authoritativeIds.add(mediaId);
+    if (!managedPlacedMedia.has(mediaId) && !sharedMediaLoadingIds.has(mediaId)) {
+      console.log("[WORLD RECONCILE ADD]", mediaId);
+      void ensureSharedMediaFromState(mediaId, media);
+    } else if (sharedRemoteMediaIds.has(mediaId)) {
+      updateSharedSpritePlaceholder(mediaId, media);
+    }
+  });
+
+  for (const mediaId of Array.from(sharedRemoteMediaIds)) {
+    if (!authoritativeIds.has(mediaId)) {
+      console.log("[WORLD RECONCILE REMOVE]", mediaId);
+      bumpSharedMediaGeneration(mediaId);
+      sharedMediaLoadingIds.delete(mediaId);
+      removeSharedSpritePlaceholder(mediaId);
+    }
+  }
+
+  console.log("[WORLD RECONCILE OK]", {
+    serverMedia: authoritativeIds.size,
+    clientRemoteMedia: sharedRemoteMediaIds.size,
+    players: avatars.size
+  });
 }
 
 function createSharedSpritePlaceholder(mediaId: string, media: any) {
@@ -516,6 +592,7 @@ function createSharedSpritePlaceholder(mediaId: string, media: any) {
 async function createSharedSpriteFromAsset(mediaId: string, media: any) {
   if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
   sharedMediaLoadingIds.add(mediaId);
+  const loadGeneration = bumpSharedMediaGeneration(mediaId);
 
   const assetRef = String(media.assetRef || "");
   if (!assetRef) {
@@ -526,6 +603,9 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
   try {
     console.log("[SHARED ASSET FETCH]", mediaId, assetRef);
     const response = await fetchSharedAssetWithRetry(assetRef, `sprite:${mediaId}`);
+    if (!isSharedMediaGenerationCurrent(mediaId, loadGeneration) || !authoritativeMediaExists(mediaId)) {
+      sharedMediaLoadingIds.delete(mediaId); return;
+    }
 
     const zipBlob = await response.blob();
     const zip = await JSZip.loadAsync(zipBlob);
@@ -803,6 +883,7 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
   }
 
   sharedMediaLoadingIds.add(mediaId);
+  const loadGeneration = bumpSharedMediaGeneration(mediaId);
   const assetRef = String(media.assetRef || "");
   if (!assetRef) {
     console.error("[SHARED WEBM 01 RECEIVE] missing assetRef", mediaId);
@@ -1022,6 +1103,7 @@ async function publishCommittedWebMToSharedWorld(mediaId:string,webmBlob:Blob|nu
 async function createSharedGLBFromAsset(mediaId: string, media: any) {
   if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
   sharedMediaLoadingIds.add(mediaId);
+  const loadGeneration = bumpSharedMediaGeneration(mediaId);
   const assetRef = String(media.assetRef || "");
   if (!assetRef) {
     sharedMediaLoadingIds.delete(mediaId);
@@ -1035,6 +1117,9 @@ async function createSharedGLBFromAsset(mediaId: string, media: any) {
   try {
     console.log("[SHARED GLB 01 RECEIVE]", mediaId, media);
     const response = await fetchSharedAssetWithRetry(assetRef, `glb:${mediaId}`);
+    if (!isSharedMediaGenerationCurrent(mediaId, loadGeneration) || !authoritativeMediaExists(mediaId)) {
+      sharedMediaLoadingIds.delete(mediaId); return;
+    }
     const buffer = await response.arrayBuffer();
     if (buffer.byteLength < 20) throw new Error("GLB payload too small.");
     glbURL = URL.createObjectURL(new Blob([buffer], { type: "model/gltf-binary" }));
@@ -1234,6 +1319,10 @@ async function fetchSharedAssetWithRetry(url: string, label: string): Promise<Re
 
 function resetClientWorldForReentry() {
   console.log("[WORLD RECOVERY RESET START]");
+  if (sharedWorldReconcileTimer !== null) {
+    window.clearInterval(sharedWorldReconcileTimer);
+    sharedWorldReconcileTimer = null;
+  }
 
   // Remove every avatar from the previous local room view.
   for (const sessionId of Array.from(avatars.keys())) {
@@ -1284,7 +1373,7 @@ async function enterWorld() {
 
   try {
     const client = new Client(SERVER_URL);
-    const room = await client.joinOrCreate("shared_world", { name, roomCode });
+    const room = await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
     activeRoom = room;
     currentSessionId = room.sessionId;
 
@@ -1312,20 +1401,9 @@ async function enterWorld() {
     sharedMedia.onAdd((media: any, mediaId: string) => {
       console.log("[SHARED RECEIVE ADD]", mediaId, media);
 
-      // The placing client already owns the real local Sprite.
+      // Event delivery is only a fast path. Periodic reconciliation below is authoritative.
       if (!managedPlacedMedia.has(mediaId)) {
-        const sharedType = String(media.type || "");
-        if (sharedType === "sprite") {
-          void createSharedSpriteFromAsset(mediaId, media);
-        } else if (sharedType === "webm") {
-          console.log("[SHARED WEBM DISPATCH]", mediaId, media.assetRef);
-          void createSharedWebMFromAsset(mediaId, media);
-        } else if (sharedType === "glb") {
-          console.log("[SHARED GLB DISPATCH]", mediaId, media.assetRef);
-          void createSharedGLBFromAsset(mediaId, media);
-        } else {
-          console.warn("[SHARED RECEIVE] unsupported media type", sharedType, mediaId);
-        }
+        void ensureSharedMediaFromState(mediaId, media);
       }
 
       $(media).onChange(() => {
@@ -1338,6 +1416,7 @@ async function enterWorld() {
 
     sharedMedia.onRemove((_media: any, mediaId: string) => {
       console.log("[SHARED RECEIVE REMOVE]", mediaId);
+      bumpSharedMediaGeneration(mediaId);
       sharedMediaLoadingIds.delete(mediaId);
       removeSharedSpritePlaceholder(mediaId);
     });
@@ -1348,6 +1427,11 @@ async function enterWorld() {
       players: (room.state as any).players?.size ?? "callback-managed",
       mediaObjects: (room.state as any).mediaObjects?.size ?? "callback-managed"
     });
+
+    // Authoritative recovery: reconstruct from current server state now,
+    // then continuously heal missed ADD/REMOVE/UPDATE events.
+    window.setTimeout(() => reconcileWorldFromServerState(), 250);
+    sharedWorldReconcileTimer = window.setInterval(reconcileWorldFromServerState, 1500);
 
     roomLabel.textContent = `ROOM ${roomCode}`;
     status.textContent = "接続しました";
@@ -1361,6 +1445,10 @@ async function enterWorld() {
 }
 
 window.addEventListener("pagehide", () => {
+  if (sharedWorldReconcileTimer !== null) {
+    window.clearInterval(sharedWorldReconcileTimer);
+    sharedWorldReconcileTimer = null;
+  }
   if (activeRoom) {
     console.log("[SESSION PAGEHIDE LEAVE]", activeRoom.sessionId);
     void activeRoom.leave(true).catch(() => {});

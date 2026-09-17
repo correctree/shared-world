@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.7.3 SPRITE RECOVERY FIX LOADED]");
+console.log("[PROTOTYPE 0.14.7.4 SPRITE FALLBACK DIAGNOSTIC FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -628,6 +628,18 @@ function createSharedSpritePlaceholder(mediaId: string, media: any) {
   console.log("[SHARED PLACEHOLDER ADDED]", mediaId, media.assetRef || "(no asset ref)");
 }
 
+let spriteRecoveryDiagnostic: HTMLDivElement | null = null;
+function showSpriteRecoveryDiagnostic(mediaId: string, message: string) {
+  if (!spriteRecoveryDiagnostic) {
+    spriteRecoveryDiagnostic = document.createElement("div");
+    spriteRecoveryDiagnostic.style.cssText =
+      "position:fixed;left:10px;bottom:10px;z-index:9999;max-width:92vw;padding:10px;" +
+      "background:rgba(5,15,30,.95);color:#9fd0ff;border:1px solid #398cff;border-radius:9px;" +
+      "font:600 11px/1.35 ui-monospace,monospace;white-space:pre-wrap;pointer-events:none";
+    document.body.appendChild(spriteRecoveryDiagnostic);
+  }
+  spriteRecoveryDiagnostic.textContent = `SPRITE RECOVERY\n${mediaId}\n${message}`;
+}
 async function createSharedSpriteFromAsset(mediaId: string, media: any) {
   if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
   sharedMediaLoadingIds.add(mediaId);
@@ -664,8 +676,9 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
       throw new Error("Shared Sprite ZIP requires PNG + JSON.");
     }
 
-    const pngBlob = await pngEntry.async("blob");
+    const pngBlob = await pngEntry.async("uint8array");
     const jsonText = await jsonEntry.async("text");
+    const pngBlob = new Blob([pngBytes], { type: "image/png" });
     const meta = JSON.parse(jsonText);
     console.log("[SPRITE RECOVERY 03 ENTRIES]", mediaId, { png: pngEntry.name, json: jsonEntry.name });
 
@@ -825,9 +838,12 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
 
     refreshMediaManagerUI();
     console.log("[SPRITE RECOVERY 06 READY]", mediaId, { frameCount, fps });
+    if (spriteRecoveryDiagnostic) { spriteRecoveryDiagnostic.remove(); spriteRecoveryDiagnostic = null; }
     sharedMediaLoadingIds.delete(mediaId);
   } catch (error) {
+    const errorMessage = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     console.error("[SPRITE RECOVERY ERROR]", mediaId, error);
+    showSpriteRecoveryDiagnostic(mediaId, errorMessage);
     if (isSharedMediaGenerationCurrent(mediaId, loadGeneration)) {
       createSharedSpritePlaceholder(mediaId, media);
     }

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.7.4 SPRITE FALLBACK DIAGNOSTIC FIX LOADED]");
+console.log("[PROTOTYPE 0.14.7.4.1 BUILD FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -676,7 +676,7 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
       throw new Error("Shared Sprite ZIP requires PNG + JSON.");
     }
 
-    const pngBlob = await pngEntry.async("uint8array");
+    const pngBytes = await pngEntry.async("uint8array");
     const jsonText = await jsonEntry.async("text");
     const pngBlob = new Blob([pngBytes], { type: "image/png" });
     const meta = JSON.parse(jsonText);

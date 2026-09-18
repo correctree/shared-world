@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.7.4.2 SPRITE INITIALIZATION FIX LOADED]");
+console.log("[PROTOTYPE 0.14.7.5 SHARED MEDIA DELETE LIFECYCLE FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -574,9 +574,7 @@ function reconcileWorldFromServerState() {
   for (const mediaId of Array.from(sharedRemoteMediaIds)) {
     if (!authoritativeIds.has(mediaId)) {
       console.log("[WORLD RECONCILE REMOVE]", mediaId);
-      bumpSharedMediaGeneration(mediaId);
-      sharedMediaLoadingIds.delete(mediaId);
-      removeSharedSpritePlaceholder(mediaId);
+      removeSharedMediaLifecycle(mediaId, "colyseus-onRemove");
     }
   }
 
@@ -869,244 +867,43 @@ function updateSharedSpritePlaceholder(mediaId: string, media: any) {
   }
 }
 
-function removeSharedSpritePlaceholder(mediaId: string) {
-  if (!sharedRemoteMediaIds.has(mediaId)) return;
-  const item = managedPlacedMedia.get(mediaId);
-  item?.entity.destroy();
+function removeSharedMediaLifecycle(mediaId: string, reason = "server-remove") {
+  console.log("[SHARED MEDIA CLEANUP START]", mediaId, reason);
+  bumpSharedMediaGeneration(mediaId);
+  sharedMediaLoadingIds.delete(mediaId);
 
-  const runtimeIndex = placedMediaRuntimes.findIndex((runtime) => runtime.id === mediaId);
-  if (runtimeIndex >= 0) {
-    const [runtime] = placedMediaRuntimes.splice(runtimeIndex, 1);
-    runtime.dispose?.();
+  for (let i = placedMediaRuntimes.length - 1; i >= 0; i--) {
+    const runtime = placedMediaRuntimes[i];
+    if (runtime.id !== mediaId) continue;
+    try { runtime.dispose?.(); } catch (error) { console.warn("[SHARED MEDIA RUNTIME DISPOSE ERROR]", mediaId, error); }
+    placedMediaRuntimes.splice(i, 1);
   }
 
-  xrMediaManager.unregister(mediaId);
+  const managed = managedPlacedMedia.get(mediaId);
+  if (managed?.entity) {
+    try {
+      if (managed.entity.parent) managed.entity.parent.removeChild(managed.entity);
+      managed.entity.destroy();
+    } catch (error) { console.warn("[SHARED MEDIA ENTITY DESTROY ERROR]", mediaId, error); }
+  }
+
+  try {
+    const managerAny = xrMediaManager as any;
+    if (typeof managerAny.remove === "function") managerAny.remove(mediaId);
+    else if (typeof managerAny.unregister === "function") managerAny.unregister(mediaId);
+    else if (typeof managerAny.delete === "function") managerAny.delete(mediaId);
+  } catch (error) { console.warn("[SHARED MEDIA XR REGISTRY CLEANUP ERROR]", mediaId, error); }
+
   managedPlacedMedia.delete(mediaId);
   sharedRemoteMediaIds.delete(mediaId);
   if (selectedManagedMediaId === mediaId) selectedManagedMediaId = null;
+  if (editingManagedMediaId === mediaId) editingManagedMediaId = null;
   refreshMediaManagerUI();
+  console.log("[SHARED MEDIA CLEANUP COMPLETE]", mediaId);
 }
 
-async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob: Blob | null) {
-  console.log("[SHARED PUBLISH START]", mediaId);
-
-  if (!activeRoom || !packageBlob) {
-    console.error("[SHARED PUBLISH ABORT]", {
-      hasRoom: !!activeRoom,
-      hasPackage: !!packageBlob
-    });
-    return;
-  }
-
-  const item = managedPlacedMedia.get(mediaId);
-  const media = xrMediaManager.get(mediaId);
-  if (!item || item.kind !== "sprite" || !media) {
-    console.error("[SHARED PUBLISH ABORT] media lookup/kind failed");
-    return;
-  }
-
-  const assetRef = sharedAssetURL(mediaId, "zip");
-
-  try {
-    const uploadResponse = await fetch(assetRef, {
-      method: "PUT",
-      headers: { "Content-Type": "application/zip" },
-      body: packageBlob
-    });
-
-    if (!uploadResponse.ok) {
-      throw new Error(`Asset upload failed: HTTP ${uploadResponse.status}`);
-    }
-
-    console.log("[SHARED ASSET UPLOADED]", mediaId, assetRef);
-
-    const position = item.entity.getPosition();
-    const rotation = item.entity.getEulerAngles();
-    const scale = item.entity.getLocalScale();
-
-    activeRoom.send("media:add", {
-      id: mediaId,
-      title: media.title || "Sprite Artwork",
-      type: "sprite",
-      assetRef,
-      x: position.x,
-      y: position.y,
-      z: position.z,
-      rotationY: rotation.y,
-      scale: scale.x
-    });
-
-    console.log("[SHARED MEDIA SENT]", mediaId);
-  } catch (error) {
-    console.error("[SHARED PUBLISH ERROR]", mediaId, error);
-  }
-}
-
-
-
-async function createSharedWebMFromAsset(mediaId: string, media: any) {
-  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
-
-  const fallbackRef=String(media.fallbackRef || "");
-  if(isIOSLikeDevice() && fallbackRef){
-    console.log("[SHARED WEBM ALPHA FALLBACK -> SPRITE]",mediaId,fallbackRef);
-    await createSharedSpriteFromAsset(mediaId,{title:media.title,assetRef:fallbackRef,x:media.x,y:media.y,z:media.z,rotationY:media.rotationY,scale:media.scale});
-    return;
-  }
-
-  sharedMediaLoadingIds.add(mediaId);
-  const loadGeneration = bumpSharedMediaGeneration(mediaId);
-  const assetRef = String(media.assetRef || "");
-  if (!assetRef) {
-    console.error("[SHARED WEBM 01 RECEIVE] missing assetRef", mediaId);
-    return;
-  }
-
-  let objectURL: string | null = null;
-  let texture: pc.Texture | null = null;
-  let video: HTMLVideoElement | null = null;
-
-  try {
-    console.log("[SHARED WEBM 01 RECEIVE]", mediaId, assetRef);
-    console.log("[SHARED WEBM 02 FETCH START]", assetRef);
-
-    const response = await fetchSharedAssetWithRetry(assetRef, `webm:${mediaId}`);
-
-    const bytes = await response.arrayBuffer();
-    console.log("[SHARED WEBM 03 FETCH OK]", mediaId, {
-      bytes: bytes.byteLength,
-      contentType: response.headers.get("content-type")
-    });
-    if (bytes.byteLength < 16) throw new Error("WebM payload is empty/too small.");
-
-    const blob = new Blob([bytes], { type: "video/webm" });
-    objectURL = URL.createObjectURL(blob);
-
-    video = document.createElement("video");
-    video.src = objectURL;
-    video.loop = true;
-    video.muted = true;
-    video.autoplay = true;
-    video.playsInline = true;
-    video.preload = "auto";
-    video.crossOrigin = "anonymous";
-
-    await new Promise<void>((resolve, reject) => {
-      const onReady = () => {
-        cleanup();
-        resolve();
-      };
-      const onError = () => {
-        cleanup();
-        reject(new Error(`Shared WebM decode/load failed. mediaError=${video?.error?.code ?? "unknown"}`));
-      };
-      const cleanup = () => {
-        video?.removeEventListener("loadeddata", onReady);
-        video?.removeEventListener("canplay", onReady);
-        video?.removeEventListener("error", onError);
-      };
-      video!.addEventListener("loadeddata", onReady, { once: true });
-      video!.addEventListener("canplay", onReady, { once: true });
-      video!.addEventListener("error", onError, { once: true });
-      video!.load();
-    });
-
-    console.log("[SHARED WEBM 04 VIDEO READY]", mediaId, {
-      width: video.videoWidth,
-      height: video.videoHeight,
-      duration: video.duration
-    });
-
-    try {
-      await video.play();
-      console.log("[SHARED WEBM 05 PLAY OK]", mediaId);
-    } catch (error) {
-      // Muted inline playback normally succeeds. If Safari blocks it,
-      // the media object still loads and can be started by a later interaction.
-      console.warn("[SHARED WEBM 05 PLAY WAIT]", mediaId, error);
-    }
-
-    texture = new pc.Texture(app.graphicsDevice, {
-      format: pc.PIXELFORMAT_RGBA8,
-      minFilter: pc.FILTER_LINEAR,
-      magFilter: pc.FILTER_LINEAR,
-      addressU: pc.ADDRESS_CLAMP_TO_EDGE,
-      addressV: pc.ADDRESS_CLAMP_TO_EDGE,
-      mipmaps: false
-    });
-    texture.setSource(video);
-
-    const material = new pc.StandardMaterial();
-    material.diffuseMap = texture;
-    material.emissiveMap = texture;
-    material.emissive = new pc.Color(1, 1, 1);
-    material.opacityMap = texture;
-    material.opacityMapChannel = "a";
-    material.blendType = pc.BLEND_NORMAL;
-    material.depthWrite = false;
-    material.alphaTest = 0.12;
-    material.useLighting = false;
-    material.cull = pc.CULLFACE_NONE;
-    material.update();
-
-    const plane = new pc.Entity(`SharedWebM_${mediaId}`);
-    plane.addComponent("render", { type: "plane" });
-    plane.render!.material = material;
-    plane.render!.castShadows = true;
-    plane.setPosition(Number(media.x), Number(media.y), Number(media.z));
-    plane.setLocalScale(Number(media.scale) || 1, 1, Number(media.scale) || 1);
-    plane.setEulerAngles(90, Number(media.rotationY) || 0, 0);
-    app.root.addChild(plane);
-
-    console.log("[SHARED WEBM 06 SCENE ADD]", mediaId);
-
-    const remoteMedia = createMediaObject({
-      title: media.title || "Shared WebM",
-      type: "webm",
-      entity: plane,
-      playable: true,
-      animated: true,
-      playback: {
-        play: async () => { await video!.play(); },
-        stop: () => { video!.pause(); },
-        setLoop: (loop: boolean) => { video!.loop = loop; }
-      },
-      behavior: []
-    });
-    remoteMedia.id = mediaId;
-    xrMediaManager.register(remoteMedia);
-
-    managedPlacedMedia.set(mediaId, {
-      id: mediaId,
-      title: `${media.title || "WebM Artwork"} [SHARED]`,
-      kind: "webm",
-      entity: plane
-    });
-    sharedRemoteMediaIds.add(mediaId);
-
-    placedMediaRuntimes.push({
-      id: mediaId,
-      update: () => {
-        if (video && texture && video.readyState >= 2) texture.upload();
-      },
-      dispose: () => {
-        video?.pause();
-        texture?.destroy();
-        if (objectURL) URL.revokeObjectURL(objectURL);
-      }
-    });
-
-    sharedMediaLoadingIds.delete(mediaId);
-    refreshMediaManagerUI();
-    console.log("[SHARED WEBM 07 REGISTERED]", mediaId);
-    console.log("[SHARED WEBM 08 READY]", mediaId);
-  } catch (error) {
-    sharedMediaLoadingIds.delete(mediaId);
-    console.error("[SHARED WEBM LOAD ERROR]", mediaId, error);
-    video?.pause();
-    texture?.destroy();
-    if (objectURL) URL.revokeObjectURL(objectURL);
-  }
+function removeSharedSpritePlaceholder(mediaId: string) {
+  removeSharedMediaLifecycle(mediaId, "shared-state-remove");
 }
 
 function isIOSLikeDevice() {

@@ -4015,10 +4015,17 @@ function dispatchSharedXRBehaviorAction(object: any, action: string | undefined,
 
   const behavior = object.behavior?.[0];
   const params = getBehaviorTransformParams(behavior);
-  if (!activeRoom) {
-    runXRBehaviorAction(object, actionId, params);
-    return;
-  }
+  // Prototype 0.16.0.4 / LOCAL LISTENER + PROXIMITY FIX
+  // A proximity event belongs to the client whose local player crossed the
+  // threshold. Execute it on that client immediately, then publish it so the
+  // other peers can mirror the action. Previously the sender waited for the
+  // server echo; depending on broadcast semantics the originating iPhone could
+  // be excluded, so approaching on iPhone could make another peer play while
+  // the iPhone itself stayed silent. PLAY/STOP are idempotent, so a later echo
+  // is safe.
+  runXRBehaviorAction(object, actionId, params);
+
+  if (!activeRoom) return;
 
   activeRoom.send("media:action", {
     id: String(object.id),

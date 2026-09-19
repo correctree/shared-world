@@ -281,6 +281,16 @@ function getOrCreateClientId() {
 const persistentClientId = getOrCreateClientId();
 let localPosition = new pc.Vec3();
 let lastSend = 0;
+let moveSequence = 0;
+let latestMoveAck = 0;
+let lastSentMove = {x:NaN,z:NaN,rotationY:NaN};
+function sendLocalMovement(rotationY:number) {
+  if (!activeRoom) return;
+  const seq=++moveSequence;
+  activeRoom.send("move",{x:localPosition.x,z:localPosition.z,rotationY,seq});
+  lastSentMove={x:localPosition.x,z:localPosition.z,rotationY};
+  lastSend=performance.now();
+}
 
 // =========================================================
 // JOYSTICK
@@ -523,7 +533,7 @@ const sharedMediaLoadGeneration = new Map<string, number>();
 const sharedStateDiagnostic = {
   serverMedia: 0, localMedia: 0, onAdd: 0, snapshotRx: 0, snapshotTx: 0,
   lastMediaId: "-", lastError: "-", actionRx: 0, connection: "CLOSED",
-  transformRx: 0, transformApplied: 0, lastTransform: "-"
+  transformRx: 0, transformApplied: 0, lastTransform: "-", moveCorrections: 0
 };
 let sharedStateDiagnosticPanel: HTMLDivElement | null = null;
 let sharedStateDiagnosticBody: HTMLPreElement | null = null;
@@ -551,7 +561,7 @@ function refreshSharedStateDiagnosticPanel() {
   }
   sharedStateDiagnostic.localMedia = sharedRemoteMediaIds.size;
   if (sharedStateDiagnosticBody) sharedStateDiagnosticBody.textContent =
-    `SHARED STATE DIAGNOSTIC / 0.16.1.8\n` +
+    `SHARED STATE DIAGNOSTIC / 0.16.2.0\n` +
     `CONNECTION     ${sharedStateDiagnostic.connection}\n` +
     `SERVER MEDIA   ${sharedStateDiagnostic.serverMedia}\n` +
     `LOCAL MEDIA    ${sharedStateDiagnostic.localMedia}\n` +
@@ -562,6 +572,7 @@ function refreshSharedStateDiagnosticPanel() {
     `TRANSFORM RX   ${sharedStateDiagnostic.transformRx}\n` +
     `APPLIED        ${sharedStateDiagnostic.transformApplied}\n` +
     `LAST POSITION  ${sharedStateDiagnostic.lastTransform}\n` +
+    `MOVE FIXES     ${sharedStateDiagnostic.moveCorrections}\n` +
     `LAST MEDIA ID  ${sharedStateDiagnostic.lastMediaId}\n` +
     `LAST ERROR     ${sharedStateDiagnostic.lastError}`;
 }
@@ -957,13 +968,18 @@ function updateSharedSpritePlaceholder(mediaId: string, media: any) {
   const values = [media.x, media.y, media.z, media.rotationY, media.scale].map(Number);
   if (!values.every(Number.isFinite)) return;
   const [x, y, z, rotationY, scale] = values;
-  item.entity.setPosition(x, y, z);
-  if (item.kind === "glb") {
-    item.entity.setLocalScale(scale, scale, scale);
-    item.entity.setEulerAngles(0, rotationY, 0);
+  const animation=activeTransformAnimations.get(mediaId);
+  const basePosition=new pc.Vec3(x,y,z);
+  const baseEuler=new pc.Vec3(item.kind==="glb"?0:90,rotationY,0);
+  const baseScale=new pc.Vec3(scale,item.kind==="glb"?scale:1,scale);
+  if (animation) {
+    animation.basePosition=basePosition;
+    animation.baseEuler=baseEuler;
+    animation.baseScale=baseScale;
   } else {
-    item.entity.setLocalScale(scale, 1, scale);
-    item.entity.setEulerAngles(90, rotationY, 0);
+    item.entity.setPosition(basePosition);
+    item.entity.setLocalScale(baseScale);
+    item.entity.setEulerAngles(baseEuler);
   }
   sharedStateDiagnostic.transformApplied += 1;
   sharedStateDiagnostic.lastTransform = `${mediaId.slice(-8)} X:${x.toFixed(1)} Y:${y.toFixed(1)} Z:${z.toFixed(1)}`;
@@ -1704,6 +1720,23 @@ async function enterWorld() {
     const room = await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
     activeRoom = room;
     currentSessionId = room.sessionId;
+    latestMoveAck=0;
+    lastSentMove={x:NaN,z:NaN,rotationY:NaN};
+    room.onMessage("move:ack",(ack:any) => {
+      const seq=Number(ack?.seq);
+      if (!Number.isSafeInteger(seq) || seq<=latestMoveAck) return;
+      latestMoveAck=seq;
+      if (ack?.ok !== false) return;
+      const x=Number(ack?.x),z=Number(ack?.z);
+      if (!Number.isFinite(x)||!Number.isFinite(z)) return;
+      localPosition.x=x;
+      localPosition.z=z;
+      avatars.get(currentSessionId)?.entity.setPosition(localPosition);
+      lastSentMove={x:NaN,z:NaN,rotationY:NaN};
+      sharedStateDiagnostic.moveCorrections+=1;
+      refreshSharedStateDiagnosticPanel();
+      console.warn("[MOVE CORRECTED TO SERVER]",seq,x,z);
+    });
     sharedStateDiagnostic.connection = "OPEN";
     sharedStateDiagnostic.lastError = "-";
     refreshSharedStateDiagnosticPanel();
@@ -1881,7 +1914,7 @@ async function enterWorld() {
     sharedWorldReconcileTimer = window.setInterval(() => {
       reconcileWorldFromServerState();
       requestLiveMediaSnapshot();
-    }, 1500);
+    }, 5000);
 
     roomLabel.textContent = `ROOM ${roomCode}`;
     status.textContent = "接続しました";
@@ -4303,17 +4336,11 @@ function updateSharedProximityBehaviors() {
 
     if (previous === undefined) {
       sharedProximityState.set(object.id, isInside);
-      if (isInside) dispatchSharedXRBehaviorAction(object, behavior.enterAction, "user-proximity-enter");
       continue;
     }
 
     if (isInside !== previous) {
       sharedProximityState.set(object.id, isInside);
-      dispatchSharedXRBehaviorAction(
-        object,
-        isInside ? behavior.enterAction : behavior.leaveAction,
-        isInside ? "user-proximity-enter" : "user-proximity-leave"
-      );
     }
   }
 }
@@ -4731,27 +4758,26 @@ app.on("update", (dt: number) => {
     me.entity.setEulerAngles(0, moveAngle, 0);
 
     localPosition.x = pc.math.clamp(
-      localPosition.x + moveX * MOVE_SPEED * dt,
-      -7,
-      7
+      localPosition.x + moveX * MOVE_SPEED * Math.min(dt,0.1),
+      -6.5,
+      6.5
     );
 
     localPosition.z = pc.math.clamp(
-      localPosition.z + moveZ * MOVE_SPEED * dt,
-      -7,
-      7
+      localPosition.z + moveZ * MOVE_SPEED * Math.min(dt,0.1),
+      -6.5,
+      6.5
     );
 
     me.entity.setPosition(localPosition);
 
-    const now = performance.now();
-    if (now - lastSend >= 1000 / SEND_HZ) {
-      activeRoom.send("move", {
-        x: localPosition.x,
-        z: localPosition.z,
-        rotationY: moveAngle
-      });
-      lastSend = now;
-    }
   }
+  const now=performance.now();
+  const currentRotation=me.entity.getEulerAngles().y;
+  const unsent=!Number.isFinite(lastSentMove.x) ||
+    Math.abs(localPosition.x-lastSentMove.x)>0.001 ||
+    Math.abs(localPosition.z-lastSentMove.z)>0.001 ||
+    Math.abs(currentRotation-lastSentMove.rotationY)>0.1;
+  if ((unsent && (x===0 && z===0 || now-lastSend>=1000/SEND_HZ)) ||
+      now-lastSend>=1000) sendLocalMovement(currentRotation);
 });

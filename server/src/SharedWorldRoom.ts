@@ -33,6 +33,37 @@ export class SharedWorldRoom extends Room<WorldState> {
   private mediaBehaviors = new Map<string, Record<string, unknown>>();
   private proximityActors = new Map<string, Set<string>>();
   private mediaActionSequence = 0;
+  private evaluateProximity(client:Client) {
+    const player=this.state.players.get(client.sessionId);
+    if (!player) return;
+    for (const [id,media] of this.state.mediaObjects) {
+      const behavior=this.mediaBehaviors.get(id);
+      if (!behavior || behavior.enabled!==true || behavior.trigger!=="user-proximity") continue;
+      const actors=this.proximityActors.get(id) || new Set<string>();
+      const previous=actors.has(client.sessionId);
+      const threshold=Number(behavior.distance ?? 3);
+      const distance=Math.hypot(player.x-media.x,player.y-media.y,player.z-media.z);
+      const inside=distance<=threshold+(previous ? 0.25 : 0);
+      if (inside===previous) continue;
+      if (inside) actors.add(client.sessionId);
+      else actors.delete(client.sessionId);
+      if (actors.size) this.proximityActors.set(id,actors);
+      else this.proximityActors.delete(id);
+      const action=String(inside?behavior.enterAction:behavior.leaveAction);
+      if (action==="none" || (!inside && action==="stop" && actors.size>0) ||
+          (inside && action==="play" && actors.size>1)) continue;
+      const params={
+        amount:Number(behavior.transformAmount ?? 1),
+        speed:Number(behavior.transformSpeed ?? 1),
+        axis:String(behavior.transformAxis ?? "y"),
+        duration:Number(behavior.transformDuration ?? 3)
+      };
+      const event={id,action,source:inside?"user-proximity-enter":"user-proximity-leave",
+        params,actorSessionId:client.sessionId,eventId:++this.mediaActionSequence};
+      this.broadcast("media:action",event);
+      client.send("media:action",event);
+    }
+  }
   private leaveProximity(sessionId:string) {
     for (const [id, actors] of this.proximityActors) {
       if (!actors.delete(sessionId)) continue;
@@ -59,7 +90,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     // "media:add" are guaranteed to reach this Room on Colyseus 0.18.
     this.onMessage("move", (
       client: Client,
-      payload: { x?: number; z?: number; rotationY?: number }
+      payload: { x?: number; z?: number; rotationY?: number; seq?: number }
     ) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
@@ -76,11 +107,16 @@ export class SharedWorldRoom extends Room<WorldState> {
       const dz = clampedZ - player.z;
       const distance = Math.hypot(dx, dz);
 
-      if (distance > MAX_STEP) return;
+      if (distance > MAX_STEP) {
+        client.send("move:ack",{seq:payload?.seq,ok:false,x:player.x,z:player.z,rotationY:player.rotationY});
+        return;
+      }
 
       player.x = clampedX;
       player.z = clampedZ;
       player.rotationY = nextRotationY;
+      client.send("move:ack",{seq:payload?.seq,ok:true,x:player.x,z:player.z,rotationY:player.rotationY});
+      this.evaluateProximity(client);
     });
 
     this.onMessage("media:add", (client: Client, payload: AddMediaPayload) => {

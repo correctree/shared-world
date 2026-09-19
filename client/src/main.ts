@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.16.0.1 AUDIO PLAYBACK + SHARING FIX LOADED]");
+console.log("[PROTOTYPE 0.16.1.1 AUDIO DELETE LIFECYCLE FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -2723,18 +2723,32 @@ function deleteManagedMedia(id: string) {
   const item = managedPlacedMedia.get(id);
   if (!item) return;
 
-  if (activeRoom && !sharedRemoteMediaIds.has(id)) {
-    activeRoom.send("media:delete",{id});
-    console.log("[SHARED MEDIA DELETE SENT]",id);
+  // Prototype 0.16.1.1 / AUDIO DELETE LIFECYCLE FIX
+  // Use the same authoritative cleanup path for every media type. Audio Reactive
+  // adds a live analyser/update loop, so the old delete path could leave the
+  // audio runtime/entity alive after DELETE. Stop and detach the audio first,
+  // notify the server, then perform one idempotent lifecycle cleanup.
+  if (item.kind === "audio") {
+    const el = audioElements.get(id);
+    if (el) {
+      try { el.pause(); el.currentTime = 0; } catch {}
+      const a = el as any;
+      try { a.__xrAudioContext?.close?.(); } catch {}
+      a.__xrAnalyser = null;
+      a.__xrAnalyserData = null;
+      a.__xrReactiveBase = null;
+      a.__xrReactiveLevel = 0;
+      audioElements.delete(id);
+    }
   }
-  disposePlacedRuntime(id);
-  item.entity.destroy();
-  xrMediaManager.unregister(id);
-  managedPlacedMedia.delete(id);
 
-  if (selectedManagedMediaId === id) selectedManagedMediaId = null;
+  if (activeRoom && !sharedRemoteMediaIds.has(id)) {
+    activeRoom.send("media:delete", { id });
+    console.log("[SHARED MEDIA DELETE SENT]", id);
+  }
+
   if (editingManagedMediaId === id) editingManagedMediaId = null;
-  refreshMediaManagerUI();
+  removeSharedMediaLifecycle(id, "local-delete");
   console.log("XR Media deleted:", id);
 }
 

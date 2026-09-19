@@ -893,11 +893,12 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
       entity: plane,
       playable: true,
       animated: true,
-      playback: {
+      playback: ({
         play: () => { playing = true; },
         stop: () => { playing = false; },
+        isPlaying: () => playing,
         setLoop: () => { /* Sprite loops by design. */ }
-      },
+      } as any),
       behavior: []
     });
     remoteMedia.id = mediaId;
@@ -1236,11 +1237,12 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
       entity: plane,
       playable: true,
       animated: true,
-      playback: {
+      playback: ({
         play: async () => { await video!.play(); },
         stop: () => { video!.pause(); },
+        isPlaying: () => !!video && !video.paused && !video.ended,
         setLoop: (loop: boolean) => { video!.loop = loop; }
-      },
+      } as any),
       behavior: []
     });
     remoteMedia.id = mediaId;
@@ -1521,9 +1523,10 @@ async function createSharedGLBFromAsset(mediaId: string, media: any) {
       entity: holder,
       playable: clips.length > 0,
       animated: clips.length > 0,
-      playback: clips.length ? {
+      playback: clips.length ? ({
         play,
         stop,
+        isPlaying: () => !!anim?.playing,
         setLoop: (v: boolean) => { loop = v; },
         getClips: () => clips.map((c: any) => c.displayName),
         playClip: (name: string) => {
@@ -1531,7 +1534,7 @@ async function createSharedGLBFromAsset(mediaId: string, media: any) {
           selected = i >= 0 ? i : 0;
           play();
         }
-      } : undefined,
+      } as any) : undefined,
       behavior: []
     });
     remote.id = mediaId;
@@ -3028,8 +3031,9 @@ function commitActiveArtworkToWorld() {
       media.playback = {
         play: () => { playing = true; },
         stop: () => { playing = false; },
+        isPlaying: () => playing,
         setLoop: () => { /* Sprite currently loops by design. */ }
-      };
+      } as any;
     }
 
     const drawCommittedFrame = (frameIndex: number) => {
@@ -3542,11 +3546,12 @@ function addSpriteArtworkToWorld() {
     entity: plane,
     playable: true,
     animated: true,
-    playback: {
+    playback: ({
       play: () => { importedSpritePlaying = true; },
       stop: () => { importedSpritePlaying = false; },
+      isPlaying: () => importedSpritePlaying,
       setLoop: () => { /* Sprite currently loops by design. */ }
-    },
+    } as any),
     behavior: [
         {
             id: "proximity-play",
@@ -3626,11 +3631,12 @@ async function addWebMArtworkToWorld(file: File) {
     entity: plane,
     playable: true,
     animated: true,
-    playback: {
+    playback: ({
       play: async () => { await video.play(); },
       stop: () => { video.pause(); },
-      setLoop: (loop) => { video.loop = loop; }
-    },
+      isPlaying: () => !video.paused && !video.ended,
+      setLoop: (loop: boolean) => { video.loop = loop; }
+    } as any),
     source: { fileName: file.name },
     behavior: [
       {
@@ -4225,6 +4231,17 @@ function runXRBehaviorAction(object: any, action: string | undefined, params?: X
     case "play": void object.playback?.play(); break;
     case "stop": object.playback?.stop(); break;
     case "move": case "rotate": case "scale": case "float": case "orbit": case "shake":
+      // Resume a previously stopped animation on Enter transform, without
+      // restarting playback that is already running.
+      if (["glb","sprite","webm"].includes(String(object?.type)) &&
+          object.playback?.isPlaying?.() === false) {
+        try {
+          const result=object.playback.play();
+          if (result && typeof result.catch === "function")
+            result.catch((error:unknown) => console.warn("[MEDIA PLAYBACK RESUME FAILED]", object.id,error));
+          console.log("[MEDIA ANIMATION RESUMED WITH TRANSFORM]", object.id, object.type, actionId);
+        } catch(error) { console.warn("[MEDIA PLAYBACK RESUME FAILED]", object.id,error); }
+      }
       startTransformAnimation(object, actionId, params); break;
     case "none": default: break;
   }

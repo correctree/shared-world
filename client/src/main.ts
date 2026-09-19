@@ -2367,65 +2367,22 @@ behaviorEnterAction.addEventListener("change", applyBehaviorEditorUI);
 behaviorLeaveAction.addEventListener("change", applyBehaviorEditorUI);
 behaviorEnabled.addEventListener("change", applyBehaviorEditorUI);
 
-// Prototype 0.15.2.2 / BEHAVIOR TEST ACTION FIX
-// TEST buttons are explicit manual actions. Execute the selected media locally
-// immediately, then publish the exact same action to the shared room. This does
-// not alter the proven PROXIMITY / LOOK AT / TOUCH paths. The later server echo
-// is intentionally harmless (PLAY/STOP are idempotent) and keeps all peers in sync.
-function executeBehaviorTestAction(kind: "enter" | "leave") {
-  // Commit the controls currently visible in the editor before reading them.
-  applyBehaviorEditorUI();
-
-  const mediaId = selectedManagedMediaId;
-  if (!mediaId) {
-    behaviorStatus.textContent = "TEST FAILED / NO MEDIA SELECTED";
-    return;
-  }
-
-  const object = xrMediaManager.get(mediaId);
+behaviorTestEnter.addEventListener("click", () => {
+  if (!selectedManagedMediaId) return;
+  const object = xrMediaManager.get(selectedManagedMediaId);
   const behavior = getSelectedInteractiveBehavior();
-  if (!object || !behavior) {
-    behaviorStatus.textContent = "TEST FAILED / MEDIA NOT READY";
-    return;
-  }
-
-  const action = String(
-    kind === "enter"
-      ? ((behavior as any).enterAction ?? "play")
-      : ((behavior as any).leaveAction ?? "stop")
-  ) as XRBehaviorActionId;
-
-  if (action === "none") {
-    behaviorStatus.textContent = `TEST ${kind.toUpperCase()} → NONE`;
-    return;
-  }
-
-  // Guarantee immediate feedback on the controller device.
-  runXRBehaviorAction(object, action);
-
-  // Publish to the other connected clients using the same transient Action Bus.
-  if (activeRoom) {
-    activeRoom.send("media:action", {
-      id: String(object.id || mediaId),
-      action,
-      source: `test-${kind}`
-    });
-    console.log("[0.15.2.2 TEST ACTION SENT]", object.id || mediaId, action, kind);
-  }
-
-  behaviorStatus.textContent = `TEST ${kind.toUpperCase()} → ${action.toUpperCase()}`;
-}
-
-behaviorTestEnter.addEventListener("click", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  executeBehaviorTestAction("enter");
+  if (!object || !behavior) return;
+  dispatchSharedXRBehaviorAction(object, String((behavior as any).enterAction ?? "play"), "test-enter");
+  behaviorStatus.textContent = `TEST ENTER → ${String((behavior as any).enterAction ?? "play").toUpperCase()}`;
 });
 
-behaviorTestLeave.addEventListener("click", (event) => {
-  event.preventDefault();
-  event.stopPropagation();
-  executeBehaviorTestAction("leave");
+behaviorTestLeave.addEventListener("click", () => {
+  if (!selectedManagedMediaId) return;
+  const object = xrMediaManager.get(selectedManagedMediaId);
+  const behavior = getSelectedInteractiveBehavior();
+  if (!object || !behavior) return;
+  dispatchSharedXRBehaviorAction(object, String((behavior as any).leaveAction ?? "stop"), "test-leave");
+  behaviorStatus.textContent = `TEST LEAVE → ${String((behavior as any).leaveAction ?? "stop").toUpperCase()}`;
 });
 
 function refreshMediaManagerUI() {

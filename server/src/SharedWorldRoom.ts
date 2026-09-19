@@ -30,6 +30,7 @@ type MediaActionPayload = {
 };
 
 export class SharedWorldRoom extends Room<WorldState> {
+  private mediaBehaviors = new Map<string, Record<string, unknown>>();
   // Transport headroom is intentionally larger than the UI's logical 4-user target.
   // It prevents a stale mobile WebSocket from forcing joinOrCreate() into a second room
   // before the server can de-duplicate the returning client.
@@ -115,6 +116,37 @@ export class SharedWorldRoom extends Room<WorldState> {
       }));
 
       console.log("[media:add stored]", id, "total:", this.state.mediaObjects.size);
+      this.mediaBehaviors.set(id, { trigger:"user-proximity", distance:3, enterAction:"play", leaveAction:"stop", enabled:true });
+    });
+
+    this.onMessage("media:behavior", (client: Client, payload: any) => {
+      const id = String(payload?.id || "").trim().slice(0, 80);
+      const media = this.state.mediaObjects.get(id);
+      const player = this.state.players.get(client.sessionId);
+      if (!media || !(media.ownerSessionId === client.sessionId ||
+        (media.ownerClientId && player?.clientId && media.ownerClientId === player.clientId))) return;
+      const input = payload?.behavior || {};
+      const trigger = String(input.trigger || "");
+      const enterAction = String(input.enterAction || "");
+      const leaveAction = String(input.leaveAction || "");
+      const triggers = ["user-proximity", "look-at", "touch"];
+      const actions = ["play", "stop", "move", "rotate", "scale", "float", "orbit", "shake", "none"];
+      if (!triggers.includes(trigger) || !actions.includes(enterAction) || !actions.includes(leaveAction)) return;
+      const bounded = (v:unknown, fallback:number, min:number, max:number) => {
+        const n=Number(v); return Number.isFinite(n)?Math.min(max,Math.max(min,n)):fallback;
+      };
+      const behavior = {
+        trigger, enterAction, leaveAction, enabled: input.enabled === true,
+        distance: bounded(input.distance,3,.1,30),
+        lookAngle: bounded(input.lookAngle,12,1,89),
+        touchMode: input.touchMode === "repeat" ? "repeat" : "toggle",
+        transformAmount: bounded(input.transformAmount,1,0,20),
+        transformSpeed: bounded(input.transformSpeed,1,.1,20),
+        transformAxis: ["x","y","z"].includes(input.transformAxis) ? input.transformAxis : "y",
+        transformDuration: bounded(input.transformDuration,3,.1,60)
+      };
+      this.mediaBehaviors.set(id, behavior);
+      this.broadcast("media:behavior", {id, behavior});
     });
 
 
@@ -215,7 +247,8 @@ export class SharedWorldRoom extends Room<WorldState> {
           assetRef: media.assetRef,
           fallbackRef: media.fallbackRef,
           x: media.x, y: media.y, z: media.z,
-          rotationY: media.rotationY, scale: media.scale
+          rotationY: media.rotationY, scale: media.scale,
+          behavior: this.mediaBehaviors.get(id) || null
         });
       }
       client.send("media:snapshot", { mediaObjects });
@@ -236,6 +269,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         return;
       }
       this.state.mediaObjects.delete(id);
+      this.mediaBehaviors.delete(id);
       console.log("[media:delete stored]", id, "total:", this.state.mediaObjects.size);
     });
 

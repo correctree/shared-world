@@ -641,6 +641,8 @@ async function ensureSharedMediaFromState(mediaId: string, media: any) {
     updateSharedSpritePlaceholder(mediaId, pending);
     pendingSharedMediaTransforms.delete(mediaId);
   }
+  const pendingBehavior=pendingSharedBehaviors.get(mediaId);
+  if (pendingBehavior) applySharedBehavior(mediaId,pendingBehavior);
 }
 
 function reconcileWorldFromServerState() {
@@ -968,9 +970,25 @@ function updateSharedSpritePlaceholder(mediaId: string, media: any) {
 }
 
 const pendingSharedMediaTransforms = new Map<string, {x:number;y:number;z:number;rotationY:number;scale:number}>();
+const pendingSharedBehaviors = new Map<string, any>();
+const appliedSharedBehaviorSignatures = new Map<string,string>();
+function applySharedBehavior(mediaId:string, behavior:any) {
+  if (!behavior || typeof behavior !== "object") return;
+  const object=xrMediaManager.get(mediaId);
+  if (!object) { pendingSharedBehaviors.set(mediaId,behavior); return; }
+  const signature=JSON.stringify(behavior);
+  if (appliedSharedBehaviorSignatures.get(mediaId)===signature) return;
+  appliedSharedBehaviorSignatures.set(mediaId,signature);
+  object.behavior=[{id:"proximity-play",...behavior}];
+  pendingSharedBehaviors.delete(mediaId);
+  sharedProximityState.delete(mediaId);
+  if (selectedManagedMediaId===mediaId) refreshBehaviorEditorUI();
+}
 
 function removeSharedMediaLifecycle(mediaId: string, reason = "server-remove") {
   pendingSharedMediaTransforms.delete(mediaId);
+  pendingSharedBehaviors.delete(mediaId);
+  appliedSharedBehaviorSignatures.delete(mediaId);
   console.log("[SHARED MEDIA CLEANUP START]", mediaId, reason);
   bumpSharedMediaGeneration(mediaId);
   sharedMediaLoadingIds.delete(mediaId);
@@ -1766,6 +1784,10 @@ async function enterWorld() {
       if (payload?.ok) console.log("[MEDIA EDIT SYNC ACCEPTED]", String(payload.id || ""));
       else console.warn("[MEDIA EDIT SYNC REJECTED]", String(payload?.id || ""), String(payload?.reason || "unknown"));
     });
+    room.onMessage("media:behavior", (payload:any) => {
+      const id=String(payload?.id||"");
+      if (id) applySharedBehavior(id,payload?.behavior);
+    });
 
     // Prototype 0.15.1.2 / LIVE MEDIA SNAPSHOT RECOVERY
     // The normal MapSchema callback remains the fastest path. This explicit
@@ -1783,6 +1805,7 @@ async function enterWorld() {
         const mediaId = String(media?.id || "");
         if (!mediaId) continue;
         authoritativeIds.add(mediaId);
+        if (media?.behavior) applySharedBehavior(mediaId,media.behavior);
         if (!managedPlacedMedia.has(mediaId) && !sharedMediaLoadingIds.has(mediaId)) {
           console.log("[0.15.1.2 SNAPSHOT RECOVER ADD]", mediaId, String(media?.type || ""));
           void ensureSharedMediaFromState(mediaId, media).catch(setSharedStateDiagnosticError);
@@ -2684,6 +2707,15 @@ function applyBehaviorEditorUI() {
     leaveAction: behavior.leaveAction,
     enabled: behavior.enabled
   });
+  if (activeRoom && selectedManagedMediaId) {
+    activeRoom.send("media:behavior", {id:selectedManagedMediaId,behavior:{
+      trigger:behavior.trigger, distance:behavior.distance, lookAngle:(behavior as any).lookAngle,
+      touchMode:(behavior as any).touchMode, enterAction:behavior.enterAction,
+      leaveAction:behavior.leaveAction, enabled:behavior.enabled,
+      transformAmount:(behavior as any).transformAmount,transformSpeed:(behavior as any).transformSpeed,
+      transformAxis:(behavior as any).transformAxis,transformDuration:(behavior as any).transformDuration
+    }});
+  }
 }
 
 behaviorTrigger.addEventListener("change", () => {

@@ -31,6 +31,19 @@ type MediaActionPayload = {
 
 export class SharedWorldRoom extends Room<WorldState> {
   private mediaBehaviors = new Map<string, Record<string, unknown>>();
+  private proximityActors = new Map<string, Set<string>>();
+  private mediaActionSequence = 0;
+  private leaveProximity(sessionId:string) {
+    for (const [id, actors] of this.proximityActors) {
+      if (!actors.delete(sessionId)) continue;
+      if (!actors.size) {
+        this.proximityActors.delete(id);
+        const action=String(this.mediaBehaviors.get(id)?.leaveAction || "stop");
+        if (this.state.mediaObjects.has(id) && action !== "none")
+          this.broadcast("media:action",{id,action,source:"user-proximity-leave",actorSessionId:sessionId,eventId:++this.mediaActionSequence});
+      }
+    }
+  }
   // Transport headroom is intentionally larger than the UI's logical 4-user target.
   // It prevents a stale mobile WebSocket from forcing joinOrCreate() into a second room
   // before the server can de-duplicate the returning client.
@@ -146,6 +159,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         transformDuration: bounded(input.transformDuration,3,.1,60)
       };
       this.mediaBehaviors.set(id, behavior);
+      this.proximityActors.delete(id);
       this.broadcast("media:behavior", {id, behavior});
     });
 
@@ -206,6 +220,16 @@ export class SharedWorldRoom extends Room<WorldState> {
         console.warn("[media:action rejected] unsupported action", action);
         return;
       }
+      if (source === "user-proximity-enter" || source === "user-proximity-leave") {
+        const actors=this.proximityActors.get(id) || new Set<string>();
+        const wasInside=actors.size>0;
+        if (source === "user-proximity-enter") actors.add(client.sessionId);
+        else actors.delete(client.sessionId);
+        if (actors.size) this.proximityActors.set(id,actors);
+        else this.proximityActors.delete(id);
+        // PLAY fires when the first player enters; STOP fires when the last leaves.
+        if ((action === "play" && wasInside) || (action === "stop" && actors.size>0)) return;
+      }
 
       // Prototype 0.15.3.2 / SHARED TRANSFORM ACTION FIX
       // Transform actions use the same transient Action Bus as PLAY/STOP.
@@ -226,9 +250,10 @@ export class SharedWorldRoom extends Room<WorldState> {
         };
       }
 
-      this.broadcast("media:action", {
-        id, action, source, params, actorSessionId: client.sessionId
-      });
+      const event={id, action, source, params, actorSessionId: client.sessionId,eventId:++this.mediaActionSequence};
+      this.broadcast("media:action", event);
+      // Ensure the actor also receives the shared occupancy decision.
+      if (source.startsWith("user-proximity-")) client.send("media:action", event);
       console.log("[0.15.3.2 media:action broadcast]", id, action, source, params ?? "", client.sessionId);
     });
 
@@ -270,6 +295,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
       this.state.mediaObjects.delete(id);
       this.mediaBehaviors.delete(id);
+      this.proximityActors.delete(id);
       console.log("[media:delete stored]", id, "total:", this.state.mediaObjects.size);
     });
 
@@ -288,6 +314,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     if (clientId) {
       for (const [oldSessionId, oldPlayer] of this.state.players) {
         if (oldSessionId !== client.sessionId && oldPlayer.clientId === clientId) {
+          this.leaveProximity(oldSessionId);
           this.state.players.delete(oldSessionId);
           console.log("[SESSION REPLACED]", clientId, oldSessionId, "->", client.sessionId);
         }
@@ -310,6 +337,7 @@ export class SharedWorldRoom extends Room<WorldState> {
   }
 
   onLeave(client: Client, consented: boolean) {
+    this.leaveProximity(client.sessionId);
     const player = this.state.players.get(client.sessionId);
     const name = player?.name || "Guest";
 

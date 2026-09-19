@@ -1834,7 +1834,17 @@ async function enterWorld() {
     // proven Colyseus state callback tree is fully attached. If an Action
     // arrives while an asset is still reconstructing, queue the latest Action
     // and apply it as soon as that media object becomes ready.
+    const receivedActionEventIds = new Set<number>();
     room.onMessage("media:action", (payload: any) => {
+      const eventId=Number(payload?.eventId);
+      if (Number.isSafeInteger(eventId) && eventId>0) {
+        if (receivedActionEventIds.has(eventId)) return;
+        receivedActionEventIds.add(eventId);
+        if (receivedActionEventIds.size>256) {
+          const oldest=receivedActionEventIds.values().next().value;
+          if (oldest !== undefined) receivedActionEventIds.delete(oldest);
+        }
+      }
       sharedStateDiagnostic.actionRx += 1;
       const mediaId = String(payload?.id || "");
       sharedStateDiagnostic.lastMediaId = mediaId || "-";
@@ -4227,15 +4237,12 @@ function dispatchSharedXRBehaviorAction(object: any, action: string | undefined,
 
   const behavior = object.behavior?.[0];
   const params = getBehaviorTransformParams(behavior);
-  // Prototype 0.16.0.4 / LOCAL LISTENER + PROXIMITY FIX
-  // A proximity event belongs to the client whose local player crossed the
-  // threshold. Execute it on that client immediately, then publish it so the
-  // other peers can mirror the action. Previously the sender waited for the
-  // server echo; depending on broadcast semantics the originating iPhone could
-  // be excluded, so approaching on iPhone could make another peer play while
-  // the iPhone itself stayed silent. PLAY/STOP are idempotent, so a later echo
-  // is safe.
-  runXRBehaviorAction(object, actionId, params);
+  // Other triggers execute locally; proximity actions use the shared occupancy
+  // decision so one player's exit cannot stop another player's animation.
+  // Proximity PLAY/STOP is decided from all connected players on the server.
+  // A local leave must not stop a Sprite while another player remains nearby.
+  if (!activeRoom || !source.startsWith("user-proximity-"))
+    runXRBehaviorAction(object, actionId, params);
 
   if (!activeRoom) return;
 

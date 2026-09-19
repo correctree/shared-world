@@ -501,7 +501,7 @@ function refreshSharedStateDiagnosticPanel() {
   }
   sharedStateDiagnostic.localMedia = sharedRemoteMediaIds.size;
   sharedStateDiagnosticPanel.textContent =
-    `SHARED STATE DIAGNOSTIC / 0.15.3\n` +
+    `SHARED STATE DIAGNOSTIC / 0.15.3.1\n` +
     `CONNECTION     ${sharedStateDiagnostic.connection}\n` +
     `SERVER MEDIA   ${sharedStateDiagnostic.serverMedia}\n` +
     `LOCAL MEDIA    ${sharedStateDiagnostic.localMedia}\n` +
@@ -2108,8 +2108,12 @@ mediaManagerPanel.innerHTML = `
       </select>
     </label>
 
-    <label class="behavior-row">
-      <span>DO / Enter</span>
+    <div class="behavior-action-section">
+      <div class="behavior-action-title">DO</div>
+    </div>
+
+    <label class="behavior-row behavior-action-row">
+      <span>Enter Action</span>
       <select id="behaviorEnterAction">
         <option value="play">PLAY MEDIA</option>
         <option value="stop">STOP MEDIA</option>
@@ -2123,8 +2127,8 @@ mediaManagerPanel.innerHTML = `
       </select>
     </label>
 
-    <label class="behavior-row">
-      <span>DO / Leave</span>
+    <label class="behavior-row behavior-action-row">
+      <span>Leave Action</span>
       <select id="behaviorLeaveAction">
         <option value="stop">STOP MEDIA</option>
         <option value="play">PLAY MEDIA</option>
@@ -2248,6 +2252,10 @@ mediaManagerStyle.textContent = `
   #behaviorDistance { width:100%; min-width:0; }
   #behaviorDistanceValue { text-align:right; font-size:11px; white-space:nowrap; }
   #behaviorEnabled { justify-self:start; width:18px !important; height:18px; }
+  .behavior-action-section { display:block !important; margin:12px 0 6px; padding-top:10px; border-top:1px solid rgba(255,255,255,.16); }
+  .behavior-action-title { display:block !important; font-size:11px; font-weight:900; letter-spacing:.14em; color:#fff; opacity:.95; }
+  .behavior-action-row { display:grid !important; }
+  #behaviorEnterAction, #behaviorLeaveAction { display:block !important; visibility:visible !important; opacity:1 !important; min-height:34px; }
   .transform-action-controls { margin:10px 0; padding:10px; border:1px solid #2a5f88; border-radius:10px; background:rgba(15,36,52,.55); }
   .transform-action-controls.hidden { display:none !important; }
   .transform-action-title { margin-bottom:8px; font-size:10px; font-weight:800; letter-spacing:.1em; opacity:.75; }

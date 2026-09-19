@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.15.1 SHARED ACTION EVENT CORE LOADED]");
+console.log("[PROTOTYPE 0.15.1.1 SHARED MEDIA RECOVERY + ACTION CORE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1500,20 +1500,6 @@ async function enterWorld() {
     activeRoom = room;
     currentSessionId = room.sessionId;
 
-    // Prototype 0.15.1 / SHARED ACTION EVENT CORE
-    // Action events are transient messages, not persistent WorldState.
-    room.onMessage("media:action", (payload: any) => {
-      const mediaId = String(payload?.id || "");
-      const action = String(payload?.action || "none") as XRBehaviorActionId;
-      const object = xrMediaManager.get(mediaId);
-      if (!object) {
-        console.warn("[SHARED ACTION RECEIVE / MEDIA NOT READY]", mediaId, action);
-        return;
-      }
-      console.log("[SHARED ACTION RECEIVED]", mediaId, action, payload?.source || "");
-      runXRBehaviorAction(object, action);
-    });
-
     const $ = getStateCallbacks(room);
     $(room.state).players.onAdd((player: any, sessionId: string) => {
       createAvatar(sessionId, player);
@@ -1536,6 +1522,7 @@ async function enterWorld() {
     const sharedMedia = $(room.state as any).mediaObjects;
 
     sharedMedia.onAdd((media: any, mediaId: string) => {
+      console.log("[0.15.1.1 MEDIA ONADD]", mediaId, String(media?.type || ""));
       console.log("[SHARED RECEIVE ADD]", mediaId, media);
 
       // onAdd already carries the authoritative media object. Do not perform
@@ -1564,6 +1551,26 @@ async function enterWorld() {
     });
 
     console.log("[SHARED RECEIVE LISTENER READY]");
+
+    // Prototype 0.15.1.1: register transient Action messages only AFTER the
+    // proven Colyseus state callback tree is fully attached. If an Action
+    // arrives while an asset is still reconstructing, queue the latest Action
+    // and apply it as soon as that media object becomes ready.
+    room.onMessage("media:action", (payload: any) => {
+      const mediaId = String(payload?.id || "");
+      const action = String(payload?.action || "none") as XRBehaviorActionId;
+      const source = String(payload?.source || "");
+      console.log("[0.15.1.1 ACTION RECEIVE]", mediaId, action, source);
+      const object = xrMediaManager.get(mediaId);
+      if (!object) {
+        pendingSharedActions.set(mediaId, { action, source });
+        console.log("[0.15.1.1 ACTION QUEUED / MEDIA NOT READY]", mediaId, action);
+        return;
+      }
+      runXRBehaviorAction(object, action);
+      console.log("[0.15.1.1 ACTION EXECUTE]", mediaId, action);
+    });
+
     console.log("[WORLD SNAPSHOT READY]", {
       sessionId: room.sessionId,
       players: (room.state as any).players?.size ?? "callback-managed",
@@ -3505,6 +3512,18 @@ function debugXRMediaManager(label: string) {
 const lookAtBehaviorState = new Map<string, boolean>();
 const DEFAULT_LOOK_AT_ANGLE_DEG = 12;
 
+const pendingSharedActions = new Map<string, { action: XRBehaviorActionId; source: string }>();
+
+function flushPendingSharedActions() {
+  for (const [mediaId, pending] of Array.from(pendingSharedActions.entries())) {
+    const object = xrMediaManager.get(mediaId);
+    if (!object) continue;
+    runXRBehaviorAction(object, pending.action);
+    pendingSharedActions.delete(mediaId);
+    console.log("[0.15.1.1 ACTION EXECUTE / QUEUED]", mediaId, pending.action, pending.source);
+  }
+}
+
 function runXRBehaviorAction(object: any, action: string | undefined) {
   const actionId = String(action || "none") as XRBehaviorActionId;
 
@@ -3931,6 +3950,7 @@ app.on("update", (dt: number) => {
   updateSharedProximityBehaviors();
   updateLookAtBehaviors();
   initializeTouchBehaviorPlayback();
+  flushPendingSharedActions();
 
   let x = 0;
   let z = 0;

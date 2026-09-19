@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.15.1.1 SHARED MEDIA RECOVERY + ACTION CORE LOADED]");
+console.log("[PROTOTYPE 0.16.0 AUDIO MEDIA CORE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -70,6 +70,27 @@ if (!glbArtworkMode && spriteArtworkMode) {
   spriteArtworkMode.insertAdjacentElement("afterend", button);
   glbArtworkMode = button;
 }
+
+// Prototype 0.16.0 / AUDIO MEDIA MODE
+let audioArtworkMode = document.querySelector<HTMLButtonElement>("#audioArtworkMode");
+if (!audioArtworkMode && glbArtworkMode) {
+  const button = document.createElement("button");
+  button.id = "audioArtworkMode"; button.type = "button"; button.textContent = "AUDIO";
+  button.className = glbArtworkMode.className; glbArtworkMode.insertAdjacentElement("afterend", button);
+  audioArtworkMode = button;
+}
+const audioSettingsPanel = document.createElement("section");
+audioSettingsPanel.id = "audioSettingsPanel"; audioSettingsPanel.style.cssText = "display:none;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.18);border-radius:10px";
+audioSettingsPanel.innerHTML = `<div style="font-size:11px;font-weight:800;letter-spacing:.1em;margin-bottom:8px">AUDIO SETTINGS</div>
+<label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Volume <input id="audioVolume" type="range" min="0" max="1" step="0.05" value="0.8"></label>
+<label style="display:flex;gap:8px;margin:8px 0"><input id="audioLoop" type="checkbox" checked> LOOP</label>
+<label style="display:flex;gap:8px;margin:8px 0"><input id="audioSpatial" type="checkbox" checked> SPATIAL AUDIO</label>
+<label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Distance <input id="audioDistance" type="range" min="2" max="30" step="1" value="12"></label>`;
+addArtworkPanel?.appendChild(audioSettingsPanel);
+const audioVolume = audioSettingsPanel.querySelector<HTMLInputElement>("#audioVolume")!;
+const audioLoop = audioSettingsPanel.querySelector<HTMLInputElement>("#audioLoop")!;
+const audioSpatial = audioSettingsPanel.querySelector<HTMLInputElement>("#audioSpatial")!;
+const audioDistance = audioSettingsPanel.querySelector<HTMLInputElement>("#audioDistance")!;
 
 // Prototype 0.9 / Placement Editor UI
 const artworkPlacementPanel = document.querySelector<HTMLElement>("#artworkPlacementPanel");
@@ -517,7 +538,7 @@ function setSharedStateDiagnosticError(error: unknown) {
   refreshSharedStateDiagnosticPanel();
 }
 
-function sharedAssetURL(mediaId: string, extension: "zip" | "glb" | "webm") {
+function sharedAssetURL(mediaId: string, extension: "zip" | "glb" | "webm" | "mp3" | "wav") {
   return `${SERVER_URL.replace(/\/$/, "")}/assets/${encodeURIComponent(mediaId)}.${extension}`;
 }
 
@@ -579,6 +600,7 @@ async function ensureSharedMediaFromState(mediaId: string, media: any) {
   if (sharedType === "sprite") await createSharedSpriteFromAsset(mediaId, media);
   else if (sharedType === "webm") await createSharedWebMFromAsset(mediaId, media);
   else if (sharedType === "glb") await createSharedGLBFromAsset(mediaId, media);
+  else if (sharedType === "audio") await createSharedAudioFromAsset(mediaId, media);
   else console.warn("[MEDIA RECOVERY UNSUPPORTED TYPE]", mediaId, sharedType);
 }
 
@@ -1254,6 +1276,43 @@ async function publishCommittedWebMToSharedWorld(mediaId:string,webmBlob:Blob|nu
   }catch(e){console.error("[SHARED WEBM PUBLISH ERROR]",mediaId,e)}
 }
 
+// Prototype 0.16.0 / SHARED AUDIO MEDIA CORE
+const audioElements = new Map<string, HTMLAudioElement>();
+function audioConfigFromRef(ref:string){
+  try { const u=new URL(ref, window.location.href); return { volume:Math.max(0,Math.min(1,Number(u.searchParams.get("volume")??.8))), loop:u.searchParams.get("loop")!=="0", spatial:u.searchParams.get("spatial")!=="0", distance:Math.max(2,Number(u.searchParams.get("distance")??12)) }; }
+  catch { return {volume:.8,loop:true,spatial:true,distance:12}; }
+}
+function makeAudioMarker(name:string){
+  const e=new pc.Entity(name); e.addComponent("render",{type:"sphere"}); e.setLocalScale(.34,.34,.34);
+  const m=new pc.StandardMaterial(); m.diffuse=new pc.Color(.15,.55,1); m.emissive=new pc.Color(.03,.12,.3); m.update(); e.render!.material=m; app.root.addChild(e); return e;
+}
+function configureSpatialAudioElement(id:string, el:HTMLAudioElement, entity:pc.Entity, cfg:{volume:number;loop:boolean;spatial:boolean;distance:number}){
+  el.loop=cfg.loop; el.volume=cfg.volume; el.preload="auto"; audioElements.set(id,el);
+  // Browser-native stereo panning gives a robust mobile spatial cue. Distance attenuation is updated each frame.
+  (el as any).__xrSpatial=cfg.spatial; (el as any).__xrDistance=cfg.distance; (el as any).__xrEntity=entity; (el as any).__xrBaseVolume=cfg.volume;
+}
+async function createSharedAudioFromAsset(mediaId:string, media:any){
+  if(managedPlacedMedia.has(mediaId)||sharedMediaLoadingIds.has(mediaId)) return;
+  sharedMediaLoadingIds.add(mediaId); const gen=bumpSharedMediaGeneration(mediaId); const ref=String(media.assetRef||"");
+  try{
+    const response=await fetchSharedAssetWithRetry(ref,`audio:${mediaId}`); const blob=await response.blob();
+    if(!isSharedMediaGenerationCurrent(mediaId,gen)) return;
+    const url=URL.createObjectURL(blob); const el=new Audio(url); const cfg=audioConfigFromRef(ref); const entity=makeAudioMarker(`SharedAudio_${mediaId}`);
+    entity.setPosition(Number(media.x),Number(media.y),Number(media.z)); entity.setEulerAngles(0,Number(media.rotationY)||0,0); entity.setLocalScale(Number(media.scale)||1,Number(media.scale)||1,Number(media.scale)||1);
+    configureSpatialAudioElement(mediaId,el,entity,cfg);
+    const remote=createMediaObject({title:media.title||"Audio",type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{try{await el.play()}catch(e){console.warn("[AUDIO PLAY BLOCKED]",e)}},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:false}]});
+    (remote as any).id=mediaId; xrMediaManager.register(remote as any); managedPlacedMedia.set(mediaId,{id:mediaId,title:`${media.title||"Audio"} [SHARED]`,kind:"audio",entity}); sharedRemoteMediaIds.add(mediaId);
+    placedMediaRuntimes.push({id:mediaId,dispose:()=>{el.pause();audioElements.delete(mediaId);URL.revokeObjectURL(url);if(entity.parent)entity.destroy()}}); sharedMediaLoadingIds.delete(mediaId); refreshMediaManagerUI();
+  }catch(e){sharedMediaLoadingIds.delete(mediaId);console.error("[SHARED AUDIO LOAD ERROR]",mediaId,e)}
+}
+async function publishCommittedAudioToSharedWorld(mediaId:string, blob:Blob|null, ext:"mp3"|"wav"){
+  if(!activeRoom||!blob)return; const item=managedPlacedMedia.get(mediaId), media=xrMediaManager.get(mediaId); if(!item||!media)return;
+  const cfg={volume:Number(audioVolume.value),loop:audioLoop.checked,spatial:audioSpatial.checked,distance:Number(audioDistance.value)};
+  const base=sharedAssetURL(mediaId,ext); const up=await fetch(base,{method:"PUT",headers:{"Content-Type":ext==="mp3"?"audio/mpeg":"audio/wav"},body:blob}); if(!up.ok)throw new Error(`Audio upload HTTP ${up.status}`);
+  const ref=`${base}?volume=${cfg.volume}&loop=${cfg.loop?1:0}&spatial=${cfg.spatial?1:0}&distance=${cfg.distance}`; const pos=item.entity.getPosition(), rot=item.entity.getEulerAngles(), sc=item.entity.getLocalScale();
+  activeRoom.send("media:add",{id:mediaId,title:media.title||"Audio",type:"audio",assetRef:ref,x:pos.x,y:pos.y,z:pos.z,rotationY:rot.y,scale:sc.x});
+}
+
 async function createSharedGLBFromAsset(mediaId: string, media: any) {
   if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
   sharedMediaLoadingIds.add(mediaId);
@@ -1719,16 +1778,19 @@ cancelArtworkButton?.addEventListener("click", closeArtworkPanelUI);
 // Prototype 0.9 / MEDIA TYPE + FILE SELECT
 // =========================================================
 
-let artworkMediaType: "webm" | "sprite" | "glb" = "webm";
+let artworkMediaType: "webm" | "sprite" | "glb" | "audio" = "webm";
 
 function updateArtworkModeUI() {
   const isWebM = artworkMediaType === "webm";
   const isSprite = artworkMediaType === "sprite";
   const isGLB = artworkMediaType === "glb";
+  const isAudio = artworkMediaType === "audio";
 
   webmArtworkMode?.classList.toggle("active", isWebM);
   spriteArtworkMode?.classList.toggle("active", isSprite);
   glbArtworkMode?.classList.toggle("active", isGLB);
+  audioArtworkMode?.classList.toggle("active", isAudio);
+  audioSettingsPanel.style.display = isAudio ? "block" : "none";
 
   if (artworkFileInput) {
     artworkFileInput.value = "";
@@ -1737,8 +1799,10 @@ function updateArtworkModeUI() {
       artworkFileInput.accept = ".webm,video/webm";
     } else if (isSprite) {
       artworkFileInput.accept = ".zip,application/zip";
-    } else {
+    } else if (isGLB) {
       artworkFileInput.accept = ".glb,model/gltf-binary";
+    } else {
+      artworkFileInput.accept = ".mp3,.wav,audio/mpeg,audio/wav";
     }
   }
 
@@ -1765,6 +1829,7 @@ glbArtworkMode?.addEventListener("click", () => {
   artworkMediaType = "glb";
   updateArtworkModeUI();
 });
+audioArtworkMode?.addEventListener("click",()=>{ artworkMediaType="audio"; updateArtworkModeUI(); });
 
 selectArtworkFile?.addEventListener("click", () => {
   artworkFileInput?.click();
@@ -1785,7 +1850,9 @@ artworkFileInput?.addEventListener("change", () => {
       ? lowerName.endsWith(".webm")
       : artworkMediaType === "sprite"
         ? lowerName.endsWith(".zip")
-        : lowerName.endsWith(".glb");
+        : artworkMediaType === "glb"
+          ? lowerName.endsWith(".glb")
+          : lowerName.endsWith(".mp3") || lowerName.endsWith(".wav");
 
   if (!valid) {
     if (artworkFileName) artworkFileName.textContent = "UNSUPPORTED FILE";
@@ -1801,13 +1868,16 @@ artworkFileInput?.addEventListener("change", () => {
 // Prototype 0.9 / IMPORTED WEBM ARTWORK
 // =========================================================
 
-type ImportedArtworkKind = "webm" | "sprite" | "glb" | null;
+type ImportedArtworkKind = "webm" | "sprite" | "glb" | "audio" | null;
 
 let importedArtworkKind: ImportedArtworkKind = null;
 let importedArtworkEntity: pc.Entity | null = null;
 let importedArtworkVideo: HTMLVideoElement | null = null;
 let importedArtworkTexture: pc.Texture | null = null;
 let importedArtworkObjectURL: string | null = null;
+let importedAudioBlob: Blob | null = null;
+let importedAudioExt: "mp3" | "wav" = "mp3";
+let importedAudioElement: HTMLAudioElement | null = null;
 
 // Prototype 0.10 / Stage 2 / GLB resources
 let importedGLBAsset: pc.Asset | null = null;
@@ -2046,7 +2116,7 @@ const placedMediaRuntimes: PlacedMediaRuntime[] = [];
 type ManagedPlacedMedia = {
   id: string;
   title: string;
-  kind: "webm" | "sprite" | "glb";
+  kind: "webm" | "sprite" | "glb" | "audio";
   entity: pc.Entity;
 };
 
@@ -2831,6 +2901,12 @@ function commitActiveArtworkToWorld() {
     });
   }
 
+  if (importedArtworkKind === "audio") {
+    const el=importedAudioElement, url=importedArtworkObjectURL;
+    if(el){ audioElements.delete("preview-audio"); audioElements.set(committedId,el); (el as any).__xrEntity=importedArtworkEntity; }
+    placedMediaRuntimes.push({id:committedId,dispose:()=>{el?.pause();audioElements.delete(committedId);if(url)URL.revokeObjectURL(url)}});
+  }
+
   const committedMedia = xrMediaManager.get(committedId);
   managedPlacedMedia.set(committedId, {
     id: committedId,
@@ -2851,6 +2927,8 @@ function commitActiveArtworkToWorld() {
   } else if (importedArtworkKind === "webm") {
     const webmBlob = importedWebMPackageBlob;
     void publishCommittedWebMToSharedWorld(committedId, webmBlob);
+  } else if (importedArtworkKind === "audio") {
+    void publishCommittedAudioToSharedWorld(committedId, importedAudioBlob, importedAudioExt);
   }
 
   // The Entity and resources now belong to the committed XRMediaObject.
@@ -2867,6 +2945,8 @@ function commitActiveArtworkToWorld() {
   importedSpritePackageBlob = null;
   importedGLBPackageBlob = null;
   importedWebMPackageBlob = null;
+  importedAudioBlob = null;
+  importedAudioElement = null;
   importedSpriteImageURL = null;
   importedSpriteMeta = null;
   importedSpriteImage = null;
@@ -3616,6 +3696,14 @@ cancelPlacementButton?.addEventListener("click", () => {
   artworkPlacementPanel?.classList.add("hidden");
 });
 
+// Prototype 0.16.0 / LOCAL AUDIO IMPORT
+async function addAudioArtworkToWorld(file:File){
+  importedAudioBlob=file; importedAudioExt=file.name.toLowerCase().endsWith(".wav")?"wav":"mp3"; const url=URL.createObjectURL(file); const el=new Audio(url);
+  const entity=makeAudioMarker("ImportedAudioArtwork"); entity.setPosition(0,1.2,-3); app.root.addChild(entity); importedArtworkEntity=entity; importedArtworkKind="audio"; importedAudioElement=el; importedArtworkObjectURL=url;
+  configureSpatialAudioElement("preview-audio",el,entity,{volume:Number(audioVolume.value),loop:audioLoop.checked,spatial:audioSpatial.checked,distance:Number(audioDistance.value)});
+  const media=xrMediaManager.register(createMediaObject({title:file.name,type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{el.volume=Number(audioVolume.value);el.loop=audioLoop.checked;try{await el.play()}catch(e){console.warn(e)}},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:false}]})); activeXRMediaId=media.id;
+}
+
 // =========================================================
 // ADD TO WORLD
 // =========================================================
@@ -3623,6 +3711,13 @@ cancelPlacementButton?.addEventListener("click", () => {
 addArtworkToWorldButton?.addEventListener("click", async () => {
   const file = artworkFileInput?.files?.[0];
   if (!file) return;
+
+  if (artworkMediaType === "audio") {
+    try { addArtworkToWorldButton.disabled=true; await addAudioArtworkToWorld(file); closeArtworkPanelUI(); openPlacementEditor(); }
+    catch(error){ console.error("Audio import failed:",error); if(artworkFileName)artworkFileName.textContent="AUDIO ERROR"; }
+    finally { addArtworkToWorldButton.disabled=false; }
+    return;
+  }
 
   if (artworkMediaType === "webm") {
     try {
@@ -4168,6 +4263,12 @@ app.on("update", (dt: number) => {
   }
 
   // Prototype 0.11 / Stage 2 / keep all placed animated media alive.
+  // Prototype 0.16.0 / lightweight 3D spatial audio + distance attenuation
+  for (const el of audioElements.values()) {
+    const entity=(el as any).__xrEntity as pc.Entity|undefined; if(!entity)continue; const base=Number((el as any).__xrBaseVolume??.8); const maxD=Number((el as any).__xrDistance??12);
+    if((el as any).__xrSpatial){ const ep=entity.getPosition(), cp=camera.getPosition(); const dx=ep.x-cp.x, dz=ep.z-cp.z, d=Math.hypot(ep.x-cp.x,ep.y-cp.y,ep.z-cp.z); el.volume=Math.max(0,Math.min(1,base*(1-d/maxD))); /* stereo pan is left to platform audio output; attenuation is spatially stable on iOS */ } else el.volume=base;
+  }
+
   for (const runtime of placedMediaRuntimes) {
     runtime.update?.(dt);
   }

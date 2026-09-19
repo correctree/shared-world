@@ -22,6 +22,7 @@ type UpdateMediaPayload = {
   id?: string; x?: number; y?: number; z?: number; rotationY?: number; scale?: number;
 };
 type DeleteMediaPayload = { id?: string };
+type MediaActionPayload = { id?: string; action?: string; source?: string };
 
 export class SharedWorldRoom extends Room<WorldState> {
   // Transport headroom is intentionally larger than the UI's logical 4-user target.
@@ -133,6 +134,30 @@ export class SharedWorldRoom extends Room<WorldState> {
       media.rotationY=rotationY;
       media.scale=Math.max(0.05,Math.min(20,scale));
       console.log("[media:update stored]", id);
+    });
+
+    // Prototype 0.15.1 / SHARED ACTION EVENT CORE
+    // PLAY/STOP are transient interaction events, so they are broadcast rather
+    // than stored in WorldState. Any connected participant may interact with
+    // an existing shared media object.
+    this.onMessage("media:action", (client: Client, payload: MediaActionPayload) => {
+      const id = String(payload?.id || "").trim().slice(0, 80);
+      const action = String(payload?.action || "").trim();
+      const source = String(payload?.source || "behavior").trim().slice(0, 40);
+
+      if (!id || !this.state.mediaObjects.has(id)) {
+        console.warn("[media:action rejected] missing media", id);
+        return;
+      }
+      if (action !== "play" && action !== "stop") {
+        console.warn("[media:action rejected] unsupported action", action);
+        return;
+      }
+
+      this.broadcast("media:action", {
+        id, action, source, actorSessionId: client.sessionId
+      });
+      console.log("[media:action broadcast]", id, action, source, client.sessionId);
     });
 
     this.onMessage("media:delete", (client: Client, payload: DeleteMediaPayload) => {

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.15.0 INTERACTIVE BEHAVIOR CORE LOADED]");
+console.log("[PROTOTYPE 0.15.1 SHARED ACTION EVENT CORE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1500,6 +1500,20 @@ async function enterWorld() {
     activeRoom = room;
     currentSessionId = room.sessionId;
 
+    // Prototype 0.15.1 / SHARED ACTION EVENT CORE
+    // Action events are transient messages, not persistent WorldState.
+    room.onMessage("media:action", (payload: any) => {
+      const mediaId = String(payload?.id || "");
+      const action = String(payload?.action || "none") as XRBehaviorActionId;
+      const object = xrMediaManager.get(mediaId);
+      if (!object) {
+        console.warn("[SHARED ACTION RECEIVE / MEDIA NOT READY]", mediaId, action);
+        return;
+      }
+      console.log("[SHARED ACTION RECEIVED]", mediaId, action, payload?.source || "");
+      runXRBehaviorAction(object, action);
+    });
+
     const $ = getStateCallbacks(room);
     $(room.state).players.onAdd((player: any, sessionId: string) => {
       createAvatar(sessionId, player);
@@ -2047,7 +2061,7 @@ mediaManagerStyle.textContent = `
   }
   #mediaManagerPanel {
     position: fixed; top: 116px; right: max(16px, env(safe-area-inset-right));
-    z-index: 50; width: min(340px, calc(100vw - 32px)); max-height: 62vh;
+    z-index: 50; width: min(360px, calc(100vw - 32px)); max-height: 78vh;
     overflow: auto; box-sizing: border-box; padding: 14px;
     border: 1px solid #3d4653; border-radius: 16px;
     background: rgba(9,13,19,.96); color: #fff; backdrop-filter: blur(14px);
@@ -2067,6 +2081,7 @@ mediaManagerStyle.textContent = `
   .media-manager-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   .media-manager-empty { opacity:.55; padding:18px 6px; text-align:center; font-size:12px; }
   .behavior-editor {
+    display:block; visibility:visible;
     margin-top:12px; padding:12px; border:1px solid #343d49; border-radius:12px;
     background:#0d131b;
   }
@@ -2099,7 +2114,7 @@ mediaManagerStyle.textContent = `
   .media-manager-actions button { width:100% !important; }
   #deleteManagedMediaButton { border-color:#7b3940; }
   @media (max-width: 640px) {
-    #mediaManagerPanel { top:auto; right:12px; left:12px; bottom:max(12px, env(safe-area-inset-bottom)); width:auto; max-height:55vh; }
+    #mediaManagerPanel { top:auto; right:12px; left:12px; bottom:max(12px, env(safe-area-inset-bottom)); width:auto; max-height:72vh; }
     #mediaManagerButton { right:12px; }
   }
 `;
@@ -2250,7 +2265,7 @@ behaviorTestEnter.addEventListener("click", () => {
   const object = xrMediaManager.get(selectedManagedMediaId);
   const behavior = getSelectedInteractiveBehavior();
   if (!object || !behavior) return;
-  runXRBehaviorAction(object, String((behavior as any).enterAction ?? "play"));
+  dispatchSharedXRBehaviorAction(object, String((behavior as any).enterAction ?? "play"), "test-enter");
   behaviorStatus.textContent = `TEST ENTER → ${String((behavior as any).enterAction ?? "play").toUpperCase()}`;
 });
 
@@ -2259,7 +2274,7 @@ behaviorTestLeave.addEventListener("click", () => {
   const object = xrMediaManager.get(selectedManagedMediaId);
   const behavior = getSelectedInteractiveBehavior();
   if (!object || !behavior) return;
-  runXRBehaviorAction(object, String((behavior as any).leaveAction ?? "stop"));
+  dispatchSharedXRBehaviorAction(object, String((behavior as any).leaveAction ?? "stop"), "test-leave");
   behaviorStatus.textContent = `TEST LEAVE → ${String((behavior as any).leaveAction ?? "stop").toUpperCase()}`;
 });
 
@@ -2283,6 +2298,7 @@ function refreshMediaManagerUI() {
       button.addEventListener("click", () => {
         selectedManagedMediaId = item.id;
         refreshMediaManagerUI();
+        window.setTimeout(() => behaviorEditor.scrollIntoView({ block: "nearest", behavior: "smooth" }), 0);
       });
       mediaManagerList.appendChild(button);
     });
@@ -3492,7 +3508,6 @@ const DEFAULT_LOOK_AT_ANGLE_DEG = 12;
 function runXRBehaviorAction(object: any, action: string | undefined) {
   const actionId = String(action || "none") as XRBehaviorActionId;
 
-  // Action dispatcher: trigger code never needs to know how an Action works.
   switch (actionId) {
     case "play":
       void object.playback?.play();
@@ -3505,10 +3520,69 @@ function runXRBehaviorAction(object: any, action: string | undefined) {
       break;
   }
 
-  console.log("[XR ACTION]", {
+  console.log("[XR ACTION LOCAL]", {
     object: object?.title || object?.id || "unknown",
+    mediaId: object?.id || "",
     action: actionId
   });
+}
+
+function dispatchSharedXRBehaviorAction(object: any, action: string | undefined, source: string) {
+  const actionId = String(action || "none") as XRBehaviorActionId;
+  if (!object?.id || actionId === "none") return;
+
+  if (!activeRoom) {
+    runXRBehaviorAction(object, actionId);
+    return;
+  }
+
+  activeRoom.send("media:action", {
+    id: String(object.id),
+    action: actionId,
+    source: String(source || "behavior").slice(0, 40)
+  });
+  console.log("[SHARED ACTION SENT]", object.id, actionId, source);
+}
+
+const sharedProximityState = new Map<string, boolean>();
+function updateSharedProximityBehaviors() {
+  for (const object of xrMediaManager.list()) {
+    const behavior = object.behavior?.find(
+      (item: any) => (item as any).trigger === "user-proximity" && item.enabled
+    );
+    if (!behavior || !object.entity || !object.entity.enabled) {
+      sharedProximityState.delete(object.id);
+      continue;
+    }
+
+    const p = object.entity.getPosition();
+    const dx = p.x - localPosition.x;
+    const dy = p.y - localPosition.y;
+    const dz = p.z - localPosition.z;
+    const distance = Math.hypot(dx, dy, dz);
+    const threshold = Math.max(0.1, Number(behavior.distance ?? 3));
+    const isInside = distance <= threshold;
+    const previous = sharedProximityState.get(object.id);
+
+    if (object.id === selectedManagedMediaId) {
+      behaviorStatus.textContent = isInside ? "PROXIMITY / ACTIVE" : "PROXIMITY / OUTSIDE";
+    }
+
+    if (previous === undefined) {
+      sharedProximityState.set(object.id, isInside);
+      if (isInside) dispatchSharedXRBehaviorAction(object, behavior.enterAction, "user-proximity-enter");
+      continue;
+    }
+
+    if (isInside !== previous) {
+      sharedProximityState.set(object.id, isInside);
+      dispatchSharedXRBehaviorAction(
+        object,
+        isInside ? behavior.enterAction : behavior.leaveAction,
+        isInside ? "user-proximity-enter" : "user-proximity-leave"
+      );
+    }
+  }
 }
 
 function updateLookAtBehaviors() {
@@ -3549,13 +3623,13 @@ function updateLookAtBehaviors() {
 
     if (previous === undefined) {
       lookAtBehaviorState.set(object.id, isLooking);
-      runXRBehaviorAction(object, isLooking ? behavior.enterAction : behavior.leaveAction);
+      dispatchSharedXRBehaviorAction(object, isLooking ? behavior.enterAction : behavior.leaveAction, isLooking ? "look-at-enter" : "look-at-leave");
       continue;
     }
 
     if (isLooking !== previous) {
       lookAtBehaviorState.set(object.id, isLooking);
-      runXRBehaviorAction(object, isLooking ? behavior.enterAction : behavior.leaveAction);
+      dispatchSharedXRBehaviorAction(object, isLooking ? behavior.enterAction : behavior.leaveAction, isLooking ? "look-at-enter" : "look-at-leave");
       console.log("[XR LOOK AT]", {
         object: object.title,
         isLooking,
@@ -3652,7 +3726,7 @@ function triggerSpatialTouch(clientX: number, clientY: number) {
   const touchMode = String((behavior as any).touchMode ?? "toggle");
 
   if (touchMode === "repeat") {
-    runXRBehaviorAction(object, behavior.enterAction);
+    dispatchSharedXRBehaviorAction(object, behavior.enterAction, "touch-repeat");
 
     if (object.id === selectedManagedMediaId) {
       behaviorStatus.textContent = "TOUCHED / REPEAT";
@@ -3677,7 +3751,7 @@ function triggerSpatialTouch(clientX: number, clientY: number) {
   touchActiveState.set(object.id, isActive);
 
   const action = isActive ? behavior.enterAction : behavior.leaveAction;
-  runXRBehaviorAction(object, action);
+  dispatchSharedXRBehaviorAction(object, action, isActive ? "touch-enter" : "touch-leave");
 
   if (object.id === selectedManagedMediaId) {
     behaviorStatus.textContent = isActive ? "TOUCHED / ON" : "TOUCHED / OFF";
@@ -3854,7 +3928,7 @@ app.on("update", (dt: number) => {
   // Prototype 0.12 / REACTIVE BEHAVIOR CORE
   // Evaluate media proximity every frame, even while the user is standing still.
   // XRMediaManager fires playback actions only when inside/outside state changes.
-  xrMediaManager.updateUserProximity(localPosition);
+  updateSharedProximityBehaviors();
   updateLookAtBehaviors();
   initializeTouchBehaviorPlayback();
 

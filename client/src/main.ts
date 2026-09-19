@@ -522,7 +522,8 @@ let sharedWorldReconcileTimer: number | null = null;
 const sharedMediaLoadGeneration = new Map<string, number>();
 const sharedStateDiagnostic = {
   serverMedia: 0, localMedia: 0, onAdd: 0, snapshotRx: 0, snapshotTx: 0,
-  lastMediaId: "-", lastError: "-", actionRx: 0, connection: "CLOSED"
+  lastMediaId: "-", lastError: "-", actionRx: 0, connection: "CLOSED",
+  transformRx: 0, transformApplied: 0, lastTransform: "-"
 };
 let sharedStateDiagnosticPanel: HTMLDivElement | null = null;
 let sharedStateDiagnosticBody: HTMLPreElement | null = null;
@@ -550,7 +551,7 @@ function refreshSharedStateDiagnosticPanel() {
   }
   sharedStateDiagnostic.localMedia = sharedRemoteMediaIds.size;
   if (sharedStateDiagnosticBody) sharedStateDiagnosticBody.textContent =
-    `SHARED STATE DIAGNOSTIC / 0.16.0.2\n` +
+    `SHARED STATE DIAGNOSTIC / 0.16.1.8\n` +
     `CONNECTION     ${sharedStateDiagnostic.connection}\n` +
     `SERVER MEDIA   ${sharedStateDiagnostic.serverMedia}\n` +
     `LOCAL MEDIA    ${sharedStateDiagnostic.localMedia}\n` +
@@ -558,6 +559,9 @@ function refreshSharedStateDiagnosticPanel() {
     `SNAPSHOT TX    ${sharedStateDiagnostic.snapshotTx}\n` +
     `SNAPSHOT RX    ${sharedStateDiagnostic.snapshotRx}\n` +
     `ACTION RX      ${sharedStateDiagnostic.actionRx}\n` +
+    `TRANSFORM RX   ${sharedStateDiagnostic.transformRx}\n` +
+    `APPLIED        ${sharedStateDiagnostic.transformApplied}\n` +
+    `LAST POSITION  ${sharedStateDiagnostic.lastTransform}\n` +
     `LAST MEDIA ID  ${sharedStateDiagnostic.lastMediaId}\n` +
     `LAST ERROR     ${sharedStateDiagnostic.lastError}`;
 }
@@ -651,7 +655,7 @@ function reconcileWorldFromServerState() {
       if (!managedPlacedMedia.has(mediaId) && !sharedMediaLoadingIds.has(mediaId)) {
         console.log("[WORLD RECONCILE ADD]", mediaId, String(media?.type || ""));
         void ensureSharedMediaFromState(mediaId, media);
-      } else if (sharedRemoteMediaIds.has(mediaId)) {
+      } else if (managedPlacedMedia.has(mediaId)) {
         updateSharedSpritePlaceholder(mediaId, media);
       }
     });
@@ -946,7 +950,7 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
 
 function updateSharedSpritePlaceholder(mediaId: string, media: any) {
   const item = managedPlacedMedia.get(mediaId);
-  if (!item || !sharedRemoteMediaIds.has(mediaId)) return;
+  if (!item || editingManagedMediaId === mediaId) return;
   const values = [media.x, media.y, media.z, media.rotationY, media.scale].map(Number);
   if (!values.every(Number.isFinite)) return;
   const [x, y, z, rotationY, scale] = values;
@@ -958,6 +962,9 @@ function updateSharedSpritePlaceholder(mediaId: string, media: any) {
     item.entity.setLocalScale(scale, 1, scale);
     item.entity.setEulerAngles(90, rotationY, 0);
   }
+  sharedStateDiagnostic.transformApplied += 1;
+  sharedStateDiagnostic.lastTransform = `${mediaId.slice(-8)} X:${x.toFixed(1)} Y:${y.toFixed(1)} Z:${z.toFixed(1)}`;
+  refreshSharedStateDiagnosticPanel();
 }
 
 const pendingSharedMediaTransforms = new Map<string, {x:number;y:number;z:number;rotationY:number;scale:number}>();
@@ -1720,9 +1727,7 @@ async function enterWorld() {
 
       $(media).onChange(() => {
         console.log("[SHARED RECEIVE CHANGE]", mediaId);
-        if (sharedRemoteMediaIds.has(mediaId)) {
-          updateSharedSpritePlaceholder(mediaId, media);
-        }
+        updateSharedSpritePlaceholder(mediaId, media);
         if (String(media?.type || "") === "audio") applyLiveAudioConfig(mediaId,String(media?.assetRef||""));
       });
     });
@@ -1747,12 +1752,14 @@ async function enterWorld() {
     room.onMessage("media:transform", (payload:any) => {
       const mediaId=String(payload?.id||"");
       if (!mediaId) return;
+      sharedStateDiagnostic.transformRx += 1;
+      refreshSharedStateDiagnosticPanel();
       const values=[payload?.x,payload?.y,payload?.z,payload?.rotationY,payload?.scale].map(Number);
       if (!values.every(Number.isFinite)) return;
       const [x,y,z,rotationY,scale]=values;
       const transform={x,y,z,rotationY,scale};
-      if (sharedRemoteMediaIds.has(mediaId)) updateSharedSpritePlaceholder(mediaId,transform);
-      else if (!managedPlacedMedia.has(mediaId)) pendingSharedMediaTransforms.set(mediaId,transform);
+      if (managedPlacedMedia.has(mediaId)) updateSharedSpritePlaceholder(mediaId,transform);
+      else pendingSharedMediaTransforms.set(mediaId,transform);
     });
 
     room.onMessage("media:update:result", (payload:any) => {
@@ -1779,7 +1786,7 @@ async function enterWorld() {
         if (!managedPlacedMedia.has(mediaId) && !sharedMediaLoadingIds.has(mediaId)) {
           console.log("[0.15.1.2 SNAPSHOT RECOVER ADD]", mediaId, String(media?.type || ""));
           void ensureSharedMediaFromState(mediaId, media).catch(setSharedStateDiagnosticError);
-        } else if (sharedRemoteMediaIds.has(mediaId)) {
+        } else if (managedPlacedMedia.has(mediaId)) {
           updateSharedSpritePlaceholder(mediaId, media);
           if(String(media?.type||"")==="audio") applyLiveAudioConfig(mediaId,String(media?.assetRef||""));
         }

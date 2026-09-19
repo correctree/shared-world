@@ -84,13 +84,21 @@ audioSettingsPanel.id = "audioSettingsPanel"; audioSettingsPanel.style.cssText =
 audioSettingsPanel.innerHTML = `<div style="font-size:11px;font-weight:800;letter-spacing:.1em;margin-bottom:8px">AUDIO SETTINGS</div>
 <label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Volume <input id="audioVolume" type="range" min="0" max="1" step="0.05" value="0.8"></label>
 <label style="display:flex;gap:8px;margin:8px 0"><input id="audioLoop" type="checkbox" checked> LOOP</label>
-<label style="display:flex;gap:8px;margin:8px 0"><input id="audioSpatial" type="checkbox" checked> SPATIAL AUDIO</label>
+<label style="display:flex;gap:8px;margin:8px 0;align-items:center"><input id="audioSpatial" type="checkbox" checked> SPATIAL AUDIO <strong id="audioSpatialState" style="margin-left:auto">ON</strong></label>
 <label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Distance <input id="audioDistance" type="range" min="2" max="30" step="1" value="12"></label>`;
 addArtworkPanel?.appendChild(audioSettingsPanel);
 const audioVolume = audioSettingsPanel.querySelector<HTMLInputElement>("#audioVolume")!;
 const audioLoop = audioSettingsPanel.querySelector<HTMLInputElement>("#audioLoop")!;
 const audioSpatial = audioSettingsPanel.querySelector<HTMLInputElement>("#audioSpatial")!;
+const audioSpatialState = audioSettingsPanel.querySelector<HTMLElement>("#audioSpatialState")!;
 const audioDistance = audioSettingsPanel.querySelector<HTMLInputElement>("#audioDistance")!;
+function refreshAudioSpatialUI(){
+  audioSpatialState.textContent = audioSpatial.checked ? "ON" : "OFF";
+  audioDistance.disabled = !audioSpatial.checked;
+  audioDistance.style.opacity = audioSpatial.checked ? "1" : ".4";
+}
+audioSpatial.addEventListener("change", refreshAudioSpatialUI);
+refreshAudioSpatialUI();
 
 // Prototype 0.9 / Placement Editor UI
 const artworkPlacementPanel = document.querySelector<HTMLElement>("#artworkPlacementPanel");
@@ -4311,8 +4319,12 @@ app.on("update", (dt: number) => {
       // 0.16.0.1: the listener is the local PLAYER, not the third-person camera.
       // Using the orbit camera made nearby audio silent whenever the camera itself
       // happened to sit outside the attenuation radius.
-      const localAvatar=currentSessionId ? avatars.get(currentSessionId)?.entity : null;
-      const lp=localAvatar ? localAvatar.getPosition() : camera.getPosition();
+      // 0.16.0.3: use the authoritative local movement position directly.
+      // On iOS the local avatar entity can lag behind / be unavailable during the
+      // frame where audio attenuation is evaluated, which made distance volume
+      // appear fixed. localPosition is the same position used by movement and
+      // proximity behavior on every device.
+      const lp=localPosition;
       const d=Math.hypot(ep.x-lp.x,ep.y-lp.y,ep.z-lp.z);
       el.volume=Math.max(0,Math.min(1,base*(1-d/maxD)));
     } else el.volume=base;

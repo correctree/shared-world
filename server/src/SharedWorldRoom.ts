@@ -165,6 +165,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     // still receiving the authoritative state on rejoin. Provide a lightweight
     // explicit snapshot channel so connected clients can self-heal without reload.
     this.onMessage("media:snapshot:request", (client: Client) => {
+      console.log("[0.15.2 snapshot request]", client.sessionId, "state:", this.state.mediaObjects.size);
       const mediaObjects: any[] = [];
       for (const [id, media] of this.state.mediaObjects) {
         mediaObjects.push({
@@ -178,6 +179,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         });
       }
       client.send("media:snapshot", { mediaObjects });
+      console.log("[0.15.2 snapshot response]", client.sessionId, "count:", mediaObjects.length);
       console.log("[media:snapshot sent]", client.sessionId, mediaObjects.length);
     });
 

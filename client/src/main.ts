@@ -484,6 +484,38 @@ const sharedMediaLoadingIds = new Set<string>();
 const SHARED_ASSET_RETRY_DELAYS = [0, 700, 1600, 3200];
 let sharedWorldReconcileTimer: number | null = null;
 const sharedMediaLoadGeneration = new Map<string, number>();
+const sharedStateDiagnostic = {
+  serverMedia: 0, localMedia: 0, onAdd: 0, snapshotRx: 0, snapshotTx: 0,
+  lastMediaId: "-", lastError: "-", actionRx: 0, connection: "CLOSED"
+};
+let sharedStateDiagnosticPanel: HTMLDivElement | null = null;
+function refreshSharedStateDiagnosticPanel() {
+  if (!sharedStateDiagnosticPanel) {
+    sharedStateDiagnosticPanel = document.createElement("div");
+    sharedStateDiagnosticPanel.id = "sharedStateDiagnosticPanel";
+    sharedStateDiagnosticPanel.style.cssText =
+      "position:fixed;right:10px;bottom:10px;z-index:10050;width:min(310px,88vw);padding:10px 12px;" +
+      "background:rgba(3,10,18,.94);color:#b9e4ff;border:1px solid #3aa7ff;border-radius:9px;" +
+      "font:600 11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;pointer-events:none";
+    document.body.appendChild(sharedStateDiagnosticPanel);
+  }
+  sharedStateDiagnostic.localMedia = sharedRemoteMediaIds.size;
+  sharedStateDiagnosticPanel.textContent =
+    `SHARED STATE DIAGNOSTIC / 0.15.2\n` +
+    `CONNECTION     ${sharedStateDiagnostic.connection}\n` +
+    `SERVER MEDIA   ${sharedStateDiagnostic.serverMedia}\n` +
+    `LOCAL MEDIA    ${sharedStateDiagnostic.localMedia}\n` +
+    `ONADD          ${sharedStateDiagnostic.onAdd}\n` +
+    `SNAPSHOT TX    ${sharedStateDiagnostic.snapshotTx}\n` +
+    `SNAPSHOT RX    ${sharedStateDiagnostic.snapshotRx}\n` +
+    `ACTION RX      ${sharedStateDiagnostic.actionRx}\n` +
+    `LAST MEDIA ID  ${sharedStateDiagnostic.lastMediaId}\n` +
+    `LAST ERROR     ${sharedStateDiagnostic.lastError}`;
+}
+function setSharedStateDiagnosticError(error: unknown) {
+  sharedStateDiagnostic.lastError = error instanceof Error ? error.message : String(error);
+  refreshSharedStateDiagnosticPanel();
+}
 
 function sharedAssetURL(mediaId: string, extension: "zip" | "glb" | "webm") {
   return `${SERVER_URL.replace(/\/$/, "")}/assets/${encodeURIComponent(mediaId)}.${extension}`;
@@ -526,6 +558,7 @@ function authoritativeMediaExists(mediaId: string) {
 async function ensureSharedMediaFromState(mediaId: string, media: any) {
   if (!media) {
     console.warn("[MEDIA RECOVERY SKIP / NO MEDIA]", mediaId);
+    sharedStateDiagnostic.lastMediaId = mediaId; sharedStateDiagnostic.lastError = "NO MEDIA"; refreshSharedStateDiagnosticPanel();
     return;
   }
   if (managedPlacedMedia.has(mediaId)) {
@@ -1499,6 +1532,9 @@ async function enterWorld() {
     const room = await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
     activeRoom = room;
     currentSessionId = room.sessionId;
+    sharedStateDiagnostic.connection = "OPEN";
+    sharedStateDiagnostic.lastError = "-";
+    refreshSharedStateDiagnosticPanel();
 
     const $ = getStateCallbacks(room);
     $(room.state).players.onAdd((player: any, sessionId: string) => {
@@ -1522,6 +1558,10 @@ async function enterWorld() {
     const sharedMedia = $(room.state as any).mediaObjects;
 
     sharedMedia.onAdd((media: any, mediaId: string) => {
+      sharedStateDiagnostic.onAdd += 1;
+      sharedStateDiagnostic.lastMediaId = mediaId;
+      refreshSharedStateDiagnosticPanel();
+      console.log("[0.15.2 DIAG ONADD]", mediaId, String(media?.type || ""));
       console.log("[0.15.1.1 MEDIA ONADD]", mediaId, String(media?.type || ""));
       console.log("[SHARED RECEIVE ADD]", mediaId, media);
 
@@ -1557,6 +1597,10 @@ async function enterWorld() {
     // snapshot is a safety net for mobile clients that miss a live onAdd.
     room.onMessage("media:snapshot", (payload: any) => {
       const list = Array.isArray(payload?.mediaObjects) ? payload.mediaObjects : [];
+      sharedStateDiagnostic.snapshotRx += 1;
+      sharedStateDiagnostic.serverMedia = list.length;
+      if (list.length) sharedStateDiagnostic.lastMediaId = String(list[list.length - 1]?.id || "-");
+      refreshSharedStateDiagnosticPanel();
       const authoritativeIds = new Set<string>();
       console.log("[0.15.1.2 SNAPSHOT RECEIVE]", list.length);
 
@@ -1566,7 +1610,7 @@ async function enterWorld() {
         authoritativeIds.add(mediaId);
         if (!managedPlacedMedia.has(mediaId) && !sharedMediaLoadingIds.has(mediaId)) {
           console.log("[0.15.1.2 SNAPSHOT RECOVER ADD]", mediaId, String(media?.type || ""));
-          void ensureSharedMediaFromState(mediaId, media);
+          void ensureSharedMediaFromState(mediaId, media).catch(setSharedStateDiagnosticError);
         } else if (sharedRemoteMediaIds.has(mediaId)) {
           updateSharedSpritePlaceholder(mediaId, media);
         }
@@ -1582,6 +1626,8 @@ async function enterWorld() {
 
     const requestLiveMediaSnapshot = () => {
       if (!activeRoom || activeRoom !== room) return;
+      sharedStateDiagnostic.snapshotTx += 1;
+      refreshSharedStateDiagnosticPanel();
       room.send("media:snapshot:request", {});
     };
 
@@ -1590,7 +1636,10 @@ async function enterWorld() {
     // arrives while an asset is still reconstructing, queue the latest Action
     // and apply it as soon as that media object becomes ready.
     room.onMessage("media:action", (payload: any) => {
+      sharedStateDiagnostic.actionRx += 1;
       const mediaId = String(payload?.id || "");
+      sharedStateDiagnostic.lastMediaId = mediaId || "-";
+      refreshSharedStateDiagnosticPanel();
       const action = String(payload?.action || "none") as XRBehaviorActionId;
       const source = String(payload?.source || "");
       console.log("[0.15.1.1 ACTION RECEIVE]", mediaId, action, source);
@@ -1633,6 +1682,8 @@ async function enterWorld() {
 }
 
 window.addEventListener("pagehide", () => {
+  sharedStateDiagnostic.connection = "CLOSED";
+  refreshSharedStateDiagnosticPanel();
   if (sharedWorldReconcileTimer !== null) {
     window.clearInterval(sharedWorldReconcileTimer);
     sharedWorldReconcileTimer = null;

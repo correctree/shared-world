@@ -4266,14 +4266,19 @@ function updateSharedProximityBehaviors() {
       continue;
     }
 
-    const p = object.entity.getPosition();
+    // Transform Actions animate the visible entity. Evaluate proximity against
+    // its committed position so FLOAT/MOVE/SHAKE cannot trigger a false exit.
+    const p = activeTransformAnimations.get(String(object.id))?.basePosition
+      ?? object.entity.getPosition();
     const dx = p.x - localPosition.x;
     const dy = p.y - localPosition.y;
     const dz = p.z - localPosition.z;
     const distance = Math.hypot(dx, dy, dz);
     const threshold = Math.max(0.1, Number(behavior.distance ?? 3));
-    const isInside = distance <= threshold;
     const previous = sharedProximityState.get(object.id);
+    // A small exit margin also prevents repeated enter/leave at the boundary
+    // while mobile position updates settle.
+    const isInside = distance <= threshold + (previous === true ? 0.25 : 0);
 
     if (object.id === selectedManagedMediaId) {
       behaviorStatus.textContent = isInside ? "PROXIMITY / ACTIVE" : "PROXIMITY / OUTSIDE";

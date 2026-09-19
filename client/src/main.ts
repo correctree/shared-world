@@ -85,13 +85,20 @@ audioSettingsPanel.innerHTML = `<div style="font-size:11px;font-weight:800;lette
 <label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Volume <input id="audioVolume" type="range" min="0" max="1" step="0.05" value="0.8"></label>
 <label style="display:flex;gap:8px;margin:8px 0"><input id="audioLoop" type="checkbox" checked> LOOP</label>
 <label style="display:flex;gap:8px;margin:8px 0;align-items:center"><input id="audioSpatial" type="checkbox" checked> SPATIAL AUDIO <strong id="audioSpatialState" style="margin-left:auto">ON</strong></label>
-<label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Distance <input id="audioDistance" type="range" min="2" max="30" step="1" value="12"></label>`;
+<label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Distance <input id="audioDistance" type="range" min="2" max="30" step="1" value="12"></label>
+<div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.15);font-size:10px;font-weight:800;letter-spacing:.1em;opacity:.75">AUDIO REACTIVE</div>
+<label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Action <select id="audioReactiveAction"><option value="off">OFF</option><option value="scale">SCALE</option><option value="shake">SHAKE</option><option value="rotate">ROTATE</option></select></label>
+<label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Strength <input id="audioReactiveStrength" type="range" min="0.1" max="3" step="0.1" value="1"></label>
+<label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Smoothing <input id="audioReactiveSmoothing" type="range" min="0" max="0.95" step="0.05" value="0.7"></label>`;
 addArtworkPanel?.appendChild(audioSettingsPanel);
 const audioVolume = audioSettingsPanel.querySelector<HTMLInputElement>("#audioVolume")!;
 const audioLoop = audioSettingsPanel.querySelector<HTMLInputElement>("#audioLoop")!;
 const audioSpatial = audioSettingsPanel.querySelector<HTMLInputElement>("#audioSpatial")!;
 const audioSpatialState = audioSettingsPanel.querySelector<HTMLElement>("#audioSpatialState")!;
 const audioDistance = audioSettingsPanel.querySelector<HTMLInputElement>("#audioDistance")!;
+const audioReactiveAction = audioSettingsPanel.querySelector<HTMLSelectElement>("#audioReactiveAction")!;
+const audioReactiveStrength = audioSettingsPanel.querySelector<HTMLInputElement>("#audioReactiveStrength")!;
+const audioReactiveSmoothing = audioSettingsPanel.querySelector<HTMLInputElement>("#audioReactiveSmoothing")!;
 function refreshAudioSpatialUI(){
   audioSpatialState.textContent = audioSpatial.checked ? "ON" : "OFF";
   audioDistance.disabled = !audioSpatial.checked;
@@ -1299,18 +1306,33 @@ async function publishCommittedWebMToSharedWorld(mediaId:string,webmBlob:Blob|nu
 
 // Prototype 0.16.0 / SHARED AUDIO MEDIA CORE
 const audioElements = new Map<string, HTMLAudioElement>();
-function audioConfigFromRef(ref:string){
-  try { const u=new URL(ref, window.location.href); return { volume:Math.max(0,Math.min(1,Number(u.searchParams.get("volume")??.8))), loop:u.searchParams.get("loop")!=="0", spatial:u.searchParams.get("spatial")!=="0", distance:Math.max(2,Number(u.searchParams.get("distance")??12)) }; }
-  catch { return {volume:.8,loop:true,spatial:true,distance:12}; }
+type AudioReactiveAction = "off" | "scale" | "shake" | "rotate";
+type XRAudioConfig = { volume:number; loop:boolean; spatial:boolean; distance:number; reactive:AudioReactiveAction; strength:number; smoothing:number };
+function audioConfigFromRef(ref:string):XRAudioConfig{
+  try { const u=new URL(ref, window.location.href); const reactive=String(u.searchParams.get("reactive")||"off") as AudioReactiveAction; return { volume:Math.max(0,Math.min(1,Number(u.searchParams.get("volume")??.8))), loop:u.searchParams.get("loop")!=="0", spatial:u.searchParams.get("spatial")!=="0", distance:Math.max(2,Number(u.searchParams.get("distance")??12)), reactive:["scale","shake","rotate"].includes(reactive)?reactive:"off", strength:Math.max(.1,Math.min(3,Number(u.searchParams.get("strength")??1))), smoothing:Math.max(0,Math.min(.95,Number(u.searchParams.get("smoothing")??.7))) }; }
+  catch { return {volume:.8,loop:true,spatial:true,distance:12,reactive:"off",strength:1,smoothing:.7}; }
 }
 function makeAudioMarker(name:string){
   const e=new pc.Entity(name); e.addComponent("render",{type:"sphere"}); e.setLocalScale(.34,.34,.34);
   const m=new pc.StandardMaterial(); m.diffuse=new pc.Color(.15,.55,1); m.emissive=new pc.Color(.03,.12,.3); m.update(); e.render!.material=m; app.root.addChild(e); return e;
 }
-function configureSpatialAudioElement(id:string, el:HTMLAudioElement, entity:pc.Entity, cfg:{volume:number;loop:boolean;spatial:boolean;distance:number}){
+function configureSpatialAudioElement(id:string, el:HTMLAudioElement, entity:pc.Entity, cfg:XRAudioConfig){
   el.loop=cfg.loop; el.volume=cfg.volume; el.preload="auto"; audioElements.set(id,el);
-  // Browser-native stereo panning gives a robust mobile spatial cue. Distance attenuation is updated each frame.
   (el as any).__xrSpatial=cfg.spatial; (el as any).__xrDistance=cfg.distance; (el as any).__xrEntity=entity; (el as any).__xrBaseVolume=cfg.volume;
+  (el as any).__xrReactiveAction=cfg.reactive; (el as any).__xrReactiveStrength=cfg.strength; (el as any).__xrReactiveSmoothing=cfg.smoothing; (el as any).__xrReactiveLevel=0;
+}
+function ensureAudioAnalyser(el:HTMLAudioElement){
+  const a=el as any; if(a.__xrAnalyser) return a.__xrAnalyser as AnalyserNode;
+  try{
+    const Ctx=(window.AudioContext || (window as any).webkitAudioContext); if(!Ctx)return null;
+    const ctx:AudioContext=new Ctx(); const source=ctx.createMediaElementSource(el); const analyser=ctx.createAnalyser();
+    analyser.fftSize=256; analyser.smoothingTimeConstant=0; source.connect(analyser); analyser.connect(ctx.destination);
+    a.__xrAudioContext=ctx; a.__xrAnalyser=analyser; a.__xrAnalyserData=new Uint8Array(analyser.fftSize); return analyser;
+  }catch(e){console.warn("[AUDIO ANALYSER ERROR]",e);return null}
+}
+async function playXRAudio(el:HTMLAudioElement, mediaId:string){
+  const analyser=ensureAudioAnalyser(el); const ctx=(el as any).__xrAudioContext as AudioContext|undefined;
+  try{ if(ctx?.state==="suspended") await ctx.resume(); (el as any).__xrReactiveBase={position:((el as any).__xrEntity as pc.Entity)?.getPosition().clone(),euler:((el as any).__xrEntity as pc.Entity)?.getEulerAngles().clone(),scale:((el as any).__xrEntity as pc.Entity)?.getLocalScale().clone()}; await el.play(); console.log("[AUDIO PLAY]",mediaId,{analyser:!!analyser}); }catch(e){console.warn("[AUDIO PLAY BLOCKED]",e)}
 }
 async function createSharedAudioFromAsset(mediaId:string, media:any){
   if(managedPlacedMedia.has(mediaId)||sharedMediaLoadingIds.has(mediaId)) return;
@@ -1321,16 +1343,16 @@ async function createSharedAudioFromAsset(mediaId:string, media:any){
     const url=URL.createObjectURL(blob); const el=new Audio(url); const cfg=audioConfigFromRef(ref); const entity=makeAudioMarker(`SharedAudio_${mediaId}`);
     entity.setPosition(Number(media.x),Number(media.y),Number(media.z)); entity.setEulerAngles(0,Number(media.rotationY)||0,0); entity.setLocalScale(Number(media.scale)||1,Number(media.scale)||1,Number(media.scale)||1);
     configureSpatialAudioElement(mediaId,el,entity,cfg);
-    const remote=createMediaObject({title:media.title||"Audio",type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{try{console.log("[AUDIO PLAY]",mediaId,{readyState:el.readyState,volume:el.volume});await el.play()}catch(e){console.warn("[AUDIO PLAY BLOCKED]",e)}},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:false}]});
+    const remote=createMediaObject({title:media.title||"Audio",type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{await playXRAudio(el,mediaId)},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:false}]});
     (remote as any).id=mediaId; xrMediaManager.register(remote as any); managedPlacedMedia.set(mediaId,{id:mediaId,title:`${media.title||"Audio"} [SHARED]`,kind:"audio",entity}); sharedRemoteMediaIds.add(mediaId);
     placedMediaRuntimes.push({id:mediaId,dispose:()=>{el.pause();audioElements.delete(mediaId);URL.revokeObjectURL(url);if(entity.parent)entity.destroy()}}); sharedMediaLoadingIds.delete(mediaId); refreshMediaManagerUI();
   }catch(e){sharedMediaLoadingIds.delete(mediaId);console.error("[SHARED AUDIO LOAD ERROR]",mediaId,e)}
 }
 async function publishCommittedAudioToSharedWorld(mediaId:string, blob:Blob|null, ext:"mp3"|"wav"){
   if(!activeRoom||!blob)return; const item=managedPlacedMedia.get(mediaId), media=xrMediaManager.get(mediaId); if(!item||!media)return;
-  const cfg={volume:Number(audioVolume.value),loop:audioLoop.checked,spatial:audioSpatial.checked,distance:Number(audioDistance.value)};
+  const cfg:XRAudioConfig={volume:Number(audioVolume.value),loop:audioLoop.checked,spatial:audioSpatial.checked,distance:Number(audioDistance.value),reactive:audioReactiveAction.value as AudioReactiveAction,strength:Number(audioReactiveStrength.value),smoothing:Number(audioReactiveSmoothing.value)};
   const base=sharedAssetURL(mediaId,ext); const up=await fetch(base,{method:"PUT",headers:{"Content-Type":ext==="mp3"?"audio/mpeg":"audio/wav"},body:blob}); if(!up.ok)throw new Error(`Audio upload HTTP ${up.status}`);
-  const ref=`${base}?volume=${cfg.volume}&loop=${cfg.loop?1:0}&spatial=${cfg.spatial?1:0}&distance=${cfg.distance}`; const pos=item.entity.getPosition(), rot=item.entity.getEulerAngles(), sc=item.entity.getLocalScale();
+  const ref=`${base}?volume=${cfg.volume}&loop=${cfg.loop?1:0}&spatial=${cfg.spatial?1:0}&distance=${cfg.distance}&reactive=${cfg.reactive}&strength=${cfg.strength}&smoothing=${cfg.smoothing}`; const pos=item.entity.getPosition(), rot=item.entity.getEulerAngles(), sc=item.entity.getLocalScale();
   activeRoom.send("media:add",{id:mediaId,title:media.title||"Audio",type:"audio",assetRef:ref,x:pos.x,y:pos.y,z:pos.z,rotationY:rot.y,scale:sc.x});
 }
 
@@ -3748,8 +3770,8 @@ cancelPlacementButton?.addEventListener("click", () => {
 async function addAudioArtworkToWorld(file:File){
   importedAudioBlob=file; importedAudioExt=file.name.toLowerCase().endsWith(".wav")?"wav":"mp3"; const url=URL.createObjectURL(file); const el=new Audio(url);
   const entity=makeAudioMarker("ImportedAudioArtwork"); entity.setPosition(0,1.2,-3); app.root.addChild(entity); importedArtworkEntity=entity; importedArtworkKind="audio"; importedAudioElement=el; importedArtworkObjectURL=url;
-  configureSpatialAudioElement("preview-audio",el,entity,{volume:Number(audioVolume.value),loop:audioLoop.checked,spatial:audioSpatial.checked,distance:Number(audioDistance.value)});
-  const media=xrMediaManager.register(createMediaObject({title:file.name,type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{el.volume=Number(audioVolume.value);el.loop=audioLoop.checked;try{await el.play()}catch(e){console.warn(e)}},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:false}]})); activeXRMediaId=media.id;
+  configureSpatialAudioElement("preview-audio",el,entity,{volume:Number(audioVolume.value),loop:audioLoop.checked,spatial:audioSpatial.checked,distance:Number(audioDistance.value),reactive:audioReactiveAction.value as AudioReactiveAction,strength:Number(audioReactiveStrength.value),smoothing:Number(audioReactiveSmoothing.value)});
+  const media=xrMediaManager.register(createMediaObject({title:file.name,type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{el.volume=Number(audioVolume.value);el.loop=audioLoop.checked;await playXRAudio(el,"preview-audio")},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:false}]})); activeXRMediaId=media.id;
 }
 
 // =========================================================
@@ -4318,6 +4340,21 @@ app.on("update", (dt: number) => {
   }
 
   // Prototype 0.11 / Stage 2 / keep all placed animated media alive.
+  // Prototype 0.16.1 / AUDIO REACTIVE BEHAVIOR: analyser level -> SCALE / SHAKE / ROTATE.
+  // Analysis is local on every client, so shared audio remains synchronized without flooding the network with per-frame messages.
+  for (const el of audioElements.values()) {
+    const a=el as any; const entity=a.__xrEntity as pc.Entity|undefined; const analyser=a.__xrAnalyser as AnalyserNode|undefined;
+    if(entity && analyser && !el.paused && a.__xrReactiveAction && a.__xrReactiveAction!=="off"){
+      const data=a.__xrAnalyserData as Uint8Array; analyser.getByteTimeDomainData(data); let sum=0; for(let i=0;i<data.length;i++){const v=(data[i]-128)/128;sum+=v*v}
+      const raw=Math.min(1,Math.sqrt(sum/data.length)*3.2); const sm=Number(a.__xrReactiveSmoothing??.7); const level=(Number(a.__xrReactiveLevel)||0)*sm+raw*(1-sm); a.__xrReactiveLevel=level;
+      const strength=Number(a.__xrReactiveStrength??1); const base=a.__xrReactiveBase || {position:entity.getPosition().clone(),euler:entity.getEulerAngles().clone(),scale:entity.getLocalScale().clone()}; a.__xrReactiveBase=base;
+      if(a.__xrReactiveAction==="scale"){const f=1+level*strength;entity.setLocalScale(base.scale.x*f,base.scale.y*f,base.scale.z*f)}
+      else if(a.__xrReactiveAction==="rotate"){const r=base.euler.clone();r.y+=level*strength*120;entity.setEulerAngles(r)}
+      else if(a.__xrReactiveAction==="shake"){const p=base.position.clone();const q=level*strength*.18;p.x+=Math.sin(performance.now()*.041)*q;p.y+=Math.sin(performance.now()*.053+1)*q;p.z+=Math.sin(performance.now()*.047+2)*q;entity.setPosition(p)}
+    }
+    if(entity && (el.paused || !a.__xrReactiveAction || a.__xrReactiveAction==="off") && a.__xrReactiveBase){const b=a.__xrReactiveBase;entity.setPosition(b.position);entity.setEulerAngles(b.euler);entity.setLocalScale(b.scale);if(el.paused)a.__xrReactiveLevel=0}
+  }
+
   // Prototype 0.16.0 / lightweight 3D spatial audio + distance attenuation
   for (const el of audioElements.values()) {
     const entity=(el as any).__xrEntity as pc.Entity|undefined; if(!entity)continue; const base=Number((el as any).__xrBaseVolume??.8); const maxD=Number((el as any).__xrDistance??12);

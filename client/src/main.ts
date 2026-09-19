@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.7.5.1 PLACEMENT REGRESSION FIX LOADED]");
+console.log("[PROTOTYPE 0.14.7.5.2 SPRITE PUBLISH RECOVERY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -902,10 +902,10 @@ function removeSharedSpritePlaceholder(mediaId: string) {
 }
 
 async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob: Blob | null) {
-  console.log("[SHARED PUBLISH START]", mediaId);
+  console.log("[SPRITE PUBLISH 01 START]", mediaId);
 
   if (!activeRoom || !packageBlob) {
-    console.error("[SHARED PUBLISH ABORT]", {
+    console.error("[SPRITE PUBLISH ABORT]", {
       hasRoom: !!activeRoom,
       hasPackage: !!packageBlob
     });
@@ -915,47 +915,82 @@ async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob:
   const item = managedPlacedMedia.get(mediaId);
   const media = xrMediaManager.get(mediaId);
   if (!item || item.kind !== "sprite" || !media) {
-    console.error("[SHARED PUBLISH ABORT] media lookup/kind failed");
+    console.error("[SPRITE PUBLISH ABORT] media lookup/kind failed", {
+      hasItem: !!item,
+      kind: item?.kind,
+      hasMedia: !!media
+    });
     return;
   }
 
+  // Keep immutable publish data before the placement editor clears its import globals.
   const assetRef = sharedAssetURL(mediaId, "zip");
+  const position = item.entity.getPosition().clone();
+  const rotationY = item.entity.getEulerAngles().y;
+  const scale = item.entity.getLocalScale().x;
+  const payload = {
+    id: mediaId,
+    title: media.title || "Sprite Artwork",
+    type: "sprite",
+    assetRef,
+    x: position.x,
+    y: position.y,
+    z: position.z,
+    rotationY,
+    scale
+  };
 
   try {
+    console.log("[SPRITE PUBLISH 02 UPLOAD]", mediaId, packageBlob.size, assetRef);
     const uploadResponse = await fetch(assetRef, {
       method: "PUT",
       headers: { "Content-Type": "application/zip" },
       body: packageBlob
     });
-
     if (!uploadResponse.ok) {
-      throw new Error(`Asset upload failed: HTTP ${uploadResponse.status}`);
+      throw new Error(`Sprite asset upload failed: HTTP ${uploadResponse.status}`);
     }
+    console.log("[SPRITE PUBLISH 03 UPLOADED]", mediaId);
 
-    console.log("[SHARED ASSET UPLOADED]", mediaId, assetRef);
+    // Do not announce the Sprite to remote clients until Render can actually
+    // serve and parse the ZIP. This removes the upload/Colyseus visibility race.
+    const verifyResponse = await fetchSharedAssetWithRetry(assetRef, `sprite-publish:${mediaId}`);
+    const verifyBlob = await verifyResponse.blob();
+    if (verifyBlob.size < 32) throw new Error("Uploaded Sprite ZIP is unexpectedly small.");
+    const verifyZip = await JSZip.loadAsync(verifyBlob);
+    const verifyEntries = Object.values(verifyZip.files);
+    const hasPNG = verifyEntries.some((entry) => !entry.dir && entry.name.toLowerCase().endsWith(".png"));
+    const hasJSON = verifyEntries.some((entry) => !entry.dir && entry.name.toLowerCase().endsWith(".json"));
+    if (!hasPNG || !hasJSON) throw new Error("Uploaded Sprite ZIP verification failed: PNG/JSON missing.");
+    console.log("[SPRITE PUBLISH 04 VERIFIED]", mediaId, { bytes: verifyBlob.size, hasPNG, hasJSON });
 
-    const position = item.entity.getPosition();
-    const rotation = item.entity.getEulerAngles();
-    const scale = item.entity.getLocalScale();
+    const sendMediaAdd = (reason: string) => {
+      if (!activeRoom) return;
+      activeRoom.send("media:add", payload);
+      console.log("[SPRITE PUBLISH 05 MEDIA ADD]", mediaId, reason, payload);
+    };
 
-    activeRoom.send("media:add", {
-      id: mediaId,
-      title: media.title || "Sprite Artwork",
-      type: "sprite",
-      assetRef,
-      x: position.x,
-      y: position.y,
-      z: position.z,
-      rotationY: rotation.y,
-      scale: scale.x
-    });
+    sendMediaAdd("initial");
 
-    console.log("[SHARED MEDIA SENT]", mediaId);
+    // Recovery guard: if the authoritative room state still does not contain
+    // this id, resend the same idempotent media:add. Colyseus messages are
+    // reliable, but this also heals reconnect/state-timing races seen on iOS.
+    const confirmDelays = [500, 1500, 3000];
+    for (const delay of confirmDelays) {
+      window.setTimeout(() => {
+        if (!activeRoom) return;
+        if (authoritativeMediaExists(mediaId)) {
+          console.log("[SPRITE PUBLISH 06 AUTHORITATIVE]", mediaId, delay);
+          return;
+        }
+        console.warn("[SPRITE PUBLISH RETRY MEDIA ADD]", mediaId, delay);
+        sendMediaAdd(`retry-${delay}`);
+      }, delay);
+    }
   } catch (error) {
-    console.error("[SHARED PUBLISH ERROR]", mediaId, error);
+    console.error("[SPRITE PUBLISH ERROR]", mediaId, error);
   }
 }
-
 
 
 async function createSharedWebMFromAsset(mediaId: string, media: any) {

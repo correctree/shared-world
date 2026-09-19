@@ -1321,6 +1321,22 @@ function configureSpatialAudioElement(id:string, el:HTMLAudioElement, entity:pc.
   (el as any).__xrSpatial=cfg.spatial; (el as any).__xrDistance=cfg.distance; (el as any).__xrEntity=entity; (el as any).__xrBaseVolume=cfg.volume;
   (el as any).__xrReactiveAction=cfg.reactive; (el as any).__xrReactiveStrength=cfg.strength; (el as any).__xrReactiveSmoothing=cfg.smoothing; (el as any).__xrReactiveLevel=0;
 }
+// Prototype 0.16.1.4: apply shared Audio settings directly to an existing runtime.
+// This is used by both the live config event and the snapshot safety net so mobile
+// clients never need to open EDIT and press APPLY themselves.
+function applyLiveAudioConfig(mediaId:string, assetRef:string){
+  const el=audioElements.get(mediaId); if(!el)return false;
+  const cfg=audioConfigFromRef(assetRef); const a=el as any; const item=managedPlacedMedia.get(mediaId);
+  a.__xrBaseVolume=cfg.volume; el.loop=cfg.loop; a.__xrSpatial=cfg.spatial; a.__xrDistance=cfg.distance;
+  a.__xrReactiveAction=cfg.reactive; a.__xrReactiveStrength=cfg.strength; a.__xrReactiveSmoothing=cfg.smoothing;
+  a.__xrReactiveRotation=0; a.__xrReactiveLevel=0;
+  if(item?.entity){
+    if(a.__xrReactiveBase){const b=a.__xrReactiveBase;item.entity.setPosition(b.position);item.entity.setEulerAngles(b.euler);item.entity.setLocalScale(b.scale);}
+    a.__xrReactiveBase={position:item.entity.getPosition().clone(),euler:item.entity.getEulerAngles().clone(),scale:item.entity.getLocalScale().clone()};
+  }
+  el.volume=cfg.volume;
+  console.log("[0.16.1.4 LIVE AUDIO CONFIG APPLIED]",mediaId,cfg); return true;
+}
 function ensureAudioAnalyser(el:HTMLAudioElement){
   const a=el as any; if(a.__xrAnalyser) return a.__xrAnalyser as AnalyserNode;
   try{
@@ -1694,10 +1710,7 @@ async function enterWorld() {
         if (sharedRemoteMediaIds.has(mediaId)) {
           updateSharedSpritePlaceholder(mediaId, media);
         }
-        if (String(media?.type || "") === "audio") {
-          const el=audioElements.get(mediaId);
-          if(el){const cfg=audioConfigFromRef(String(media?.assetRef||""));const a=el as any;a.__xrBaseVolume=cfg.volume;el.loop=cfg.loop;a.__xrSpatial=cfg.spatial;a.__xrDistance=cfg.distance;a.__xrReactiveAction=cfg.reactive;a.__xrReactiveStrength=cfg.strength;a.__xrReactiveSmoothing=cfg.smoothing;a.__xrReactiveRotation=0;a.__xrReactiveLevel=0;el.volume=cfg.volume;console.log("[0.16.1.3 REMOTE AUDIO CONFIG UPDATED]",mediaId,cfg);}
-        }
+        if (String(media?.type || "") === "audio") applyLiveAudioConfig(mediaId,String(media?.assetRef||""));
       });
     });
 
@@ -1710,6 +1723,12 @@ async function enterWorld() {
     });
 
     console.log("[SHARED RECEIVE LISTENER READY]");
+
+    // Prototype 0.16.1.4 / LIVE AUDIO SETTINGS SYNC
+    room.onMessage("media:config", (payload:any) => {
+      const mediaId=String(payload?.id||""); const assetRef=String(payload?.assetRef||"");
+      if(mediaId && assetRef) applyLiveAudioConfig(mediaId,assetRef);
+    });
 
     // Prototype 0.15.1.2 / LIVE MEDIA SNAPSHOT RECOVERY
     // The normal MapSchema callback remains the fastest path. This explicit
@@ -1732,6 +1751,7 @@ async function enterWorld() {
           void ensureSharedMediaFromState(mediaId, media).catch(setSharedStateDiagnosticError);
         } else if (sharedRemoteMediaIds.has(mediaId)) {
           updateSharedSpritePlaceholder(mediaId, media);
+          if(String(media?.type||"")==="audio") applyLiveAudioConfig(mediaId,String(media?.assetRef||""));
         }
       }
 

@@ -140,6 +140,10 @@ export class SharedWorldRoom extends Room<WorldState> {
       media.scale=Math.max(0.05,Math.min(20,scale));
       if (typeof payload?.assetRef === "string" && media.type === "audio") {
         media.assetRef=String(payload.assetRef).slice(0,240);
+        // Prototype 0.16.1.4: state remains authoritative, while this explicit
+        // event applies settings immediately on already-running mobile runtimes.
+        this.broadcast("media:config", {id, assetRef: media.assetRef});
+        console.log("[0.16.1.4 media:config broadcast]", id);
       }
       console.log("[media:update stored]", id);
     });

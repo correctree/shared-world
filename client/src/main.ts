@@ -2069,8 +2069,6 @@ mediaManagerPanel.innerHTML = `
     <strong>MEDIA OBJECTS</strong>
     <button id="closeMediaManagerButton" type="button">×</button>
   </div>
-  <div id="mediaManagerList"></div>
-
   <div id="behaviorEditor" class="behavior-editor">
     <div class="behavior-editor-title">INTERACTIVE BEHAVIOR CORE</div>
     <div id="behaviorEditorStatus" class="behavior-editor-status">SELECT A MEDIA OBJECT</div>
@@ -2140,6 +2138,8 @@ mediaManagerPanel.innerHTML = `
     </div>
   </div>
 
+  <div id="mediaManagerList"></div>
+
   <div class="media-manager-actions">
     <button id="editManagedMediaButton" type="button" disabled>EDIT</button>
     <button id="deleteManagedMediaButton" type="button" disabled>DELETE</button>
@@ -2178,14 +2178,15 @@ mediaManagerStyle.textContent = `
   .media-manager-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   .media-manager-empty { opacity:.55; padding:18px 6px; text-align:center; font-size:12px; }
   .behavior-editor {
-    display:block; visibility:visible;
-    margin-top:12px; padding:12px; border:1px solid #343d49; border-radius:12px;
-    background:#0d131b;
+    display:block !important; visibility:visible !important; opacity:1 !important;
+    margin:0 0 12px; padding:12px; border:1px solid #3f6fa8; border-radius:12px;
+    background:#0d131b; position:relative; z-index:2;
   }
-  .behavior-editor.hidden { display:none; }
+  .behavior-editor.hidden { display:block !important; }
   .behavior-row.hidden { display:none; }
   .behavior-editor-status { opacity:.55; font-size:11px; padding:4px 0 2px; }
-  .behavior-editor-controls.hidden { display:none; }
+  .behavior-editor-controls.hidden { display:none !important; }
+  .behavior-editor-controls:not(.hidden) { display:block !important; visibility:visible !important; }
   .behavior-editor-title {
     margin-bottom:10px; font-size:11px; font-weight:800; letter-spacing:.08em; opacity:.72;
   }
@@ -2271,11 +2272,20 @@ function refreshBehaviorEditorUI() {
   const behavior = getSelectedInteractiveBehavior();
   const hasSelection = !!selectedManagedMediaId && managedPlacedMedia.has(selectedManagedMediaId);
 
+  // Prototype 0.15.2.1 / BEHAVIOR EDITOR VISIBILITY FIX
+  // Keep the editor shell permanently visible inside MEDIA OBJECTS. Only the
+  // status/controls swap when selection changes. This avoids CSS/layout races
+  // on Safari and makes the editor discoverable before a media object is selected.
   behaviorEditor.classList.remove("hidden");
-  behaviorEditorStatus.classList.toggle("hidden", hasSelection && !!behavior);
-  behaviorEditorControls.classList.toggle("hidden", !hasSelection || !behavior);
+  behaviorEditor.style.setProperty("display", "block", "important");
+  behaviorEditor.style.setProperty("visibility", "visible", "important");
+  behaviorEditor.dataset.selection = hasSelection ? String(selectedManagedMediaId) : "none";
+
+  const showControls = hasSelection && !!behavior;
+  behaviorEditorStatus.classList.toggle("hidden", showControls);
+  behaviorEditorControls.classList.toggle("hidden", !showControls);
   if (!behavior) {
-    behaviorEditorStatus.textContent = "SELECT A MEDIA OBJECT";
+    behaviorEditorStatus.textContent = hasSelection ? "BEHAVIOR DATA INITIALIZING" : "SELECT A MEDIA OBJECT";
     return;
   }
 
@@ -2395,7 +2405,7 @@ function refreshMediaManagerUI() {
       button.addEventListener("click", () => {
         selectedManagedMediaId = item.id;
         refreshMediaManagerUI();
-        window.setTimeout(() => behaviorEditor.scrollIntoView({ block: "nearest", behavior: "smooth" }), 0);
+        window.setTimeout(() => behaviorEditor.scrollIntoView({ block: "start", behavior: "smooth" }), 0);
       });
       mediaManagerList.appendChild(button);
     });
@@ -2446,6 +2456,10 @@ function deleteManagedMedia(id: string) {
 mediaManagerButton.addEventListener("click", () => {
   refreshMediaManagerUI();
   mediaManagerPanel.classList.toggle("hidden");
+  if (!mediaManagerPanel.classList.contains("hidden")) {
+    mediaManagerPanel.scrollTop = 0;
+    refreshBehaviorEditorUI();
+  }
 });
 closeMediaManagerButton.addEventListener("click", () => mediaManagerPanel.classList.add("hidden"));
 

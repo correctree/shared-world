@@ -1730,6 +1730,21 @@ async function enterWorld() {
       if(mediaId && assetRef) applyLiveAudioConfig(mediaId,assetRef);
     });
 
+    // Prototype 0.16.1.5 / UNIVERSAL MEDIA LIVE EDIT SYNC
+    // State callbacks/snapshots remain recovery paths, but EDIT -> PLACE/APPLY
+    // now has an explicit low-latency transform event for already-created peers.
+    room.onMessage("media:transform", (payload:any) => {
+      const mediaId=String(payload?.id||"");
+      if(!mediaId || !managedPlacedMedia.has(mediaId)) return;
+      const media={
+        x:Number(payload?.x), y:Number(payload?.y), z:Number(payload?.z),
+        rotationY:Number(payload?.rotationY), scale:Number(payload?.scale)
+      };
+      if(![media.x,media.y,media.z,media.rotationY,media.scale].every(Number.isFinite)) return;
+      updateSharedSpritePlaceholder(mediaId,media);
+      console.log("[0.16.1.5 LIVE MEDIA TRANSFORM APPLIED]",mediaId);
+    });
+
     // Prototype 0.15.1.2 / LIVE MEDIA SNAPSHOT RECOVERY
     // The normal MapSchema callback remains the fastest path. This explicit
     // snapshot is a safety net for mobile clients that miss a live onAdd.

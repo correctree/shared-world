@@ -630,6 +630,13 @@ async function ensureSharedMediaFromState(mediaId: string, media: any) {
   else if (sharedType === "glb") await createSharedGLBFromAsset(mediaId, media);
   else if (sharedType === "audio") await createSharedAudioFromAsset(mediaId, media);
   else console.warn("[MEDIA RECOVERY UNSUPPORTED TYPE]", mediaId, sharedType);
+  // A live transform can arrive while the remote asset is being decoded.
+  // Apply the newest such transform after its entity becomes available.
+  const pending = pendingSharedMediaTransforms.get(mediaId);
+  if (pending && sharedRemoteMediaIds.has(mediaId)) {
+    updateSharedSpritePlaceholder(mediaId, pending);
+    pendingSharedMediaTransforms.delete(mediaId);
+  }
 }
 
 function reconcileWorldFromServerState() {
@@ -940,17 +947,23 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
 function updateSharedSpritePlaceholder(mediaId: string, media: any) {
   const item = managedPlacedMedia.get(mediaId);
   if (!item || !sharedRemoteMediaIds.has(mediaId)) return;
-  item.entity.setPosition(media.x, media.y, media.z);
+  const values = [media.x, media.y, media.z, media.rotationY, media.scale].map(Number);
+  if (!values.every(Number.isFinite)) return;
+  const [x, y, z, rotationY, scale] = values;
+  item.entity.setPosition(x, y, z);
   if (item.kind === "glb") {
-    item.entity.setLocalScale(media.scale, media.scale, media.scale);
-    item.entity.setEulerAngles(0, media.rotationY, 0);
+    item.entity.setLocalScale(scale, scale, scale);
+    item.entity.setEulerAngles(0, rotationY, 0);
   } else {
-    item.entity.setLocalScale(media.scale, 1, media.scale);
-    item.entity.setEulerAngles(90, media.rotationY, 0);
+    item.entity.setLocalScale(scale, 1, scale);
+    item.entity.setEulerAngles(90, rotationY, 0);
   }
 }
 
+const pendingSharedMediaTransforms = new Map<string, {x:number;y:number;z:number;rotationY:number;scale:number}>();
+
 function removeSharedMediaLifecycle(mediaId: string, reason = "server-remove") {
+  pendingSharedMediaTransforms.delete(mediaId);
   console.log("[SHARED MEDIA CLEANUP START]", mediaId, reason);
   bumpSharedMediaGeneration(mediaId);
   sharedMediaLoadingIds.delete(mediaId);
@@ -1716,6 +1729,7 @@ async function enterWorld() {
 
     sharedMedia.onRemove((_media: any, mediaId: string) => {
       console.log("[SHARED RECEIVE REMOVE]", mediaId);
+      pendingSharedMediaTransforms.delete(mediaId);
       bumpSharedMediaGeneration(mediaId);
       sharedMediaLoadingIds.delete(mediaId);
       removeSharedSpritePlaceholder(mediaId);
@@ -1730,19 +1744,15 @@ async function enterWorld() {
       if(mediaId && assetRef) applyLiveAudioConfig(mediaId,assetRef);
     });
 
-    // Prototype 0.16.1.5 / UNIVERSAL MEDIA LIVE EDIT SYNC
-    // State callbacks/snapshots remain recovery paths, but EDIT -> PLACE/APPLY
-    // now has an explicit low-latency transform event for already-created peers.
     room.onMessage("media:transform", (payload:any) => {
       const mediaId=String(payload?.id||"");
-      if(!mediaId || !managedPlacedMedia.has(mediaId)) return;
-      const media={
-        x:Number(payload?.x), y:Number(payload?.y), z:Number(payload?.z),
-        rotationY:Number(payload?.rotationY), scale:Number(payload?.scale)
-      };
-      if(![media.x,media.y,media.z,media.rotationY,media.scale].every(Number.isFinite)) return;
-      updateSharedSpritePlaceholder(mediaId,media);
-      console.log("[0.16.1.5 LIVE MEDIA TRANSFORM APPLIED]",mediaId);
+      if (!mediaId) return;
+      const values=[payload?.x,payload?.y,payload?.z,payload?.rotationY,payload?.scale].map(Number);
+      if (!values.every(Number.isFinite)) return;
+      const [x,y,z,rotationY,scale]=values;
+      const transform={x,y,z,rotationY,scale};
+      if (sharedRemoteMediaIds.has(mediaId)) updateSharedSpritePlaceholder(mediaId,transform);
+      else if (!managedPlacedMedia.has(mediaId)) pendingSharedMediaTransforms.set(mediaId,transform);
     });
 
     // Prototype 0.15.1.2 / LIVE MEDIA SNAPSHOT RECOVERY
@@ -2813,6 +2823,24 @@ function sendSharedMediaTransform(id: string) {
   console.log("[SHARED MEDIA UPDATE SENT]",id);
 }
 
+let pendingMediaTransformTimer: number | undefined;
+function scheduleSharedMediaTransform() {
+  if (!editingManagedMediaId || !activeRoom) return;
+  if (pendingMediaTransformTimer !== undefined) return;
+  pendingMediaTransformTimer=window.setTimeout(() => {
+    pendingMediaTransformTimer=undefined;
+    if (editingManagedMediaId) sendSharedMediaTransform(editingManagedMediaId);
+  }, 40);
+}
+
+function flushSharedMediaTransform(id: string) {
+  if (pendingMediaTransformTimer !== undefined) {
+    window.clearTimeout(pendingMediaTransformTimer);
+    pendingMediaTransformTimer=undefined;
+  }
+  sendSharedMediaTransform(id);
+}
+
 function deleteManagedMedia(id: string) {
   const item = managedPlacedMedia.get(id);
   if (!item) return;
@@ -3769,6 +3797,7 @@ function applyArtworkPlacement() {
     importedArtworkEntity.setLocalScale(placementScale, 1, placementScale);
     importedArtworkEntity.setEulerAngles(90, placementRotationY, 0);
   }
+  scheduleSharedMediaTransform();
 }
 
 function openPlacementEditor() {
@@ -3853,7 +3882,7 @@ placeArtworkButton?.addEventListener("click", () => {
     importedArtworkEntity = null;
     importedArtworkKind = null;
     selectedManagedMediaId = editedId;
-    sendSharedMediaTransform(editedId);
+    flushSharedMediaTransform(editedId);
     refreshMediaManagerUI();
     artworkPlacementPanel?.classList.add("hidden");
     console.log("[0.14.6.1 EDIT CONFIRMED / PLAYBACK PRESERVED]", editedId);
@@ -3868,6 +3897,7 @@ placeArtworkButton?.addEventListener("click", () => {
 cancelPlacementButton?.addEventListener("click", () => {
   if (editingManagedMediaId) {
     // Stage 3 CANCEL exits edit mode. (Transform undo is reserved for a later stage.)
+    flushSharedMediaTransform(editingManagedMediaId);
     editingManagedMediaId = null;
     importedArtworkEntity = null;
     importedArtworkKind = null;

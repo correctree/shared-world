@@ -138,16 +138,9 @@ export class SharedWorldRoom extends Room<WorldState> {
       media.z=Math.max(-WORLD_LIMIT,Math.min(WORLD_LIMIT,z));
       media.rotationY=rotationY;
       media.scale=Math.max(0.05,Math.min(20,scale));
-
-      // Prototype 0.16.1.5 / UNIVERSAL MEDIA LIVE EDIT SYNC
-      // Broadcast the authoritative transform immediately for GLB/Sprite/WebM/Audio.
-      // Colyseus state + snapshot remain the durable recovery mechanism.
-      this.broadcast("media:transform", {
-        id, x: media.x, y: media.y, z: media.z,
-        rotationY: media.rotationY, scale: media.scale
-      });
-      console.log("[0.16.1.5 media:transform broadcast]", id, media.type);
-
+      // Apply transforms to already-loaded clients without waiting for a state patch.
+      this.broadcast("media:transform", {id, x:media.x, y:media.y, z:media.z,
+        rotationY:media.rotationY, scale:media.scale});
       if (typeof payload?.assetRef === "string" && media.type === "audio") {
         media.assetRef=String(payload.assetRef).slice(0,240);
         // Prototype 0.16.1.4: state remains authoritative, while this explicit

@@ -160,6 +160,27 @@ export class SharedWorldRoom extends Room<WorldState> {
       console.log("[media:action broadcast]", id, action, source, client.sessionId);
     });
 
+    // Prototype 0.15.1.2 / LIVE MEDIA SNAPSHOT RECOVERY
+    // Some mobile clients can miss a live MapSchema onAdd notification while
+    // still receiving the authoritative state on rejoin. Provide a lightweight
+    // explicit snapshot channel so connected clients can self-heal without reload.
+    this.onMessage("media:snapshot:request", (client: Client) => {
+      const mediaObjects: any[] = [];
+      for (const [id, media] of this.state.mediaObjects) {
+        mediaObjects.push({
+          id,
+          title: media.title,
+          type: media.type,
+          assetRef: media.assetRef,
+          fallbackRef: media.fallbackRef,
+          x: media.x, y: media.y, z: media.z,
+          rotationY: media.rotationY, scale: media.scale
+        });
+      }
+      client.send("media:snapshot", { mediaObjects });
+      console.log("[media:snapshot sent]", client.sessionId, mediaObjects.length);
+    });
+
     this.onMessage("media:delete", (client: Client, payload: DeleteMediaPayload) => {
       const id=String(payload?.id || "").trim().slice(0,80);
       const media=this.state.mediaObjects.get(id);

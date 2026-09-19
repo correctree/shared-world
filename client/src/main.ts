@@ -1552,6 +1552,39 @@ async function enterWorld() {
 
     console.log("[SHARED RECEIVE LISTENER READY]");
 
+    // Prototype 0.15.1.2 / LIVE MEDIA SNAPSHOT RECOVERY
+    // The normal MapSchema callback remains the fastest path. This explicit
+    // snapshot is a safety net for mobile clients that miss a live onAdd.
+    room.onMessage("media:snapshot", (payload: any) => {
+      const list = Array.isArray(payload?.mediaObjects) ? payload.mediaObjects : [];
+      const authoritativeIds = new Set<string>();
+      console.log("[0.15.1.2 SNAPSHOT RECEIVE]", list.length);
+
+      for (const media of list) {
+        const mediaId = String(media?.id || "");
+        if (!mediaId) continue;
+        authoritativeIds.add(mediaId);
+        if (!managedPlacedMedia.has(mediaId) && !sharedMediaLoadingIds.has(mediaId)) {
+          console.log("[0.15.1.2 SNAPSHOT RECOVER ADD]", mediaId, String(media?.type || ""));
+          void ensureSharedMediaFromState(mediaId, media);
+        } else if (sharedRemoteMediaIds.has(mediaId)) {
+          updateSharedSpritePlaceholder(mediaId, media);
+        }
+      }
+
+      for (const mediaId of Array.from(sharedRemoteMediaIds)) {
+        if (!authoritativeIds.has(mediaId)) {
+          console.log("[0.15.1.2 SNAPSHOT RECOVER REMOVE]", mediaId);
+          removeSharedMediaLifecycle(mediaId, "snapshot-reconcile");
+        }
+      }
+    });
+
+    const requestLiveMediaSnapshot = () => {
+      if (!activeRoom || activeRoom !== room) return;
+      room.send("media:snapshot:request", {});
+    };
+
     // Prototype 0.15.1.1: register transient Action messages only AFTER the
     // proven Colyseus state callback tree is fully attached. If an Action
     // arrives while an asset is still reconstructing, queue the latest Action
@@ -1579,8 +1612,14 @@ async function enterWorld() {
 
     // Authoritative recovery: reconstruct from current server state now,
     // then continuously heal missed ADD/REMOVE/UPDATE events.
-    window.setTimeout(() => reconcileWorldFromServerState(), 250);
-    sharedWorldReconcileTimer = window.setInterval(reconcileWorldFromServerState, 1500);
+    window.setTimeout(() => {
+      reconcileWorldFromServerState();
+      requestLiveMediaSnapshot();
+    }, 250);
+    sharedWorldReconcileTimer = window.setInterval(() => {
+      reconcileWorldFromServerState();
+      requestLiveMediaSnapshot();
+    }, 1500);
 
     roomLabel.textContent = `ROOM ${roomCode}`;
     status.textContent = "接続しました";

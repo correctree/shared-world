@@ -510,19 +510,32 @@ const sharedStateDiagnostic = {
   lastMediaId: "-", lastError: "-", actionRx: 0, connection: "CLOSED"
 };
 let sharedStateDiagnosticPanel: HTMLDivElement | null = null;
+let sharedStateDiagnosticBody: HTMLPreElement | null = null;
+let sharedStateDiagnosticCollapsed = window.matchMedia("(max-width: 640px)").matches;
 function refreshSharedStateDiagnosticPanel() {
   if (!sharedStateDiagnosticPanel) {
     sharedStateDiagnosticPanel = document.createElement("div");
     sharedStateDiagnosticPanel.id = "sharedStateDiagnosticPanel";
-    sharedStateDiagnosticPanel.style.cssText =
-      "position:fixed;right:10px;bottom:10px;z-index:10050;width:min(310px,88vw);padding:10px 12px;" +
-      "background:rgba(3,10,18,.94);color:#b9e4ff;border:1px solid #3aa7ff;border-radius:9px;" +
-      "font:600 11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;pointer-events:none";
+    sharedStateDiagnosticPanel.innerHTML = `
+      <button id="sharedStateDiagnosticToggle" type="button">DIAGNOSTIC <span>▸</span></button>
+      <pre id="sharedStateDiagnosticBody"></pre>`;
     document.body.appendChild(sharedStateDiagnosticPanel);
+    sharedStateDiagnosticBody = sharedStateDiagnosticPanel.querySelector<HTMLPreElement>("#sharedStateDiagnosticBody");
+    const toggle = sharedStateDiagnosticPanel.querySelector<HTMLButtonElement>("#sharedStateDiagnosticToggle")!;
+    const syncDiagnosticUI = () => {
+      sharedStateDiagnosticPanel!.classList.toggle("collapsed", sharedStateDiagnosticCollapsed);
+      const mark = toggle.querySelector("span");
+      if (mark) mark.textContent = sharedStateDiagnosticCollapsed ? "▸" : "▾";
+    };
+    toggle.addEventListener("click", () => {
+      sharedStateDiagnosticCollapsed = !sharedStateDiagnosticCollapsed;
+      syncDiagnosticUI();
+    });
+    syncDiagnosticUI();
   }
   sharedStateDiagnostic.localMedia = sharedRemoteMediaIds.size;
-  sharedStateDiagnosticPanel.textContent =
-    `SHARED STATE DIAGNOSTIC / 0.15.3.1\n` +
+  if (sharedStateDiagnosticBody) sharedStateDiagnosticBody.textContent =
+    `SHARED STATE DIAGNOSTIC / 0.16.0.2\n` +
     `CONNECTION     ${sharedStateDiagnostic.connection}\n` +
     `SERVER MEDIA   ${sharedStateDiagnostic.serverMedia}\n` +
     `LOCAL MEDIA    ${sharedStateDiagnostic.localMedia}\n` +
@@ -2338,9 +2351,36 @@ mediaManagerStyle.textContent = `
   .media-manager-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
   .media-manager-actions button { width:100% !important; }
   #deleteManagedMediaButton { border-color:#7b3940; }
+  #sharedStateDiagnosticPanel {
+    position:fixed; right:10px; bottom:10px; z-index:10050; width:min(310px,88vw);
+    padding:8px; background:rgba(3,10,18,.94); color:#b9e4ff; border:1px solid #3aa7ff;
+    border-radius:9px; font:600 11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; box-sizing:border-box;
+  }
+  #sharedStateDiagnosticToggle {
+    width:100% !important; min-height:34px; padding:7px 9px; border:0; border-radius:7px;
+    background:transparent; color:#b9e4ff; text-align:left; font:800 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  #sharedStateDiagnosticToggle span { float:right; }
+  #sharedStateDiagnosticBody { margin:7px 4px 2px; white-space:pre-wrap; font:inherit; color:inherit; }
+  #sharedStateDiagnosticPanel.collapsed { width:auto; min-width:132px; }
+  #sharedStateDiagnosticPanel.collapsed #sharedStateDiagnosticBody { display:none; }
   @media (max-width: 640px) {
-    #mediaManagerPanel { top:auto; right:12px; left:12px; bottom:max(12px, env(safe-area-inset-bottom)); width:auto; max-height:72vh; }
+    #mediaManagerPanel {
+      top:max(92px, calc(env(safe-area-inset-top) + 72px)); right:10px; left:10px;
+      bottom:max(10px, env(safe-area-inset-bottom)); width:auto; max-height:none; height:auto;
+      overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
+      padding:14px 14px calc(22px + env(safe-area-inset-bottom));
+    }
     #mediaManagerButton { right:12px; }
+    .media-manager-header { position:sticky; top:-14px; z-index:8; padding:10px 0; background:rgba(9,13,19,.98); }
+    .behavior-editor { padding:12px 10px; }
+    .behavior-row, .behavior-enabled-row { grid-template-columns:84px minmax(0,1fr); }
+    .behavior-test-actions { position:sticky; bottom:0; z-index:7; padding:10px 0 4px; background:rgba(9,13,19,.98); }
+    .behavior-test-actions button { min-height:44px; }
+    .media-manager-item { min-height:52px; touch-action:manipulation; }
+    .media-manager-actions button { min-height:46px; }
+    #sharedStateDiagnosticPanel { left:10px; right:auto; bottom:max(10px, env(safe-area-inset-bottom)); width:min(310px,calc(100vw - 20px)); }
+    #sharedStateDiagnosticPanel.collapsed { width:auto; min-width:132px; }
   }
 `;
 document.head.appendChild(mediaManagerStyle);

@@ -128,11 +128,15 @@ export class SharedWorldRoom extends Room<WorldState> {
       );
       if (!media || !authorized) {
         console.warn("[media:update rejected]", id);
+        client.send("media:update:result", {id, ok:false, reason:media ? "owner-mismatch" : "media-not-found"});
         return;
       }
       const x=Number(payload?.x), y=Number(payload?.y), z=Number(payload?.z);
       const rotationY=Number(payload?.rotationY), scale=Number(payload?.scale);
-      if (![x,y,z,rotationY,scale].every(Number.isFinite)) return;
+      if (![x,y,z,rotationY,scale].every(Number.isFinite)) {
+        client.send("media:update:result", {id, ok:false, reason:"invalid-transform"});
+        return;
+      }
       media.x=Math.max(-WORLD_LIMIT,Math.min(WORLD_LIMIT,x));
       media.y=Math.max(-10,Math.min(20,y));
       media.z=Math.max(-WORLD_LIMIT,Math.min(WORLD_LIMIT,z));
@@ -149,6 +153,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         console.log("[0.16.1.4 media:config broadcast]", id);
       }
       console.log("[media:update stored]", id);
+      client.send("media:update:result", {id, ok:true});
     });
 
     // Prototype 0.15.1 / SHARED ACTION EVENT CORE

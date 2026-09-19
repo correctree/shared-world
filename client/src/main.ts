@@ -1755,6 +1755,11 @@ async function enterWorld() {
       else if (!managedPlacedMedia.has(mediaId)) pendingSharedMediaTransforms.set(mediaId,transform);
     });
 
+    room.onMessage("media:update:result", (payload:any) => {
+      if (payload?.ok) console.log("[MEDIA EDIT SYNC ACCEPTED]", String(payload.id || ""));
+      else console.warn("[MEDIA EDIT SYNC REJECTED]", String(payload?.id || ""), String(payload?.reason || "unknown"));
+    });
+
     // Prototype 0.15.1.2 / LIVE MEDIA SNAPSHOT RECOVERY
     // The normal MapSchema callback remains the fastest path. This explicit
     // snapshot is a safety net for mobile clients that miss a live onAdd.
@@ -2817,7 +2822,9 @@ function disposePlacedRuntime(id: string) {
 function sendSharedMediaTransform(id: string) {
   if (!activeRoom) return;
   const item=managedPlacedMedia.get(id);
-  if (!item || sharedRemoteMediaIds.has(id)) return;
+  if (!item) return;
+  // Recovered objects are marked remote even on their original author's device.
+  // The server checks the persistent ownerClientId before accepting this update.
   const p=item.entity.getPosition(), r=item.entity.getEulerAngles(), s=item.entity.getLocalScale();
   activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationY:r.y,scale:s.x});
   console.log("[SHARED MEDIA UPDATE SENT]",id);

@@ -22,7 +22,12 @@ type UpdateMediaPayload = {
   id?: string; x?: number; y?: number; z?: number; rotationY?: number; scale?: number;
 };
 type DeleteMediaPayload = { id?: string };
-type MediaActionPayload = { id?: string; action?: string; source?: string };
+type MediaActionPayload = {
+  id?: string;
+  action?: string;
+  source?: string;
+  params?: { amount?: number; speed?: number; axis?: string; duration?: number };
+};
 
 export class SharedWorldRoom extends Room<WorldState> {
   // Transport headroom is intentionally larger than the UI's logical 4-user target.
@@ -149,15 +154,35 @@ export class SharedWorldRoom extends Room<WorldState> {
         console.warn("[media:action rejected] missing media", id);
         return;
       }
-      if (action !== "play" && action !== "stop") {
+      const supportedActions = new Set(["play", "stop", "move", "rotate", "scale", "float", "orbit", "shake"]);
+      if (!supportedActions.has(action)) {
         console.warn("[media:action rejected] unsupported action", action);
         return;
       }
 
+      // Prototype 0.15.3.2 / SHARED TRANSFORM ACTION FIX
+      // Transform actions use the same transient Action Bus as PLAY/STOP.
+      // Sanitize the parameters server-side before broadcasting them to every peer.
+      let params: { amount: number; speed: number; axis: "x" | "y" | "z"; duration: number } | undefined;
+      if (["move", "rotate", "scale", "float", "orbit", "shake"].includes(action)) {
+        const raw = payload?.params ?? {};
+        const amount = Number(raw.amount ?? 1);
+        const speed = Number(raw.speed ?? 1);
+        const duration = Number(raw.duration ?? 3);
+        const rawAxis = String(raw.axis ?? "y").toLowerCase();
+        const axis = (rawAxis === "x" || rawAxis === "z" ? rawAxis : "y") as "x" | "y" | "z";
+        params = {
+          amount: Number.isFinite(amount) ? Math.max(0.05, Math.min(20, amount)) : 1,
+          speed: Number.isFinite(speed) ? Math.max(0.05, Math.min(10, speed)) : 1,
+          axis,
+          duration: Number.isFinite(duration) ? Math.max(0.2, Math.min(60, duration)) : 3
+        };
+      }
+
       this.broadcast("media:action", {
-        id, action, source, actorSessionId: client.sessionId
+        id, action, source, params, actorSessionId: client.sessionId
       });
-      console.log("[media:action broadcast]", id, action, source, client.sessionId);
+      console.log("[0.15.3.2 media:action broadcast]", id, action, source, params ?? "", client.sessionId);
     });
 
     // Prototype 0.15.1.2 / LIVE MEDIA SNAPSHOT RECOVERY

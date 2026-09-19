@@ -501,7 +501,7 @@ function refreshSharedStateDiagnosticPanel() {
   }
   sharedStateDiagnostic.localMedia = sharedRemoteMediaIds.size;
   sharedStateDiagnosticPanel.textContent =
-    `SHARED STATE DIAGNOSTIC / 0.15.2\n` +
+    `SHARED STATE DIAGNOSTIC / 0.15.3\n` +
     `CONNECTION     ${sharedStateDiagnostic.connection}\n` +
     `SERVER MEDIA   ${sharedStateDiagnostic.serverMedia}\n` +
     `LOCAL MEDIA    ${sharedStateDiagnostic.localMedia}\n` +
@@ -1642,15 +1642,16 @@ async function enterWorld() {
       refreshSharedStateDiagnosticPanel();
       const action = String(payload?.action || "none") as XRBehaviorActionId;
       const source = String(payload?.source || "");
-      console.log("[0.15.1.1 ACTION RECEIVE]", mediaId, action, source);
+      const params = payload?.params as XRTransformActionParams | undefined;
+      console.log("[0.15.3 ACTION RECEIVE]", mediaId, action, source, params);
       const object = xrMediaManager.get(mediaId);
       if (!object) {
-        pendingSharedActions.set(mediaId, { action, source });
+        pendingSharedActions.set(mediaId, { action, source, params });
         console.log("[0.15.1.1 ACTION QUEUED / MEDIA NOT READY]", mediaId, action);
         return;
       }
-      runXRBehaviorAction(object, action);
-      console.log("[0.15.1.1 ACTION EXECUTE]", mediaId, action);
+      runXRBehaviorAction(object, action, params);
+      console.log("[0.15.3 ACTION EXECUTE]", mediaId, action);
     });
 
     console.log("[WORLD SNAPSHOT READY]", {
@@ -2112,6 +2113,12 @@ mediaManagerPanel.innerHTML = `
       <select id="behaviorEnterAction">
         <option value="play">PLAY MEDIA</option>
         <option value="stop">STOP MEDIA</option>
+        <option value="move">MOVE</option>
+        <option value="rotate">ROTATE</option>
+        <option value="scale">SCALE</option>
+        <option value="float">FLOAT</option>
+        <option value="orbit">ORBIT</option>
+        <option value="shake">SHAKE</option>
         <option value="none">NONE</option>
       </select>
     </label>
@@ -2121,9 +2128,48 @@ mediaManagerPanel.innerHTML = `
       <select id="behaviorLeaveAction">
         <option value="stop">STOP MEDIA</option>
         <option value="play">PLAY MEDIA</option>
+        <option value="move">MOVE</option>
+        <option value="rotate">ROTATE</option>
+        <option value="scale">SCALE</option>
+        <option value="float">FLOAT</option>
+        <option value="orbit">ORBIT</option>
+        <option value="shake">SHAKE</option>
         <option value="none">NONE</option>
       </select>
     </label>
+
+    <div id="transformActionControls" class="transform-action-controls hidden">
+      <div class="transform-action-title">TRANSFORM ACTION</div>
+      <label class="behavior-row">
+        <span>Amount</span>
+        <div class="behavior-distance-control">
+          <input id="transformAmount" type="range" min="0.1" max="5" step="0.1" value="1">
+          <strong id="transformAmountValue">1.0</strong>
+        </div>
+      </label>
+      <label class="behavior-row">
+        <span>Speed</span>
+        <div class="behavior-distance-control">
+          <input id="transformSpeed" type="range" min="0.2" max="4" step="0.1" value="1">
+          <strong id="transformSpeedValue">1.0×</strong>
+        </div>
+      </label>
+      <label class="behavior-row">
+        <span>Axis</span>
+        <select id="transformAxis">
+          <option value="x">X</option>
+          <option value="y" selected>Y</option>
+          <option value="z">Z</option>
+        </select>
+      </label>
+      <label class="behavior-row">
+        <span>Duration</span>
+        <div class="behavior-distance-control">
+          <input id="transformDuration" type="range" min="0.5" max="12" step="0.5" value="3">
+          <strong id="transformDurationValue">3.0 s</strong>
+        </div>
+      </label>
+    </div>
 
     <label class="behavior-enabled-row">
       <span>Enabled</span>
@@ -2202,6 +2248,9 @@ mediaManagerStyle.textContent = `
   #behaviorDistance { width:100%; min-width:0; }
   #behaviorDistanceValue { text-align:right; font-size:11px; white-space:nowrap; }
   #behaviorEnabled { justify-self:start; width:18px !important; height:18px; }
+  .transform-action-controls { margin:10px 0; padding:10px; border:1px solid #2a5f88; border-radius:10px; background:rgba(15,36,52,.55); }
+  .transform-action-controls.hidden { display:none !important; }
+  .transform-action-title { margin-bottom:8px; font-size:10px; font-weight:800; letter-spacing:.1em; opacity:.75; }
   .behavior-test-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
   .behavior-test-actions button { width:100% !important; padding:8px 6px; font-size:10px; }
   .behavior-status {
@@ -2237,16 +2286,25 @@ const behaviorTouchModeRow = mediaManagerPanel.querySelector<HTMLElement>("#beha
 const behaviorTouchMode = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorTouchMode")!;
 const behaviorEnterAction = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorEnterAction")!;
 const behaviorLeaveAction = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorLeaveAction")!;
+const transformActionControls = mediaManagerPanel.querySelector<HTMLElement>("#transformActionControls")!;
+const transformAmount = mediaManagerPanel.querySelector<HTMLInputElement>("#transformAmount")!;
+const transformAmountValue = mediaManagerPanel.querySelector<HTMLElement>("#transformAmountValue")!;
+const transformSpeed = mediaManagerPanel.querySelector<HTMLInputElement>("#transformSpeed")!;
+const transformSpeedValue = mediaManagerPanel.querySelector<HTMLElement>("#transformSpeedValue")!;
+const transformAxis = mediaManagerPanel.querySelector<HTMLSelectElement>("#transformAxis")!;
+const transformDuration = mediaManagerPanel.querySelector<HTMLInputElement>("#transformDuration")!;
+const transformDurationValue = mediaManagerPanel.querySelector<HTMLElement>("#transformDurationValue")!;
 const behaviorEnabled = mediaManagerPanel.querySelector<HTMLInputElement>("#behaviorEnabled")!;
 const behaviorStatus = mediaManagerPanel.querySelector<HTMLElement>("#behaviorStatus")!;
 const behaviorTestEnter = mediaManagerPanel.querySelector<HTMLButtonElement>("#behaviorTestEnter")!;
 const behaviorTestLeave = mediaManagerPanel.querySelector<HTMLButtonElement>("#behaviorTestLeave")!;
 
-// Prototype 0.15.0 / INTERACTIVE BEHAVIOR CORE
+// Prototype 0.15.3 / TRANSFORM ANIMATION CORE
 // Trigger detection and Actions are intentionally separated. New Actions such as
 // MOVE / ROTATE / SCALE / PLAY SOUND can be added to this dispatcher without
 // rewriting USER PROXIMITY / LOOK AT / TOUCH trigger detection.
-type XRBehaviorActionId = "play" | "stop" | "none";
+type XRBehaviorActionId = "play" | "stop" | "move" | "rotate" | "scale" | "float" | "orbit" | "shake" | "none";
+type XRTransformActionParams = { amount: number; speed: number; axis: "x" | "y" | "z"; duration: number };
 
 function getSelectedInteractiveBehavior() {
   if (!selectedManagedMediaId) return null;
@@ -2261,6 +2319,10 @@ function getSelectedInteractiveBehavior() {
       distance: 3,
       enterAction: "play",
       leaveAction: "stop",
+      transformAmount: 1,
+      transformSpeed: 1,
+      transformAxis: "y",
+      transformDuration: 3,
       enabled: true
     };
     object.behavior = [...(object.behavior ?? []), behavior];
@@ -2312,6 +2374,16 @@ function refreshBehaviorEditorUI() {
 
   behaviorEnterAction.value = String((behavior as any).enterAction ?? "play");
   behaviorLeaveAction.value = String((behavior as any).leaveAction ?? "stop");
+  const transformActions = new Set(["move", "rotate", "scale", "float", "orbit", "shake"]);
+  const usesTransform = transformActions.has(behaviorEnterAction.value) || transformActions.has(behaviorLeaveAction.value);
+  transformActionControls.classList.toggle("hidden", !usesTransform);
+  transformAmount.value = String(Number((behavior as any).transformAmount ?? 1));
+  transformSpeed.value = String(Number((behavior as any).transformSpeed ?? 1));
+  transformAxis.value = String((behavior as any).transformAxis ?? "y");
+  transformDuration.value = String(Number((behavior as any).transformDuration ?? 3));
+  transformAmountValue.textContent = Number(transformAmount.value).toFixed(1);
+  transformSpeedValue.textContent = `${Number(transformSpeed.value).toFixed(1)}×`;
+  transformDurationValue.textContent = `${Number(transformDuration.value).toFixed(1)} s`;
   behaviorEnabled.checked = behavior.enabled;
   behaviorStatus.textContent =
     !behavior.enabled ? "DISABLED" :
@@ -2329,9 +2401,16 @@ function applyBehaviorEditorUI() {
   (behavior as any).touchMode = behaviorTouchMode.value;
   (behavior as any).enterAction = behaviorEnterAction.value as XRBehaviorActionId;
   (behavior as any).leaveAction = behaviorLeaveAction.value as XRBehaviorActionId;
+  (behavior as any).transformAmount = Number(transformAmount.value);
+  (behavior as any).transformSpeed = Number(transformSpeed.value);
+  (behavior as any).transformAxis = transformAxis.value;
+  (behavior as any).transformDuration = Number(transformDuration.value);
   behavior.enabled = behaviorEnabled.checked;
   behaviorDistanceValue.textContent = `${behavior.distance.toFixed(1)} m`;
   behaviorLookAngleValue.textContent = `${Number((behavior as any).lookAngle ?? 12).toFixed(0)}°`;
+  transformAmountValue.textContent = Number(transformAmount.value).toFixed(1);
+  transformSpeedValue.textContent = `${Number(transformSpeed.value).toFixed(1)}×`;
+  transformDurationValue.textContent = `${Number(transformDuration.value).toFixed(1)} s`;
 
   console.log("[XR BEHAVIOR UPDATED]", {
     mediaId: selectedManagedMediaId,
@@ -2363,26 +2442,84 @@ behaviorTrigger.addEventListener("change", () => {
 behaviorDistance.addEventListener("input", applyBehaviorEditorUI);
 behaviorLookAngle.addEventListener("input", applyBehaviorEditorUI);
 behaviorTouchMode.addEventListener("change", applyBehaviorEditorUI);
-behaviorEnterAction.addEventListener("change", applyBehaviorEditorUI);
-behaviorLeaveAction.addEventListener("change", applyBehaviorEditorUI);
+behaviorEnterAction.addEventListener("change", () => { applyBehaviorEditorUI(); refreshBehaviorEditorUI(); });
+behaviorLeaveAction.addEventListener("change", () => { applyBehaviorEditorUI(); refreshBehaviorEditorUI(); });
+transformAmount.addEventListener("input", applyBehaviorEditorUI);
+transformSpeed.addEventListener("input", applyBehaviorEditorUI);
+transformAxis.addEventListener("change", applyBehaviorEditorUI);
+transformDuration.addEventListener("input", applyBehaviorEditorUI);
 behaviorEnabled.addEventListener("change", applyBehaviorEditorUI);
 
-behaviorTestEnter.addEventListener("click", () => {
-  if (!selectedManagedMediaId) return;
-  const object = xrMediaManager.get(selectedManagedMediaId);
+// Prototype 0.15.2.2 / BEHAVIOR TEST ACTION FIX
+// TEST buttons are explicit manual actions. Execute the selected media locally
+// immediately, then publish the exact same action to the shared room. This does
+// not alter the proven PROXIMITY / LOOK AT / TOUCH paths. The later server echo
+// is intentionally harmless (PLAY/STOP are idempotent) and keeps all peers in sync.
+function getBehaviorTransformParams(behavior: any): XRTransformActionParams {
+  return {
+    amount: Math.max(0.05, Number(behavior?.transformAmount ?? 1)),
+    speed: Math.max(0.05, Number(behavior?.transformSpeed ?? 1)),
+    axis: (["x", "y", "z"].includes(String(behavior?.transformAxis)) ? String(behavior.transformAxis) : "y") as "x" | "y" | "z",
+    duration: Math.max(0.2, Number(behavior?.transformDuration ?? 3))
+  };
+}
+
+function executeBehaviorTestAction(kind: "enter" | "leave") {
+  // Commit the controls currently visible in the editor before reading them.
+  applyBehaviorEditorUI();
+
+  const mediaId = selectedManagedMediaId;
+  if (!mediaId) {
+    behaviorStatus.textContent = "TEST FAILED / NO MEDIA SELECTED";
+    return;
+  }
+
+  const object = xrMediaManager.get(mediaId);
   const behavior = getSelectedInteractiveBehavior();
-  if (!object || !behavior) return;
-  dispatchSharedXRBehaviorAction(object, String((behavior as any).enterAction ?? "play"), "test-enter");
-  behaviorStatus.textContent = `TEST ENTER → ${String((behavior as any).enterAction ?? "play").toUpperCase()}`;
+  if (!object || !behavior) {
+    behaviorStatus.textContent = "TEST FAILED / MEDIA NOT READY";
+    return;
+  }
+
+  const action = String(
+    kind === "enter"
+      ? ((behavior as any).enterAction ?? "play")
+      : ((behavior as any).leaveAction ?? "stop")
+  ) as XRBehaviorActionId;
+
+  if (action === "none") {
+    behaviorStatus.textContent = `TEST ${kind.toUpperCase()} → NONE`;
+    return;
+  }
+
+  // Guarantee immediate feedback on the controller device.
+  const transformParams = getBehaviorTransformParams(behavior);
+  runXRBehaviorAction(object, action, transformParams);
+
+  // Publish to the other connected clients using the same transient Action Bus.
+  if (activeRoom) {
+    activeRoom.send("media:action", {
+      id: String(object.id || mediaId),
+      action,
+      source: `test-${kind}`,
+      params: transformParams
+    });
+    console.log("[0.15.2.2 TEST ACTION SENT]", object.id || mediaId, action, kind);
+  }
+
+  behaviorStatus.textContent = `TEST ${kind.toUpperCase()} → ${action.toUpperCase()}`;
+}
+
+behaviorTestEnter.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  executeBehaviorTestAction("enter");
 });
 
-behaviorTestLeave.addEventListener("click", () => {
-  if (!selectedManagedMediaId) return;
-  const object = xrMediaManager.get(selectedManagedMediaId);
-  const behavior = getSelectedInteractiveBehavior();
-  if (!object || !behavior) return;
-  dispatchSharedXRBehaviorAction(object, String((behavior as any).leaveAction ?? "stop"), "test-leave");
-  behaviorStatus.textContent = `TEST LEAVE → ${String((behavior as any).leaveAction ?? "stop").toUpperCase()}`;
+behaviorTestLeave.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  executeBehaviorTestAction("leave");
 });
 
 function refreshMediaManagerUI() {
@@ -3616,53 +3753,127 @@ function debugXRMediaManager(label: string) {
 const lookAtBehaviorState = new Map<string, boolean>();
 const DEFAULT_LOOK_AT_ANGLE_DEG = 12;
 
-const pendingSharedActions = new Map<string, { action: XRBehaviorActionId; source: string }>();
+const pendingSharedActions = new Map<string, { action: XRBehaviorActionId; source: string; params?: XRTransformActionParams }>();
 
 function flushPendingSharedActions() {
   for (const [mediaId, pending] of Array.from(pendingSharedActions.entries())) {
     const object = xrMediaManager.get(mediaId);
     if (!object) continue;
-    runXRBehaviorAction(object, pending.action);
+    runXRBehaviorAction(object, pending.action, pending.params);
     pendingSharedActions.delete(mediaId);
     console.log("[0.15.1.1 ACTION EXECUTE / QUEUED]", mediaId, pending.action, pending.source);
   }
 }
 
-function runXRBehaviorAction(object: any, action: string | undefined) {
-  const actionId = String(action || "none") as XRBehaviorActionId;
+type ActiveTransformAnimation = {
+  action: XRBehaviorActionId; elapsed: number; duration: number; speed: number; amount: number; axis: "x" | "y" | "z";
+  basePosition: pc.Vec3; baseEuler: pc.Vec3; baseScale: pc.Vec3;
+};
+const activeTransformAnimations = new Map<string, ActiveTransformAnimation>();
 
-  switch (actionId) {
-    case "play":
-      void object.playback?.play();
-      break;
-    case "stop":
-      object.playback?.stop();
-      break;
-    case "none":
-    default:
-      break;
-  }
-
-  console.log("[XR ACTION LOCAL]", {
-    object: object?.title || object?.id || "unknown",
-    mediaId: object?.id || "",
-    action: actionId
+function startTransformAnimation(object: any, action: XRBehaviorActionId, params?: XRTransformActionParams) {
+  if (!object?.entity) return;
+  const p = params ?? { amount: 1, speed: 1, axis: "y", duration: 3 };
+  const entity = object.entity as pc.Entity;
+  activeTransformAnimations.set(String(object.id), {
+    action, elapsed: 0, duration: Math.max(.2, p.duration), speed: Math.max(.05, p.speed), amount: Math.max(.05, p.amount), axis: p.axis,
+    basePosition: entity.getPosition().clone(), baseEuler: entity.getEulerAngles().clone(), baseScale: entity.getLocalScale().clone()
   });
+}
+
+function updateTransformAnimations(dt: number) {
+  for (const [id, anim] of Array.from(activeTransformAnimations.entries())) {
+    const object = xrMediaManager.get(id);
+    const entity = object?.entity as pc.Entity | undefined;
+    if (!entity || !entity.enabled) { activeTransformAnimations.delete(id); continue; }
+    anim.elapsed += dt * anim.speed;
+    const t = Math.min(1, anim.elapsed / anim.duration);
+    const phase = t * Math.PI * 2;
+    const envelope = Math.sin(Math.PI * t);
+    const a = anim.amount;
+    const axis = anim.axis;
+    const p = anim.basePosition.clone();
+    const r = anim.baseEuler.clone();
+    const sc = anim.baseScale.clone();
+
+    switch (anim.action) {
+      case "move": {
+        const offset = Math.sin(Math.PI * t) * a;
+        if (axis === "x") p.x += offset; else if (axis === "y") p.y += offset; else p.z += offset;
+        entity.setPosition(p);
+        break;
+      }
+      case "rotate": {
+        const deg = 360 * t * a;
+        if (axis === "x") r.x += deg; else if (axis === "y") r.y += deg; else r.z += deg;
+        entity.setEulerAngles(r);
+        break;
+      }
+      case "scale": {
+        const factor = 1 + Math.sin(Math.PI * t) * a;
+        entity.setLocalScale(sc.x * factor, sc.y * factor, sc.z * factor);
+        break;
+      }
+      case "float": {
+        p.y += Math.sin(phase) * a * envelope;
+        entity.setPosition(p);
+        break;
+      }
+      case "orbit": {
+        const radius = a;
+        p.x += Math.sin(phase) * radius * envelope;
+        p.z += (Math.cos(phase) - 1) * radius * envelope;
+        entity.setPosition(p);
+        break;
+      }
+      case "shake": {
+        const frequency = 18;
+        const fade = 1 - t;
+        p.x += Math.sin(anim.elapsed * frequency * 1.7) * a * .18 * fade;
+        p.y += Math.sin(anim.elapsed * frequency * 2.3 + 1.1) * a * .12 * fade;
+        p.z += Math.sin(anim.elapsed * frequency * 2.9 + 2.2) * a * .18 * fade;
+        entity.setPosition(p);
+        break;
+      }
+    }
+
+    if (t >= 1) {
+      entity.setPosition(anim.basePosition);
+      entity.setEulerAngles(anim.baseEuler);
+      entity.setLocalScale(anim.baseScale);
+      activeTransformAnimations.delete(id);
+    }
+  }
+}
+
+function runXRBehaviorAction(object: any, action: string | undefined, params?: XRTransformActionParams) {
+  const actionId = String(action || "none") as XRBehaviorActionId;
+  switch (actionId) {
+    case "play": void object.playback?.play(); break;
+    case "stop": object.playback?.stop(); break;
+    case "move": case "rotate": case "scale": case "float": case "orbit": case "shake":
+      startTransformAnimation(object, actionId, params); break;
+    case "none": default: break;
+  }
+  console.log("[XR ACTION LOCAL]", { object: object?.title || object?.id || "unknown", mediaId: object?.id || "", action: actionId, params });
 }
 
 function dispatchSharedXRBehaviorAction(object: any, action: string | undefined, source: string) {
   const actionId = String(action || "none") as XRBehaviorActionId;
   if (!object?.id || actionId === "none") return;
 
+  const behavior = object.behavior?.[0];
+  const params = getBehaviorTransformParams(behavior);
   if (!activeRoom) {
-    runXRBehaviorAction(object, actionId);
+    runXRBehaviorAction(object, actionId, params);
     return;
   }
 
   activeRoom.send("media:action", {
     id: String(object.id),
     action: actionId,
-    source: String(source || "behavior").slice(0, 40)
+    source: String(source || "behavior").slice(0, 40),
+    params
   });
   console.log("[SHARED ACTION SENT]", object.id, actionId, source);
 }
@@ -4043,6 +4254,9 @@ app.on("update", (dt: number) => {
       avatar.proximityHalo.setLocalScale(pulsedScale, 0.025, pulsedScale);
     }
   }
+
+  // Prototype 0.15.3 / TRANSFORM ANIMATION CORE
+  updateTransformAnimations(dt);
 
   if (!activeRoom || !currentSessionId) return;
   const me = avatars.get(currentSessionId);

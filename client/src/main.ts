@@ -1326,13 +1326,26 @@ function ensureAudioAnalyser(el:HTMLAudioElement){
   try{
     const Ctx=(window.AudioContext || (window as any).webkitAudioContext); if(!Ctx)return null;
     const ctx:AudioContext=new Ctx(); const source=ctx.createMediaElementSource(el); const analyser=ctx.createAnalyser();
+    // 0.16.1.2: one stable WebAudio graph for every reactive action.
+    // SCALE / SHAKE / ROTATE only read analyser data; they never replace or disconnect the audible route.
     analyser.fftSize=256; analyser.smoothingTimeConstant=0; source.connect(analyser); analyser.connect(ctx.destination);
     a.__xrAudioContext=ctx; a.__xrAnalyser=analyser; a.__xrAnalyserData=new Uint8Array(analyser.fftSize); return analyser;
   }catch(e){console.warn("[AUDIO ANALYSER ERROR]",e);return null}
 }
 async function playXRAudio(el:HTMLAudioElement, mediaId:string){
   const analyser=ensureAudioAnalyser(el); const ctx=(el as any).__xrAudioContext as AudioContext|undefined;
-  try{ if(ctx?.state==="suspended") await ctx.resume(); (el as any).__xrReactiveBase={position:((el as any).__xrEntity as pc.Entity)?.getPosition().clone(),euler:((el as any).__xrEntity as pc.Entity)?.getEulerAngles().clone(),scale:((el as any).__xrEntity as pc.Entity)?.getLocalScale().clone()}; await el.play(); console.log("[AUDIO PLAY]",mediaId,{analyser:!!analyser}); }catch(e){console.warn("[AUDIO PLAY BLOCKED]",e)}
+  try{
+    if(ctx?.state==="suspended") await ctx.resume();
+    const a=el as any;
+    // Restore the configured base volume before every PLAY. Spatial attenuation will
+    // immediately refine it on the next frame. This prevents an old zero-volume
+    // attenuation state from making a newly selected SHAKE / ROTATE action silent.
+    el.volume=Math.max(0,Math.min(1,Number(a.__xrBaseVolume??el.volume??.8)));
+    const entity=a.__xrEntity as pc.Entity|undefined;
+    if(entity && !a.__xrReactiveBase) a.__xrReactiveBase={position:entity.getPosition().clone(),euler:entity.getEulerAngles().clone(),scale:entity.getLocalScale().clone()};
+    await el.play();
+    console.log("[AUDIO PLAY]",mediaId,{analyser:!!analyser,reactive:a.__xrReactiveAction,volume:el.volume});
+  }catch(e){console.warn("[AUDIO PLAY BLOCKED]",e)}
 }
 async function createSharedAudioFromAsset(mediaId:string, media:any){
   if(managedPlacedMedia.has(mediaId)||sharedMediaLoadingIds.has(mediaId)) return;
@@ -1343,7 +1356,7 @@ async function createSharedAudioFromAsset(mediaId:string, media:any){
     const url=URL.createObjectURL(blob); const el=new Audio(url); const cfg=audioConfigFromRef(ref); const entity=makeAudioMarker(`SharedAudio_${mediaId}`);
     entity.setPosition(Number(media.x),Number(media.y),Number(media.z)); entity.setEulerAngles(0,Number(media.rotationY)||0,0); entity.setLocalScale(Number(media.scale)||1,Number(media.scale)||1,Number(media.scale)||1);
     configureSpatialAudioElement(mediaId,el,entity,cfg);
-    const remote=createMediaObject({title:media.title||"Audio",type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{await playXRAudio(el,mediaId)},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:false}]});
+    const remote=createMediaObject({title:media.title||"Audio",type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{await playXRAudio(el,mediaId)},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:true}]});
     (remote as any).id=mediaId; xrMediaManager.register(remote as any); managedPlacedMedia.set(mediaId,{id:mediaId,title:`${media.title||"Audio"} [SHARED]`,kind:"audio",entity}); sharedRemoteMediaIds.add(mediaId);
     placedMediaRuntimes.push({id:mediaId,dispose:()=>{el.pause();audioElements.delete(mediaId);URL.revokeObjectURL(url);if(entity.parent)entity.destroy()}}); sharedMediaLoadingIds.delete(mediaId); refreshMediaManagerUI();
   }catch(e){sharedMediaLoadingIds.delete(mediaId);console.error("[SHARED AUDIO LOAD ERROR]",mediaId,e)}
@@ -3370,7 +3383,7 @@ function addSpriteArtworkToWorld() {
             distance: 3,
             enterAction: "play",
             leaveAction: "stop",
-            enabled: false
+            enabled: true
         }
     ]
 }));
@@ -3785,7 +3798,7 @@ async function addAudioArtworkToWorld(file:File){
   importedAudioBlob=file; importedAudioExt=file.name.toLowerCase().endsWith(".wav")?"wav":"mp3"; const url=URL.createObjectURL(file); const el=new Audio(url);
   const entity=makeAudioMarker("ImportedAudioArtwork"); entity.setPosition(0,1.2,-3); app.root.addChild(entity); importedArtworkEntity=entity; importedArtworkKind="audio"; importedAudioElement=el; importedArtworkObjectURL=url;
   configureSpatialAudioElement("preview-audio",el,entity,{volume:Number(audioVolume.value),loop:audioLoop.checked,spatial:audioSpatial.checked,distance:Number(audioDistance.value),reactive:audioReactiveAction.value as AudioReactiveAction,strength:Number(audioReactiveStrength.value),smoothing:Number(audioReactiveSmoothing.value)});
-  const media=xrMediaManager.register(createMediaObject({title:file.name,type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{el.volume=Number(audioVolume.value);el.loop=audioLoop.checked;await playXRAudio(el,"preview-audio")},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:false}]})); activeXRMediaId=media.id;
+  const media=xrMediaManager.register(createMediaObject({title:file.name,type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{el.volume=Number(audioVolume.value);el.loop=audioLoop.checked;await playXRAudio(el,"preview-audio")},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:true}]})); activeXRMediaId=media.id;
 }
 
 // =========================================================
@@ -4354,7 +4367,7 @@ app.on("update", (dt: number) => {
   }
 
   // Prototype 0.11 / Stage 2 / keep all placed animated media alive.
-  // Prototype 0.16.1 / AUDIO REACTIVE BEHAVIOR: analyser level -> SCALE / SHAKE / ROTATE.
+  // Prototype 0.16.1.2 / AUDIO REACTIVE PLAYBACK + DEFAULT ENABLED FIX: analyser level -> SCALE / SHAKE / ROTATE.
   // Analysis is local on every client, so shared audio remains synchronized without flooding the network with per-frame messages.
   for (const el of audioElements.values()) {
     const a=el as any; const entity=a.__xrEntity as pc.Entity|undefined; const analyser=a.__xrAnalyser as AnalyserNode|undefined;
@@ -4362,6 +4375,9 @@ app.on("update", (dt: number) => {
       const data=a.__xrAnalyserData as Uint8Array; analyser.getByteTimeDomainData(data); let sum=0; for(let i=0;i<data.length;i++){const v=(data[i]-128)/128;sum+=v*v}
       const raw=Math.min(1,Math.sqrt(sum/data.length)*3.2); const sm=Number(a.__xrReactiveSmoothing??.7); const level=(Number(a.__xrReactiveLevel)||0)*sm+raw*(1-sm); a.__xrReactiveLevel=level;
       const strength=Number(a.__xrReactiveStrength??1); const base=a.__xrReactiveBase || {position:entity.getPosition().clone(),euler:entity.getEulerAngles().clone(),scale:entity.getLocalScale().clone()}; a.__xrReactiveBase=base;
+      // 0.16.1.2: every action starts from the same committed transform. This keeps
+      // switching SCALE -> SHAKE -> ROTATE independent and never touches audio playback.
+      entity.setPosition(base.position); entity.setEulerAngles(base.euler); entity.setLocalScale(base.scale);
       if(a.__xrReactiveAction==="scale"){const f=1+level*strength;entity.setLocalScale(base.scale.x*f,base.scale.y*f,base.scale.z*f)}
       else if(a.__xrReactiveAction==="rotate"){const r=base.euler.clone();r.y+=level*strength*120;entity.setEulerAngles(r)}
       else if(a.__xrReactiveAction==="shake"){const p=base.position.clone();const q=level*strength*.18;p.x+=Math.sin(performance.now()*.041)*q;p.y+=Math.sin(performance.now()*.053+1)*q;p.z+=Math.sin(performance.now()*.047+2)*q;entity.setPosition(p)}

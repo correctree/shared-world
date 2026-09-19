@@ -3169,7 +3169,8 @@ function commitActiveArtworkToWorld() {
       media.playback = {
         play: playCommittedGLB,
         stop: stopCommittedGLB,
-        setLoop: (nextLoop) => {
+        isPlaying: () => !!modelEntity?.anim?.playing,
+        setLoop: (nextLoop: boolean) => {
           loop = nextLoop;
           const clip = selectedClip();
           const anim = modelEntity?.anim;
@@ -3184,13 +3185,13 @@ function commitActiveArtworkToWorld() {
           );
         },
         getClips: () => clips.map((clip) => clip.displayName),
-        playClip: (name) => {
+        playClip: (name: string) => {
           const index = clips.findIndex((clip) => clip.displayName === name);
           if (index < 0) return;
           selectedIndex = index;
           playCommittedGLB();
         }
-      };
+      } as any;
     }
 
     placedMediaRuntimes.push({

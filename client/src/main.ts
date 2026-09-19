@@ -1694,6 +1694,10 @@ async function enterWorld() {
         if (sharedRemoteMediaIds.has(mediaId)) {
           updateSharedSpritePlaceholder(mediaId, media);
         }
+        if (String(media?.type || "") === "audio") {
+          const el=audioElements.get(mediaId);
+          if(el){const cfg=audioConfigFromRef(String(media?.assetRef||""));const a=el as any;a.__xrBaseVolume=cfg.volume;el.loop=cfg.loop;a.__xrSpatial=cfg.spatial;a.__xrDistance=cfg.distance;a.__xrReactiveAction=cfg.reactive;a.__xrReactiveStrength=cfg.strength;a.__xrReactiveSmoothing=cfg.smoothing;a.__xrReactiveRotation=0;a.__xrReactiveLevel=0;el.volume=cfg.volume;console.log("[0.16.1.3 REMOTE AUDIO CONFIG UPDATED]",mediaId,cfg);}
+        }
       });
     });
 
@@ -2323,6 +2327,39 @@ mediaManagerPanel.innerHTML = `
 `;
 document.body.appendChild(mediaManagerPanel);
 
+// Prototype 0.16.1.3 / MEDIA OBJECTS > EDIT / AUDIO SETTINGS + AUDIO REACTIVE
+const managedAudioEditPanel = document.createElement("section");
+managedAudioEditPanel.id = "managedAudioEditPanel";
+managedAudioEditPanel.className = "hidden";
+managedAudioEditPanel.innerHTML = `<div class="managed-audio-edit-title">AUDIO SETTINGS</div>
+<label class="managed-audio-row"><span>Volume</span><input id="managedAudioVolume" type="range" min="0" max="1" step="0.05" value="0.8"></label>
+<label class="managed-audio-check"><input id="managedAudioLoop" type="checkbox"> LOOP</label>
+<label class="managed-audio-check"><input id="managedAudioSpatial" type="checkbox"> SPATIAL AUDIO <strong id="managedAudioSpatialState">ON</strong></label>
+<label class="managed-audio-row"><span>Distance</span><input id="managedAudioDistance" type="range" min="2" max="30" step="1" value="12"></label>
+<div class="managed-audio-reactive-title">AUDIO REACTIVE</div>
+<label class="managed-audio-row"><span>Action</span><select id="managedAudioReactiveAction"><option value="off">OFF</option><option value="scale">SCALE</option><option value="shake">SHAKE</option><option value="rotate">ROTATE</option></select></label>
+<label class="managed-audio-row"><span>Strength</span><input id="managedAudioReactiveStrength" type="range" min="0.1" max="3" step="0.1" value="1"></label>
+<label class="managed-audio-row"><span>Smoothing</span><input id="managedAudioReactiveSmoothing" type="range" min="0" max="0.95" step="0.05" value="0.7"></label>
+<div class="managed-audio-edit-actions"><button id="managedAudioApply" type="button">APPLY</button><button id="managedAudioCancel" type="button">CANCEL</button></div>`;
+mediaManagerPanel.insertBefore(managedAudioEditPanel, mediaManagerList);
+const managedAudioVolume=managedAudioEditPanel.querySelector<HTMLInputElement>("#managedAudioVolume")!;
+const managedAudioLoop=managedAudioEditPanel.querySelector<HTMLInputElement>("#managedAudioLoop")!;
+const managedAudioSpatial=managedAudioEditPanel.querySelector<HTMLInputElement>("#managedAudioSpatial")!;
+const managedAudioSpatialState=managedAudioEditPanel.querySelector<HTMLElement>("#managedAudioSpatialState")!;
+const managedAudioDistance=managedAudioEditPanel.querySelector<HTMLInputElement>("#managedAudioDistance")!;
+const managedAudioReactiveAction=managedAudioEditPanel.querySelector<HTMLSelectElement>("#managedAudioReactiveAction")!;
+const managedAudioReactiveStrength=managedAudioEditPanel.querySelector<HTMLInputElement>("#managedAudioReactiveStrength")!;
+const managedAudioReactiveSmoothing=managedAudioEditPanel.querySelector<HTMLInputElement>("#managedAudioReactiveSmoothing")!;
+const managedAudioApply=managedAudioEditPanel.querySelector<HTMLButtonElement>("#managedAudioApply")!;
+const managedAudioCancel=managedAudioEditPanel.querySelector<HTMLButtonElement>("#managedAudioCancel")!;
+function refreshManagedAudioSpatialUI(){managedAudioSpatialState.textContent=managedAudioSpatial.checked?"ON":"OFF";managedAudioDistance.disabled=!managedAudioSpatial.checked;managedAudioDistance.style.opacity=managedAudioSpatial.checked?"1":".4";}
+managedAudioSpatial.addEventListener("change",refreshManagedAudioSpatialUI);
+function currentAudioAssetRef(id:string){const map:any=getAuthoritativeMediaMap();try{return String(map?.get?.(id)?.assetRef||"");}catch{return "";}}
+function openManagedAudioEditor(id:string){const el=audioElements.get(id);if(!el)return;const a=el as any;managedAudioVolume.value=String(Number(a.__xrBaseVolume??.8));managedAudioLoop.checked=!!el.loop;managedAudioSpatial.checked=!!a.__xrSpatial;managedAudioDistance.value=String(Number(a.__xrDistance??12));managedAudioReactiveAction.value=String(a.__xrReactiveAction||"off");managedAudioReactiveStrength.value=String(Number(a.__xrReactiveStrength??1));managedAudioReactiveSmoothing.value=String(Number(a.__xrReactiveSmoothing??.7));refreshManagedAudioSpatialUI();managedAudioEditPanel.classList.remove("hidden");managedAudioEditPanel.scrollIntoView({block:"start",behavior:"smooth"});}
+function applyManagedAudioConfig(id:string){const el=audioElements.get(id);const item=managedPlacedMedia.get(id);if(!el||!item)return;const a=el as any;a.__xrBaseVolume=Number(managedAudioVolume.value);el.loop=managedAudioLoop.checked;a.__xrSpatial=managedAudioSpatial.checked;a.__xrDistance=Number(managedAudioDistance.value);a.__xrReactiveAction=managedAudioReactiveAction.value as AudioReactiveAction;a.__xrReactiveStrength=Number(managedAudioReactiveStrength.value);a.__xrReactiveSmoothing=Number(managedAudioReactiveSmoothing.value);a.__xrReactiveRotation=0;a.__xrReactiveLevel=0;if(a.__xrReactiveBase){const b=a.__xrReactiveBase;item.entity.setPosition(b.position);item.entity.setEulerAngles(b.euler);item.entity.setLocalScale(b.scale);}a.__xrReactiveBase={position:item.entity.getPosition().clone(),euler:item.entity.getEulerAngles().clone(),scale:item.entity.getLocalScale().clone()};el.volume=Number(managedAudioVolume.value);const oldRef=currentAudioAssetRef(id);if(activeRoom&&oldRef){const u=new URL(oldRef,window.location.href);u.searchParams.set("volume",managedAudioVolume.value);u.searchParams.set("loop",managedAudioLoop.checked?"1":"0");u.searchParams.set("spatial",managedAudioSpatial.checked?"1":"0");u.searchParams.set("distance",managedAudioDistance.value);u.searchParams.set("reactive",managedAudioReactiveAction.value);u.searchParams.set("strength",managedAudioReactiveStrength.value);u.searchParams.set("smoothing",managedAudioReactiveSmoothing.value);const p=item.entity.getPosition(),r=item.entity.getEulerAngles(),sc=item.entity.getLocalScale();activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationY:r.y,scale:sc.x,assetRef:u.toString()});}managedAudioEditPanel.classList.add("hidden");console.log("[0.16.1.3 AUDIO CONFIG APPLIED]",id);}
+managedAudioApply.addEventListener("click",()=>{if(selectedManagedMediaId)applyManagedAudioConfig(selectedManagedMediaId);});
+managedAudioCancel.addEventListener("click",()=>managedAudioEditPanel.classList.add("hidden"));
+
 const mediaManagerStyle = document.createElement("style");
 mediaManagerStyle.textContent = `
   #mediaManagerButton {
@@ -2391,6 +2428,15 @@ mediaManagerStyle.textContent = `
     margin-top:10px; padding-top:9px; border-top:1px solid #28313d;
     font-size:10px; font-weight:800; letter-spacing:.08em; opacity:.7;
   }
+  #managedAudioEditPanel { margin:0 0 12px; padding:12px; border:1px solid #2f8cff; border-radius:12px; background:#0d1724; }
+  #managedAudioEditPanel.hidden { display:none; }
+  .managed-audio-edit-title,.managed-audio-reactive-title { font-size:11px; font-weight:900; letter-spacing:.1em; margin-bottom:8px; }
+  .managed-audio-reactive-title { margin-top:12px; padding-top:10px; border-top:1px solid rgba(255,255,255,.15); font-size:10px; opacity:.8; }
+  .managed-audio-row { display:grid; grid-template-columns:82px 1fr; gap:8px; align-items:center; margin:8px 0; font-size:11px; }
+  .managed-audio-check { display:flex; gap:8px; align-items:center; margin:8px 0; font-size:11px; }
+  #managedAudioSpatialState { margin-left:auto; }
+  .managed-audio-edit-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  .managed-audio-edit-actions button { width:100% !important; min-height:42px; }
   .media-manager-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
   .media-manager-actions button { width:100% !important; }
   #deleteManagedMediaButton { border-color:#7b3940; }
@@ -2784,6 +2830,12 @@ editManagedMediaButton.addEventListener("click", () => {
   if (!selectedManagedMediaId) return;
   const item = managedPlacedMedia.get(selectedManagedMediaId);
   if (!item) return;
+
+  if (item.kind === "audio") {
+    editingManagedMediaId = item.id;
+    openManagedAudioEditor(item.id);
+    return;
+  }
 
   editingManagedMediaId = item.id;
   importedArtworkEntity = item.entity;
@@ -4379,7 +4431,7 @@ app.on("update", (dt: number) => {
       // switching SCALE -> SHAKE -> ROTATE independent and never touches audio playback.
       entity.setPosition(base.position); entity.setEulerAngles(base.euler); entity.setLocalScale(base.scale);
       if(a.__xrReactiveAction==="scale"){const f=1+level*strength;entity.setLocalScale(base.scale.x*f,base.scale.y*f,base.scale.z*f)}
-      else if(a.__xrReactiveAction==="rotate"){const r=base.euler.clone();r.y+=level*strength*120;entity.setEulerAngles(r)}
+      else if(a.__xrReactiveAction==="rotate"){const speedDeg=level*strength*180; a.__xrReactiveRotation=(Number(a.__xrReactiveRotation)||0)+speedDeg*dt; const r=base.euler.clone(); r.y=(r.y+a.__xrReactiveRotation)%360; entity.setEulerAngles(r)}
       else if(a.__xrReactiveAction==="shake"){const p=base.position.clone();const q=level*strength*.18;p.x+=Math.sin(performance.now()*.041)*q;p.y+=Math.sin(performance.now()*.053+1)*q;p.z+=Math.sin(performance.now()*.047+2)*q;entity.setPosition(p)}
     }
     if(entity && (el.paused || !a.__xrReactiveAction || a.__xrReactiveAction==="off") && a.__xrReactiveBase){const b=a.__xrReactiveBase;entity.setPosition(b.position);entity.setEulerAngles(b.euler);entity.setLocalScale(b.scale);if(el.paused)a.__xrReactiveLevel=0}

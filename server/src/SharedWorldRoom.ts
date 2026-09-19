@@ -19,7 +19,7 @@ type AddMediaPayload = {
 };
 
 type UpdateMediaPayload = {
-  id?: string; x?: number; y?: number; z?: number; rotationY?: number; scale?: number;
+  id?: string; x?: number; y?: number; z?: number; rotationY?: number; scale?: number; assetRef?: string;
 };
 type DeleteMediaPayload = { id?: string };
 type MediaActionPayload = {
@@ -138,6 +138,9 @@ export class SharedWorldRoom extends Room<WorldState> {
       media.z=Math.max(-WORLD_LIMIT,Math.min(WORLD_LIMIT,z));
       media.rotationY=rotationY;
       media.scale=Math.max(0.05,Math.min(20,scale));
+      if (typeof payload?.assetRef === "string" && media.type === "audio") {
+        media.assetRef=String(payload.assetRef).slice(0,240);
+      }
       console.log("[media:update stored]", id);
     });
 

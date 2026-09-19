@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.14.7.5.2 SPRITE PUBLISH RECOVERY LOADED]");
+console.log("[PROTOTYPE 0.15.0 INTERACTIVE BEHAVIOR CORE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1961,12 +1961,12 @@ mediaManagerPanel.innerHTML = `
   <div id="mediaManagerList"></div>
 
   <div id="behaviorEditor" class="behavior-editor">
-    <div class="behavior-editor-title">BEHAVIOR</div>
+    <div class="behavior-editor-title">INTERACTIVE BEHAVIOR CORE</div>
     <div id="behaviorEditorStatus" class="behavior-editor-status">SELECT A MEDIA OBJECT</div>
     <div id="behaviorEditorControls" class="behavior-editor-controls hidden">
 
     <label class="behavior-row">
-      <span>Trigger</span>
+      <span>WHEN / Trigger</span>
       <select id="behaviorTrigger">
         <option value="user-proximity">USER PROXIMITY</option>
         <option value="look-at">LOOK AT</option>
@@ -1999,18 +1999,20 @@ mediaManagerPanel.innerHTML = `
     </label>
 
     <label class="behavior-row">
-      <span>Enter Action</span>
+      <span>DO / Enter</span>
       <select id="behaviorEnterAction">
-        <option value="play">PLAY</option>
-        <option value="stop">STOP</option>
+        <option value="play">PLAY MEDIA</option>
+        <option value="stop">STOP MEDIA</option>
+        <option value="none">NONE</option>
       </select>
     </label>
 
     <label class="behavior-row">
-      <span>Leave Action</span>
+      <span>DO / Leave</span>
       <select id="behaviorLeaveAction">
-        <option value="stop">STOP</option>
-        <option value="play">PLAY</option>
+        <option value="stop">STOP MEDIA</option>
+        <option value="play">PLAY MEDIA</option>
+        <option value="none">NONE</option>
       </select>
     </label>
 
@@ -2019,6 +2021,10 @@ mediaManagerPanel.innerHTML = `
       <input id="behaviorEnabled" type="checkbox" checked>
     </label>
 
+    <div class="behavior-test-actions">
+      <button id="behaviorTestEnter" type="button">TEST ENTER</button>
+      <button id="behaviorTestLeave" type="button">TEST LEAVE</button>
+    </div>
     <div id="behaviorStatus" class="behavior-status">READY</div>
     </div>
   </div>
@@ -2083,6 +2089,8 @@ mediaManagerStyle.textContent = `
   #behaviorDistance { width:100%; min-width:0; }
   #behaviorDistanceValue { text-align:right; font-size:11px; white-space:nowrap; }
   #behaviorEnabled { justify-self:start; width:18px !important; height:18px; }
+  .behavior-test-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  .behavior-test-actions button { width:100% !important; padding:8px 6px; font-size:10px; }
   .behavior-status {
     margin-top:10px; padding-top:9px; border-top:1px solid #28313d;
     font-size:10px; font-weight:800; letter-spacing:.08em; opacity:.7;
@@ -2118,8 +2126,16 @@ const behaviorEnterAction = mediaManagerPanel.querySelector<HTMLSelectElement>("
 const behaviorLeaveAction = mediaManagerPanel.querySelector<HTMLSelectElement>("#behaviorLeaveAction")!;
 const behaviorEnabled = mediaManagerPanel.querySelector<HTMLInputElement>("#behaviorEnabled")!;
 const behaviorStatus = mediaManagerPanel.querySelector<HTMLElement>("#behaviorStatus")!;
+const behaviorTestEnter = mediaManagerPanel.querySelector<HTMLButtonElement>("#behaviorTestEnter")!;
+const behaviorTestLeave = mediaManagerPanel.querySelector<HTMLButtonElement>("#behaviorTestLeave")!;
 
-function getSelectedProximityBehavior() {
+// Prototype 0.15.0 / INTERACTIVE BEHAVIOR CORE
+// Trigger detection and Actions are intentionally separated. New Actions such as
+// MOVE / ROTATE / SCALE / PLAY SOUND can be added to this dispatcher without
+// rewriting USER PROXIMITY / LOOK AT / TOUCH trigger detection.
+type XRBehaviorActionId = "play" | "stop" | "none";
+
+function getSelectedInteractiveBehavior() {
   if (!selectedManagedMediaId) return null;
   const object = xrMediaManager.get(selectedManagedMediaId);
   if (!object) return null;
@@ -2140,7 +2156,7 @@ function getSelectedProximityBehavior() {
 }
 
 function refreshBehaviorEditorUI() {
-  const behavior = getSelectedProximityBehavior();
+  const behavior = getSelectedInteractiveBehavior();
   const hasSelection = !!selectedManagedMediaId && managedPlacedMedia.has(selectedManagedMediaId);
 
   behaviorEditor.classList.remove("hidden");
@@ -2172,8 +2188,8 @@ function refreshBehaviorEditorUI() {
   behaviorTouchModeRow.classList.toggle("hidden", !isTouch);
   behaviorTouchMode.value = String((behavior as any).touchMode ?? "toggle");
 
-  behaviorEnterAction.value = behavior.enterAction;
-  behaviorLeaveAction.value = behavior.leaveAction;
+  behaviorEnterAction.value = String((behavior as any).enterAction ?? "play");
+  behaviorLeaveAction.value = String((behavior as any).leaveAction ?? "stop");
   behaviorEnabled.checked = behavior.enabled;
   behaviorStatus.textContent =
     !behavior.enabled ? "DISABLED" :
@@ -2182,15 +2198,15 @@ function refreshBehaviorEditorUI() {
 }
 
 function applyBehaviorEditorUI() {
-  const behavior = getSelectedProximityBehavior();
+  const behavior = getSelectedInteractiveBehavior();
   if (!behavior) return;
 
   (behavior as any).trigger = behaviorTrigger.value;
   behavior.distance = Number(behaviorDistance.value);
   (behavior as any).lookAngle = Number(behaviorLookAngle.value);
   (behavior as any).touchMode = behaviorTouchMode.value;
-  behavior.enterAction = behaviorEnterAction.value as "play" | "stop";
-  behavior.leaveAction = behaviorLeaveAction.value as "play" | "stop";
+  (behavior as any).enterAction = behaviorEnterAction.value as XRBehaviorActionId;
+  (behavior as any).leaveAction = behaviorLeaveAction.value as XRBehaviorActionId;
   behavior.enabled = behaviorEnabled.checked;
   behaviorDistanceValue.textContent = `${behavior.distance.toFixed(1)} m`;
   behaviorLookAngleValue.textContent = `${Number((behavior as any).lookAngle ?? 12).toFixed(0)}°`;
@@ -2228,6 +2244,24 @@ behaviorTouchMode.addEventListener("change", applyBehaviorEditorUI);
 behaviorEnterAction.addEventListener("change", applyBehaviorEditorUI);
 behaviorLeaveAction.addEventListener("change", applyBehaviorEditorUI);
 behaviorEnabled.addEventListener("change", applyBehaviorEditorUI);
+
+behaviorTestEnter.addEventListener("click", () => {
+  if (!selectedManagedMediaId) return;
+  const object = xrMediaManager.get(selectedManagedMediaId);
+  const behavior = getSelectedInteractiveBehavior();
+  if (!object || !behavior) return;
+  runXRBehaviorAction(object, String((behavior as any).enterAction ?? "play"));
+  behaviorStatus.textContent = `TEST ENTER → ${String((behavior as any).enterAction ?? "play").toUpperCase()}`;
+});
+
+behaviorTestLeave.addEventListener("click", () => {
+  if (!selectedManagedMediaId) return;
+  const object = xrMediaManager.get(selectedManagedMediaId);
+  const behavior = getSelectedInteractiveBehavior();
+  if (!object || !behavior) return;
+  runXRBehaviorAction(object, String((behavior as any).leaveAction ?? "stop"));
+  behaviorStatus.textContent = `TEST LEAVE → ${String((behavior as any).leaveAction ?? "stop").toUpperCase()}`;
+});
 
 function refreshMediaManagerUI() {
   mediaManagerList.innerHTML = "";
@@ -3456,11 +3490,25 @@ const lookAtBehaviorState = new Map<string, boolean>();
 const DEFAULT_LOOK_AT_ANGLE_DEG = 12;
 
 function runXRBehaviorAction(object: any, action: string | undefined) {
-  if (action === "play") {
-    void object.playback?.play();
-  } else if (action === "stop") {
-    object.playback?.stop();
+  const actionId = String(action || "none") as XRBehaviorActionId;
+
+  // Action dispatcher: trigger code never needs to know how an Action works.
+  switch (actionId) {
+    case "play":
+      void object.playback?.play();
+      break;
+    case "stop":
+      object.playback?.stop();
+      break;
+    case "none":
+    default:
+      break;
   }
+
+  console.log("[XR ACTION]", {
+    object: object?.title || object?.id || "unknown",
+    action: actionId
+  });
 }
 
 function updateLookAtBehaviors() {

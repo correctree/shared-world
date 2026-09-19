@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.16.0 AUDIO MEDIA CORE LOADED]");
+console.log("[PROTOTYPE 0.16.0.1 AUDIO PLAYBACK + SHARING FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1300,7 +1300,7 @@ async function createSharedAudioFromAsset(mediaId:string, media:any){
     const url=URL.createObjectURL(blob); const el=new Audio(url); const cfg=audioConfigFromRef(ref); const entity=makeAudioMarker(`SharedAudio_${mediaId}`);
     entity.setPosition(Number(media.x),Number(media.y),Number(media.z)); entity.setEulerAngles(0,Number(media.rotationY)||0,0); entity.setLocalScale(Number(media.scale)||1,Number(media.scale)||1,Number(media.scale)||1);
     configureSpatialAudioElement(mediaId,el,entity,cfg);
-    const remote=createMediaObject({title:media.title||"Audio",type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{try{await el.play()}catch(e){console.warn("[AUDIO PLAY BLOCKED]",e)}},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:false}]});
+    const remote=createMediaObject({title:media.title||"Audio",type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{try{console.log("[AUDIO PLAY]",mediaId,{readyState:el.readyState,volume:el.volume});await el.play()}catch(e){console.warn("[AUDIO PLAY BLOCKED]",e)}},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:false}]});
     (remote as any).id=mediaId; xrMediaManager.register(remote as any); managedPlacedMedia.set(mediaId,{id:mediaId,title:`${media.title||"Audio"} [SHARED]`,kind:"audio",entity}); sharedRemoteMediaIds.add(mediaId);
     placedMediaRuntimes.push({id:mediaId,dispose:()=>{el.pause();audioElements.delete(mediaId);URL.revokeObjectURL(url);if(entity.parent)entity.destroy()}}); sharedMediaLoadingIds.delete(mediaId); refreshMediaManagerUI();
   }catch(e){sharedMediaLoadingIds.delete(mediaId);console.error("[SHARED AUDIO LOAD ERROR]",mediaId,e)}
@@ -4266,7 +4266,16 @@ app.on("update", (dt: number) => {
   // Prototype 0.16.0 / lightweight 3D spatial audio + distance attenuation
   for (const el of audioElements.values()) {
     const entity=(el as any).__xrEntity as pc.Entity|undefined; if(!entity)continue; const base=Number((el as any).__xrBaseVolume??.8); const maxD=Number((el as any).__xrDistance??12);
-    if((el as any).__xrSpatial){ const ep=entity.getPosition(), cp=camera.getPosition(); const dx=ep.x-cp.x, dz=ep.z-cp.z, d=Math.hypot(ep.x-cp.x,ep.y-cp.y,ep.z-cp.z); el.volume=Math.max(0,Math.min(1,base*(1-d/maxD))); /* stereo pan is left to platform audio output; attenuation is spatially stable on iOS */ } else el.volume=base;
+    if((el as any).__xrSpatial){
+      const ep=entity.getPosition();
+      // 0.16.0.1: the listener is the local PLAYER, not the third-person camera.
+      // Using the orbit camera made nearby audio silent whenever the camera itself
+      // happened to sit outside the attenuation radius.
+      const localAvatar=currentSessionId ? avatars.get(currentSessionId)?.entity : null;
+      const lp=localAvatar ? localAvatar.getPosition() : camera.getPosition();
+      const d=Math.hypot(ep.x-lp.x,ep.y-lp.y,ep.z-lp.z);
+      el.volume=Math.max(0,Math.min(1,base*(1-d/maxD)));
+    } else el.volume=base;
   }
 
   for (const runtime of placedMediaRuntimes) {

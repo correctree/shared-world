@@ -10,12 +10,12 @@ function parseAssetName(raw: string) {
     .replace(/[^a-zA-Z0-9_.-]/g, "")
     .slice(0, 96);
 
-  const match = clean.match(/^([a-zA-Z0-9_-]{1,80})\.(zip|glb|webm)$/i);
+  const match = clean.match(/^([a-zA-Z0-9_-]{1,80})\.(zip|glb|webm|mp3|wav)$/i);
   if (!match) return null;
 
   return {
     id: match[1],
-    ext: match[2].toLowerCase() as "zip" | "glb" | "webm"
+    ext: match[2].toLowerCase() as "zip" | "glb" | "webm" | "mp3" | "wav"
   };
 }
 
@@ -100,7 +100,11 @@ const server = defineServer({
           ? "model/gltf-binary"
           : parsed.ext === "webm"
             ? "video/webm"
-            : "application/zip"
+            : parsed.ext === "mp3"
+              ? "audio/mpeg"
+              : parsed.ext === "wav"
+                ? "audio/wav"
+                : "application/zip"
       );
       res.setHeader("Content-Length", String(data.length));
       res.send(data);
@@ -109,7 +113,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.14.7.1",
+        service: "shared-world-0.16.0.1",
         sharedAssets: sharedAssets.size
       })
     );
@@ -118,4 +122,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.14.7.1] Session + World Recovery ready");
+console.log("[Prototype 0.16.0.1] Audio Playback + Sharing Fix ready");

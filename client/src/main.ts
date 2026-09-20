@@ -423,8 +423,11 @@ function particleMaterial(mode:"spark"|"smoke"|"custom") {
   if(existing) existing.destroy();
   const mat=new pc.StandardMaterial();
   const tint=mode!=="smoke"?colorFromHex(currentWorldEnvironment.particleColor):null;
-  mat.diffuse=tint || (mode==="smoke"?new pc.Color(.7,.76,.82):new pc.Color(1,.66,.2));
-  mat.emissive=tint || (mode==="smoke"?new pc.Color(.3,.34,.38):new pc.Color(1,.6,.15));
+  // Emissive is the only color source for sparks. Diffuse light otherwise
+  // adds to emissive and washes bright colors toward white.
+  mat.diffuse=mode==="spark"?new pc.Color(0,0,0):
+    (tint || new pc.Color(.7,.76,.82));
+  mat.emissive=tint || new pc.Color(.3,.34,.38);
   mat.opacity=mode==="smoke"?.42:1;
   if(mode==="custom" && customParticleTexture) {
     mat.diffuseMap=customParticleTexture;
@@ -3147,6 +3150,7 @@ environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
   <label style="display:block;font-size:12px;margin:9px 0">SPARKS / CUSTOM COLOR
     <input data-env="particleColor" type="color" value="#ffbb55">
   </label>
+  <div data-particle-color-status style="font-size:11px;color:#aaccdf;margin:8px 0"></div>
   <label style="display:block;font-size:12px;margin:9px 0">CUSTOM PARTICLE IMAGE (PNG)
     <input data-particle-file type="file" accept="image/png">
   </label>
@@ -3255,6 +3259,10 @@ function refreshEnvironmentEditor() {
     const display=environmentEditor.querySelector<HTMLElement>(`[data-value="${key}"]`);
     if(display) display.textContent=String(value);
   }
+  const colorStatus=environmentEditor.querySelector<HTMLElement>("[data-particle-color-status]")!;
+  colorStatus.textContent=`ROOM COLOR: ${currentWorldEnvironment.particleColor.toUpperCase()} / ${currentWorldEnvironment.particles.toUpperCase()}`;
+  colorStatus.style.borderLeft=`10px solid ${currentWorldEnvironment.particleColor}`;
+  colorStatus.style.paddingLeft="7px";
 }
 refreshEnvironmentEditor();
 environmentEditor.addEventListener("input",(event)=>{
@@ -3301,6 +3309,8 @@ environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEvent
     panoramaStatus.textContent="Select a 2:1 image first.";
     return;
   }
+  environmentEditor.querySelector<HTMLElement>("[data-particle-color-status]")!.textContent=
+    `SENDING: ${String(payload.particleColor).toUpperCase()} / ${String(payload.particles).toUpperCase()}`;
   activeRoom.send("environment:set",payload);
 });
 environmentEditor.querySelector<HTMLButtonElement>("[data-fog-demo]")!.addEventListener("click",()=>{

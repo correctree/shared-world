@@ -419,10 +419,10 @@ async function setCustomParticle(ref:string) {
 }
 function particleMaterial(mode:"spark"|"smoke"|"custom") {
   const existing=particleMaterials.get(mode);
-  if(existing && mode!=="custom") return existing;
+  if(existing && mode==="smoke") return existing;
   if(existing) existing.destroy();
   const mat=new pc.StandardMaterial();
-  const tint=mode==="custom"?colorFromHex(currentWorldEnvironment.particleColor):null;
+  const tint=mode!=="smoke"?colorFromHex(currentWorldEnvironment.particleColor):null;
   mat.diffuse=tint || (mode==="smoke"?new pc.Color(.7,.76,.82):new pc.Color(1,.66,.2));
   mat.emissive=tint || (mode==="smoke"?new pc.Color(.3,.34,.38):new pc.Color(1,.6,.15));
   mat.opacity=mode==="smoke"?.42:1;
@@ -3144,7 +3144,7 @@ environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
   <label style="display:block;font-size:12px;margin:9px 0">SIZE
     <input data-env="particleSize" type="range" min="0.2" max="4" step="0.1" value="1"> <span data-value="particleSize"></span>
   </label>
-  <label style="display:block;font-size:12px;margin:9px 0">CUSTOM COLOR
+  <label style="display:block;font-size:12px;margin:9px 0">SPARKS / CUSTOM COLOR
     <input data-env="particleColor" type="color" value="#ffbb55">
   </label>
   <label style="display:block;font-size:12px;margin:9px 0">CUSTOM PARTICLE IMAGE (PNG)

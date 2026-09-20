@@ -33,8 +33,21 @@ export class SharedWorldRoom extends Room<WorldState> {
     sky:"#090c11", ground:"#262b33", grid:"#474d57", gridVisible:true,
     ambient:0.45, sunlight:1.5, lightColor:"#ffffff", sunAngle:45,
     skyMode:"color", skyAssetRef:"", groundMode:"plain", groundSize:15,
-    groundAssetRef:"", particles:"off", particleCount:16
+    groundAssetRef:"", particles:"off", particleCount:16,
+    particleDuration:0,particleRadius:5,particleSpeed:1,particleSize:1,
+    particleColor:"#ffbb55",particleAssetRef:""
   };
+  private particleEndTimer:ReturnType<typeof setTimeout>|null=null;
+  private scheduleParticleEnd() {
+    if(this.particleEndTimer) clearTimeout(this.particleEndTimer);
+    this.particleEndTimer=null;
+    if(this.environment.particles==="off" || this.environment.particleDuration<=0) return;
+    this.particleEndTimer=setTimeout(()=>{
+      this.particleEndTimer=null;
+      this.environment={...this.environment,particles:"off"};
+      this.broadcast("environment:state",this.environment);
+    },this.environment.particleDuration*1000);
+  }
   private worldLimit(size:number=this.environment.groundSize) { return Math.max(6.5,size/2-1); }
   private cleanEnvironment(input:any) {
     if (!input || typeof input!=="object") return null;
@@ -61,8 +74,16 @@ export class SharedWorldRoom extends Room<WorldState> {
       groundAssetRef:typeof input.groundAssetRef==="string" && input.groundAssetRef.length<=240 &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.groundAssetRef)
         ?input.groundAssetRef:"",
-      particles:["off","spark","smoke"].includes(input.particles)?input.particles:"off",
-      particleCount:[8,16,24].includes(Number(input.particleCount))?Number(input.particleCount):16
+      particles:["off","spark","smoke","custom"].includes(input.particles)?input.particles:"off",
+      particleCount:Math.round(number(input.particleCount,16,1,64)),
+      particleDuration:number(input.particleDuration,0,0,300),
+      particleRadius:number(input.particleRadius,5,1,20),
+      particleSpeed:number(input.particleSpeed,1,0.1,4),
+      particleSize:number(input.particleSize,1,0.2,4),
+      particleColor:color(input.particleColor,"#ffbb55"),
+      particleAssetRef:typeof input.particleAssetRef==="string" && input.particleAssetRef.length<=240 &&
+        /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.particleAssetRef)
+        ?input.particleAssetRef:""
     };
   }
   private mediaBehaviors = new Map<string, Record<string, unknown>>();
@@ -361,6 +382,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       const next=this.cleanEnvironment(payload);
       if (!next) return;
       this.environment=next;
+      this.scheduleParticleEnd();
       const limit=this.worldLimit();
       for(const player of this.state.players.values()) {
         player.x=Math.max(-limit,Math.min(limit,player.x));
@@ -448,6 +470,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         const imported=importedEnvironment;
         if (imported) {
           this.environment=imported;
+          this.scheduleParticleEnd();
           this.broadcast("environment:state",imported);
           client.send("environment:state",imported);
         }

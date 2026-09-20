@@ -241,13 +241,17 @@ type WorldEnvironment = {
   ambient:number;sunlight:number;lightColor:string;sunAngle:number;
   skyMode:"color"|"panorama";skyAssetRef:string;
   groundMode:"plain"|"soil"|"water"|"custom";groundSize:number;groundAssetRef:string;
-  particles:"off"|"spark"|"smoke";particleCount:number
+  particles:"off"|"spark"|"smoke"|"custom";particleCount:number;
+  particleDuration:number;particleRadius:number;particleSpeed:number;
+  particleSize:number;particleColor:string;particleAssetRef:string
 };
 const defaultWorldEnvironment:WorldEnvironment = {
   sky:"#090c11",ground:"#262b33",grid:"#474d57",gridVisible:true,
   ambient:0.45,sunlight:1.5,lightColor:"#ffffff",sunAngle:45,
   skyMode:"color",skyAssetRef:"",groundMode:"plain",groundSize:15,
-  groundAssetRef:"",particles:"off",particleCount:16
+  groundAssetRef:"",particles:"off",particleCount:16,
+  particleDuration:0,particleRadius:5,particleSpeed:1,particleSize:1,
+  particleColor:"#ffbb55",particleAssetRef:""
 };
 let currentWorldEnvironment:WorldEnvironment={...defaultWorldEnvironment};
 let panoramaEntity:pc.Entity|null=null;
@@ -371,14 +375,56 @@ const particleMaterials=new Map<string,pc.StandardMaterial>();
 let activeParticleMode="off";
 let activeParticleCount=0;
 let particleTime=0;
-function particleMaterial(mode:"spark"|"smoke") {
+let customParticleTexture:pc.Texture|null=null;
+let customParticleURL:string|null=null;
+let customParticleRef="";
+let customParticleRequest=0;
+async function setCustomParticle(ref:string) {
+  if(ref===customParticleRef && customParticleTexture) return;
+  const request=++customParticleRequest;
+  customParticleRef=ref;
+  const material=particleMaterials.get("custom");
+  if(material) {material.diffuseMap=null;material.opacityMap=null;material.update();}
+  if(customParticleTexture) {customParticleTexture.destroy();customParticleTexture=null;}
+  if(customParticleURL) {URL.revokeObjectURL(customParticleURL);customParticleURL=null;}
+  if(!ref) return;
+  try {
+    const response=await fetch(ref,{cache:"no-store"});
+    if(!response.ok) throw new Error(`HTTP ${response.status}`);
+    const archive=await JSZip.loadAsync(await response.blob());
+    const file=archive.file("particle.png");
+    if(!file) throw new Error("particle.png missing");
+    const blob=await file.async("blob");
+    if(!blob.size || blob.size>1024*1024) throw new Error("Particle image too large");
+    const url=URL.createObjectURL(blob);
+    const image=new Image();image.src=url;
+    try {await image.decode();}
+    catch(error) {URL.revokeObjectURL(url);throw error;}
+    if(request!==customParticleRequest) {URL.revokeObjectURL(url);return;}
+    customParticleTexture=new pc.Texture(app.graphicsDevice,{mipmaps:true});
+    customParticleTexture.setSource(image);customParticleURL=url;
+    particleMaterials.delete("custom");
+    if(currentWorldEnvironment.particles==="custom") {
+      activeParticleMode="loading";
+      setAmbientParticles("custom",currentWorldEnvironment.particleCount);
+    }
+  } catch(error) {console.warn("[CUSTOM PARTICLE LOAD FAILED]",error);}
+}
+function particleMaterial(mode:"spark"|"smoke"|"custom") {
   const existing=particleMaterials.get(mode);
-  if(existing) return existing;
+  if(existing && mode!=="custom") return existing;
+  if(existing) existing.destroy();
   const mat=new pc.StandardMaterial();
-  mat.diffuse=mode==="smoke"?new pc.Color(.7,.76,.82):new pc.Color(1,.66,.2);
-  mat.emissive=mode==="smoke"?new pc.Color(.3,.34,.38):new pc.Color(1,.6,.15);
+  const tint=mode==="custom"?colorFromHex(currentWorldEnvironment.particleColor):null;
+  mat.diffuse=tint || (mode==="smoke"?new pc.Color(.7,.76,.82):new pc.Color(1,.66,.2));
+  mat.emissive=tint || (mode==="smoke"?new pc.Color(.3,.34,.38):new pc.Color(1,.6,.15));
   mat.opacity=mode==="smoke"?.42:1;
-  if(mode==="smoke") {mat.blendType=pc.BLEND_NORMAL;mat.depthWrite=false;}
+  if(mode==="custom" && customParticleTexture) {
+    mat.diffuseMap=customParticleTexture;
+    mat.emissiveMap=customParticleTexture;
+    mat.opacityMap=customParticleTexture;mat.opacityMapChannel="a";
+  }
+  if(mode!=="spark") {mat.blendType=pc.BLEND_NORMAL;mat.depthWrite=false;}
   mat.useLighting=false;mat.update();
   particleMaterials.set(mode,mat);
   return mat;
@@ -393,7 +439,8 @@ function setAmbientParticles(mode:WorldEnvironment["particles"],count:number) {
     const entity=new pc.Entity(`Ambient-${mode}-${i}`);
     entity.addComponent("render",{type:"sphere"});
     entity.render!.material=mat;entity.render!.castShadows=false;
-    const size=mode==="smoke"?1.2+(i%3)*.35:.14+(i%3)*.055;
+    const base=mode==="smoke"?1.2+(i%3)*.35:.14+(i%3)*.055;
+    const size=base*currentWorldEnvironment.particleSize;
     entity.setLocalScale(size,size,size);
     app.root.addChild(entity);ambientParticles.push(entity);
   }
@@ -401,7 +448,7 @@ function setAmbientParticles(mode:WorldEnvironment["particles"],count:number) {
 app.on("update",(dt:number)=>{
   if(!ambientParticles.length) return;
   particleTime+=Math.min(.05,dt);
-  const radius=Math.min(8,Math.max(4,currentWorldEnvironment.groundSize*.14));
+  const radius=currentWorldEnvironment.particleRadius;
   const center=activeRoom?localPosition:new pc.Vec3(0,0,0);
   for(let i=0;i<ambientParticles.length;i++) {
     const entity=ambientParticles[i];
@@ -409,7 +456,8 @@ app.on("update",(dt:number)=>{
     const distance=radius*(.35+(i%9)/13);
     const x=center.x+Math.sin(a)*distance;
     const z=center.z+Math.cos(a)*distance;
-    const rise=(particleTime*(activeParticleMode==="smoke"?.3:.8)+i*.37)%4;
+    const rise=(particleTime*(activeParticleMode==="smoke"?.3:.8)*
+      currentWorldEnvironment.particleSpeed+i*.37)%4;
     entity.setPosition(x,.6+rise,z);
   }
 });
@@ -444,15 +492,23 @@ function applyWorldEnvironment(payload:any) {
     groundMode:["plain","soil","water","custom"].includes(payload.groundMode)?payload.groundMode:"plain",
     groundSize:[15,60,160].includes(Number(payload.groundSize))?Number(payload.groundSize):15,
     groundAssetRef:typeof payload.groundAssetRef==="string"?payload.groundAssetRef:"",
-    particles:["off","spark","smoke"].includes(payload.particles)?payload.particles:"off",
-    particleCount:[8,16,24].includes(Number(payload.particleCount))?Number(payload.particleCount):16
+    particles:["off","spark","smoke","custom"].includes(payload.particles)?payload.particles:"off",
+    particleCount:Math.round(number(payload.particleCount,16,1,64)),
+    particleDuration:number(payload.particleDuration,0,0,300),
+    particleRadius:number(payload.particleRadius,5,1,20),
+    particleSpeed:number(payload.particleSpeed,1,.1,4),
+    particleSize:number(payload.particleSize,1,.2,4),
+    particleColor:color(payload.particleColor,"#ffbb55"),
+    particleAssetRef:typeof payload.particleAssetRef==="string"?payload.particleAssetRef:""
   };
   camera.camera!.clearColor=colorFromHex(currentWorldEnvironment.sky);
   floorMaterial.diffuse=currentWorldEnvironment.groundMode==="plain"
     ? colorFromHex(currentWorldEnvironment.ground) : new pc.Color(1,1,1);
   setGroundStyle(currentWorldEnvironment.groundMode);
   void setCustomGround(currentWorldEnvironment.groundMode==="custom"?currentWorldEnvironment.groundAssetRef:"");
+  activeParticleMode="loading";
   setAmbientParticles(currentWorldEnvironment.particles,currentWorldEnvironment.particleCount);
+  void setCustomParticle(currentWorldEnvironment.particles==="custom"?currentWorldEnvironment.particleAssetRef:"");
   void setPanorama(currentWorldEnvironment.skyMode==="panorama"?currentWorldEnvironment.skyAssetRef:"");
   gridMaterial.diffuse=colorFromHex(currentWorldEnvironment.grid);gridMaterial.update();
   const size=currentWorldEnvironment.groundSize;
@@ -2695,7 +2751,7 @@ async function exportPortableWorld(manifest:any, room:Room) {
         zip.file(`assets/${name}`,blob);
       }
     }
-    for (const field of ["skyAssetRef","groundAssetRef"] as const) {
+    for (const field of ["skyAssetRef","groundAssetRef","particleAssetRef"] as const) {
       const ref=manifest.environment?.[field];
       if (!ref) continue;
       const name=portableAssetName(ref);
@@ -2777,7 +2833,7 @@ worldPackageInput.addEventListener("change",async()=>{
         media[field]=uploaded.get(name)!+settings;
       }
     }
-    for (const field of ["skyAssetRef","groundAssetRef"] as const) {
+    for (const field of ["skyAssetRef","groundAssetRef","particleAssetRef"] as const) {
       const ref=manifest.environment?.[field];
       if(!ref) continue;
       const name=portableAssetName(ref);
@@ -2979,11 +3035,30 @@ environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
     <input data-ground-file type="file" accept="image/jpeg,image/png">
   </label>
   <label style="display:block;font-size:12px;margin:9px 0">PARTICLES
-    <select data-env="particles"><option value="off">OFF</option><option value="spark">SPARKS</option><option value="smoke">SMOKE</option></select>
+    <select data-env="particles"><option value="off">OFF</option><option value="spark">SPARKS</option><option value="smoke">SMOKE</option><option value="custom">CUSTOM IMAGE</option></select>
   </label>
   <label style="display:block;font-size:12px;margin:9px 0">PARTICLE COUNT
-    <select data-env="particleCount"><option value="8">8</option><option value="16">16</option><option value="24">24</option></select>
+    <input data-env="particleCount" type="number" min="1" max="64" step="1" value="16">
   </label>
+  <label style="display:block;font-size:12px;margin:9px 0">DURATION (SECONDS, 0 = ALWAYS)
+    <input data-env="particleDuration" type="number" min="0" max="300" step="1" value="0">
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">RANGE (METERS)
+    <input data-env="particleRadius" type="range" min="1" max="20" step="1" value="5"> <span data-value="particleRadius"></span>
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">SPEED
+    <input data-env="particleSpeed" type="range" min="0.1" max="4" step="0.1" value="1"> <span data-value="particleSpeed"></span>
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">SIZE
+    <input data-env="particleSize" type="range" min="0.2" max="4" step="0.1" value="1"> <span data-value="particleSize"></span>
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">CUSTOM COLOR
+    <input data-env="particleColor" type="color" value="#ffbb55">
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">CUSTOM PARTICLE IMAGE (PNG)
+    <input data-particle-file type="file" accept="image/png">
+  </label>
+  <div data-particle-status style="font-size:11px;color:#aaccdf;margin:8px 0"></div>
   <div data-ground-status style="font-size:11px;color:#aaccdf;margin:8px 0"></div>
   <div data-panorama-status style="font-size:11px;color:#aaccdf;margin:8px 0"></div>
   <button type="button" data-env-apply>APPLY TO ROOM</button>
@@ -2991,6 +3066,37 @@ environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
 mediaManagerPanel.appendChild(environmentEditor);
 let uploadedPanoramaRef="";
 let uploadedGroundRef="";
+let uploadedParticleRef="";
+const customParticleInput=environmentEditor.querySelector<HTMLInputElement>("[data-particle-file]")!;
+const customParticleStatus=environmentEditor.querySelector<HTMLElement>("[data-particle-status]")!;
+customParticleInput.addEventListener("change",async()=>{
+  const file=customParticleInput.files?.[0];customParticleInput.value="";
+  if(!file || !activeRoom) return;
+  if(file.type!=="image/png" || file.size>4*1024*1024) {
+    customParticleStatus.textContent="Select a PNG image under 4 MB.";return;
+  }
+  try {
+    const image=new Image();const local=URL.createObjectURL(file);
+    try {image.src=local;await image.decode();}
+    finally {URL.revokeObjectURL(local);}
+    const canvas=document.createElement("canvas");canvas.width=128;canvas.height=128;
+    const scale=Math.min(128/image.naturalWidth,128/image.naturalHeight);
+    canvas.getContext("2d")!.drawImage(image,
+      (128-image.naturalWidth*scale)/2,(128-image.naturalHeight*scale)/2,
+      image.naturalWidth*scale,image.naturalHeight*scale);
+    const png=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(
+      b=>b?resolve(b):reject(new Error("Image conversion failed")),"image/png"));
+    const archive=new JSZip();archive.file("particle.png",png);
+    const blob=await archive.generateAsync({type:"blob",compression:"STORE"});
+    const ref=sharedAssetURL(`particle-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,"zip");
+    customParticleStatus.textContent="Uploading particle image…";
+    const response=await fetch(ref,{method:"PUT",body:blob});
+    if(!response.ok) throw new Error(`Upload HTTP ${response.status}`);
+    uploadedParticleRef=ref;
+    environmentEditor.querySelector<HTMLSelectElement>("[data-env=particles]")!.value="custom";
+    customParticleStatus.textContent="128×128 PNG ready. Press APPLY TO ROOM.";
+  } catch(error) {customParticleStatus.textContent=`Particle image error: ${String(error)}`;}
+});
 const customGroundInput=environmentEditor.querySelector<HTMLInputElement>("[data-ground-file]")!;
 const customGroundStatus=environmentEditor.querySelector<HTMLElement>("[data-ground-status]")!;
 customGroundInput.addEventListener("change",async()=>{
@@ -3054,9 +3160,18 @@ function refreshEnvironmentEditor() {
     if (!input) continue;
     if (input.type==="checkbox") input.checked=Boolean(value);
     else input.value=String(value);
+    const display=environmentEditor.querySelector<HTMLElement>(`[data-value="${key}"]`);
+    if(display) display.textContent=String(value);
   }
 }
 refreshEnvironmentEditor();
+environmentEditor.addEventListener("input",(event)=>{
+  const input=event.target as HTMLInputElement;
+  const key=input?.getAttribute?.("data-env");
+  if(!key) return;
+  const display=environmentEditor.querySelector<HTMLElement>(`[data-value="${key}"]`);
+  if(display) display.textContent=input.value;
+});
 environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEventListener("click",()=>{
   if (!activeRoom) return;
   const payload:any={};
@@ -3064,10 +3179,16 @@ environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEvent
     const input=environmentEditor.querySelector<HTMLInputElement>(`[data-env="${key}"]`);
     if (!input) continue;
     payload[key]=input.type==="checkbox"?input.checked:
-      input.type==="range" || key==="groundSize" || key==="particleCount"?Number(input.value):input.value;
+      input.type==="range" || key==="groundSize" ||
+      key==="particleCount" || key==="particleDuration"?Number(input.value):input.value;
   }
   payload.skyAssetRef=uploadedPanoramaRef || currentWorldEnvironment.skyAssetRef;
   payload.groundAssetRef=uploadedGroundRef || currentWorldEnvironment.groundAssetRef;
+  payload.particleAssetRef=uploadedParticleRef || currentWorldEnvironment.particleAssetRef;
+  if(payload.particles==="custom" && !payload.particleAssetRef) {
+    customParticleStatus.textContent="Select a custom particle PNG first.";
+    return;
+  }
   if(payload.groundMode==="custom" && !payload.groundAssetRef) {
     customGroundStatus.textContent="Select a ground image first.";
     return;

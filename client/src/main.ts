@@ -2448,11 +2448,21 @@ function portableAssetName(value:unknown):string|null {
   if (typeof value !== "string" || !value) return null;
   try {
     const url=new URL(value,SERVER_URL);
-    if (url.origin !== new URL(SERVER_URL).origin || url.search || url.hash) return null;
+    if (url.origin !== new URL(SERVER_URL).origin || url.hash) return null;
     const match=/^\/assets\/([^/]+)$/.exec(url.pathname);
     if (!match) return null;
     const name=decodeURIComponent(match[1]);
-    return assetNamePattern.test(name) ? name : null;
+    if (!assetNamePattern.test(name)) return null;
+    if (url.search) {
+      if (!/\.(mp3|wav)$/i.test(name)) return null;
+      const allowed=new Set(["volume","loop","spatial","distance","reactive","strength","smoothing"]);
+      let validSettings=true;
+      url.searchParams.forEach((value,key)=>{
+        if (!allowed.has(key) || value.length>32) validSettings=false;
+      });
+      if (!validSettings) return null;
+    }
+    return name;
   } catch { return null; }
 }
 async function exportPortableWorld(manifest:any, room:Room) {
@@ -2547,7 +2557,8 @@ worldPackageInput.addEventListener("change",async()=>{
           if (!response.ok) throw new Error(`Upload ${name}: HTTP ${response.status}`);
           uploaded.set(name,url);
         }
-        media[field]=uploaded.get(name);
+        const settings=new URL(original,SERVER_URL).search;
+        media[field]=uploaded.get(name)!+settings;
       }
     }
     if (room !== activeRoom) throw new Error("Room changed during import");

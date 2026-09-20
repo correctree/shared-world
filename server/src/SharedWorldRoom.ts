@@ -35,7 +35,10 @@ export class SharedWorldRoom extends Room<WorldState> {
     skyMode:"color", skyAssetRef:"", groundMode:"plain", groundSize:15,
     groundAssetRef:"", particles:"off", particleCount:16,
     particleDuration:0,particleRadius:5,particleSpeed:1,particleSize:1,
-    particleColor:"#ffbb55",particleAssetRef:""
+    particleColor:"#ffbb55",particleAssetRef:"",
+    environmentPreset:"custom",cycleEnabled:false,cycleMinutes:8,cycleStartedAt:0,
+    fogEnabled:false,fogColor:"#9caab8",fogDensity:0.5,fogDistance:60,
+    groundRepeat:1,groundRotation:0
   };
   private particleEndTimer:ReturnType<typeof setTimeout>|null=null;
   private scheduleParticleEnd() {
@@ -83,7 +86,18 @@ export class SharedWorldRoom extends Room<WorldState> {
       particleColor:color(input.particleColor,"#ffbb55"),
       particleAssetRef:typeof input.particleAssetRef==="string" && input.particleAssetRef.length<=240 &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.particleAssetRef)
-        ?input.particleAssetRef:""
+        ?input.particleAssetRef:"",
+      environmentPreset:["custom","morning","day","sunset","night"].includes(input.environmentPreset)
+        ?input.environmentPreset:"custom",
+      cycleEnabled:input.cycleEnabled===true,
+      cycleMinutes:number(input.cycleMinutes,8,1,60),
+      cycleStartedAt:number(input.cycleStartedAt,0,0,Date.now()+60000),
+      fogEnabled:input.fogEnabled===true,
+      fogColor:color(input.fogColor,"#9caab8"),
+      fogDensity:number(input.fogDensity,.5,.05,1),
+      fogDistance:number(input.fogDistance,60,5,200),
+      groundRepeat:number(input.groundRepeat,1,.2,10),
+      groundRotation:number(input.groundRotation,0,0,360)
     };
   }
   private mediaBehaviors = new Map<string, Record<string, unknown>>();
@@ -381,6 +395,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       if (!this.state.players.has(client.sessionId)) return;
       const next=this.cleanEnvironment(payload);
       if (!next) return;
+      if(next.cycleEnabled) next.cycleStartedAt=Date.now();
       this.environment=next;
       this.scheduleParticleEnd();
       const limit=this.worldLimit();
@@ -469,6 +484,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       if (payload.environment) {
         const imported=importedEnvironment;
         if (imported) {
+          if(imported.cycleEnabled) imported.cycleStartedAt=Date.now();
           this.environment=imported;
           this.scheduleParticleEnd();
           this.broadcast("environment:state",imported);

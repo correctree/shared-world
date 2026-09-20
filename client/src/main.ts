@@ -243,7 +243,11 @@ type WorldEnvironment = {
   groundMode:"plain"|"soil"|"water"|"custom";groundSize:number;groundAssetRef:string;
   particles:"off"|"spark"|"smoke"|"custom";particleCount:number;
   particleDuration:number;particleRadius:number;particleSpeed:number;
-  particleSize:number;particleColor:string;particleAssetRef:string
+  particleSize:number;particleColor:string;particleAssetRef:string;
+  environmentPreset:"custom"|"morning"|"day"|"sunset"|"night";
+  cycleEnabled:boolean;cycleMinutes:number;cycleStartedAt:number;
+  fogEnabled:boolean;fogColor:string;fogDensity:number;fogDistance:number;
+  groundRepeat:number;groundRotation:number
 };
 const defaultWorldEnvironment:WorldEnvironment = {
   sky:"#090c11",ground:"#262b33",grid:"#474d57",gridVisible:true,
@@ -251,7 +255,10 @@ const defaultWorldEnvironment:WorldEnvironment = {
   skyMode:"color",skyAssetRef:"",groundMode:"plain",groundSize:15,
   groundAssetRef:"",particles:"off",particleCount:16,
   particleDuration:0,particleRadius:5,particleSpeed:1,particleSize:1,
-  particleColor:"#ffbb55",particleAssetRef:""
+  particleColor:"#ffbb55",particleAssetRef:"",
+  environmentPreset:"custom",cycleEnabled:false,cycleMinutes:8,cycleStartedAt:0,
+  fogEnabled:false,fogColor:"#9caab8",fogDensity:.5,fogDistance:60,
+  groundRepeat:1,groundRotation:0
 };
 let currentWorldEnvironment:WorldEnvironment={...defaultWorldEnvironment};
 let panoramaEntity:pc.Entity|null=null;
@@ -472,6 +479,48 @@ function colorFromHex(hex:string):pc.Color {
   const value=parseInt(hex.slice(1),16);
   return new pc.Color(((value>>16)&255)/255,((value>>8)&255)/255,(value&255)/255);
 }
+const timePresets={
+  morning:{sky:"#739ab8",ambient:.6,sunlight:1.5,lightColor:"#ffd9a3",sunAngle:20},
+  day:{sky:"#75b5e6",ambient:.9,sunlight:2.5,lightColor:"#ffffff",sunAngle:65},
+  sunset:{sky:"#b56b78",ambient:.5,sunlight:1.1,lightColor:"#ffae72",sunAngle:12},
+  night:{sky:"#090c22",ambient:.25,sunlight:.15,lightColor:"#9ab8ff",sunAngle:15}
+} as const;
+let environmentFrame=0;
+function renderTimeEnvironment() {
+  const environment=currentWorldEnvironment;
+  let sky=colorFromHex(environment.sky);
+  let lightColor=colorFromHex(environment.lightColor);
+  let ambient=environment.ambient;
+  let sunlight=environment.sunlight;
+  let sunAngle=environment.sunAngle;
+  if(environment.cycleEnabled) {
+    const cycleMs=environment.cycleMinutes*60000;
+    const elapsed=((Date.now()-environment.cycleStartedAt)%cycleMs+cycleMs)%cycleMs;
+    const position=elapsed/cycleMs*4;
+    const stops=[timePresets.morning,timePresets.day,timePresets.sunset,timePresets.night];
+    const first=stops[Math.floor(position)%4];
+    const second=stops[(Math.floor(position)+1)%4];
+    const t=position%1;
+    sky=new pc.Color().lerp(colorFromHex(first.sky),colorFromHex(second.sky),t);
+    lightColor=new pc.Color().lerp(
+      colorFromHex(first.lightColor),colorFromHex(second.lightColor),t);
+    ambient=first.ambient+(second.ambient-first.ambient)*t;
+    sunlight=first.sunlight+(second.sunlight-first.sunlight)*t;
+    sunAngle=first.sunAngle+(second.sunAngle-first.sunAngle)*t;
+  }
+  camera.camera!.clearColor=sky;
+  app.scene.ambientLight=new pc.Color(ambient,ambient,ambient);
+  light.light!.intensity=sunlight;
+  light.light!.color=lightColor;
+  light.setEulerAngles(sunAngle,35,0);
+}
+app.on("update",(dt:number)=>{
+  if(!currentWorldEnvironment.cycleEnabled) return;
+  environmentFrame+=dt;
+  if(environmentFrame<.15) return;
+  environmentFrame=0;
+  renderTimeEnvironment();
+});
 function applyWorldEnvironment(payload:any) {
   if (!payload || typeof payload!=="object") return;
   const color=(v:any,fallback:string)=>typeof v==="string" && /^#[0-9a-fA-F]{6}$/.test(v)?v:fallback;
@@ -499,9 +548,24 @@ function applyWorldEnvironment(payload:any) {
     particleSpeed:number(payload.particleSpeed,1,.1,4),
     particleSize:number(payload.particleSize,1,.2,4),
     particleColor:color(payload.particleColor,"#ffbb55"),
-    particleAssetRef:typeof payload.particleAssetRef==="string"?payload.particleAssetRef:""
+    particleAssetRef:typeof payload.particleAssetRef==="string"?payload.particleAssetRef:"",
+    environmentPreset:["custom","morning","day","sunset","night"].includes(payload.environmentPreset)
+      ?payload.environmentPreset:"custom",
+    cycleEnabled:payload.cycleEnabled===true,
+    cycleMinutes:number(payload.cycleMinutes,8,1,60),
+    cycleStartedAt:number(payload.cycleStartedAt,0,0,Date.now()+60000),
+    fogEnabled:payload.fogEnabled===true,
+    fogColor:color(payload.fogColor,"#9caab8"),
+    fogDensity:number(payload.fogDensity,.5,.05,1),
+    fogDistance:number(payload.fogDistance,60,5,200),
+    groundRepeat:number(payload.groundRepeat,1,.2,10),
+    groundRotation:number(payload.groundRotation,0,0,360)
   };
-  camera.camera!.clearColor=colorFromHex(currentWorldEnvironment.sky);
+  renderTimeEnvironment();
+  app.scene.fog.type=currentWorldEnvironment.fogEnabled?pc.FOG_LINEAR:pc.FOG_NONE;
+  app.scene.fog.color=colorFromHex(currentWorldEnvironment.fogColor);
+  app.scene.fog.end=currentWorldEnvironment.fogDistance;
+  app.scene.fog.start=currentWorldEnvironment.fogDistance*(1-.8*currentWorldEnvironment.fogDensity);
   floorMaterial.diffuse=currentWorldEnvironment.groundMode==="plain"
     ? colorFromHex(currentWorldEnvironment.ground) : new pc.Color(1,1,1);
   setGroundStyle(currentWorldEnvironment.groundMode);
@@ -509,7 +573,8 @@ function applyWorldEnvironment(payload:any) {
   activeParticleMode="loading";
   setAmbientParticles(currentWorldEnvironment.particles,currentWorldEnvironment.particleCount);
   void setCustomParticle(currentWorldEnvironment.particles==="custom"?currentWorldEnvironment.particleAssetRef:"");
-  void setPanorama(currentWorldEnvironment.skyMode==="panorama"?currentWorldEnvironment.skyAssetRef:"");
+  void setPanorama(currentWorldEnvironment.skyMode==="panorama" &&
+    !currentWorldEnvironment.cycleEnabled?currentWorldEnvironment.skyAssetRef:"");
   gridMaterial.diffuse=colorFromHex(currentWorldEnvironment.grid);gridMaterial.update();
   const size=currentWorldEnvironment.groundSize;
   const limit=Math.max(6.5,size/2-1);
@@ -525,13 +590,10 @@ function applyWorldEnvironment(payload:any) {
     else {entity.setLocalScale(.012,.012,size);entity.setPosition(i*size/15,.01,0);}
     entity.enabled=currentWorldEnvironment.gridVisible;
   });
-  floorMaterial.diffuseMapTiling=new pc.Vec2(size/15,size/15);
+  const repeats=size/15*currentWorldEnvironment.groundRepeat;
+  floorMaterial.diffuseMapTiling=new pc.Vec2(repeats,repeats);
+  floorMaterial.diffuseMapRotation=currentWorldEnvironment.groundRotation;
   floorMaterial.update();
-  const ambient=currentWorldEnvironment.ambient;
-  app.scene.ambientLight=new pc.Color(ambient,ambient,ambient);
-  light.light!.intensity=currentWorldEnvironment.sunlight;
-  light.light!.color=colorFromHex(currentWorldEnvironment.lightColor);
-  light.setEulerAngles(currentWorldEnvironment.sunAngle,35,0);
   refreshEnvironmentEditor();
 }
 
@@ -3009,6 +3071,16 @@ mediaManagerPanel.appendChild(worldManifestControls);
 const environmentEditor=document.createElement("div");
 environmentEditor.style.cssText="border:1px solid #54718c;border-radius:12px;padding:12px;margin:12px 0;color:#e7f3ff";
 environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
+  <label style="display:block;font-size:12px;margin:9px 0">TIME PRESET
+    <select data-env="environmentPreset"><option value="custom">CUSTOM</option><option value="morning">MORNING</option><option value="day">DAY</option><option value="sunset">SUNSET</option><option value="night">NIGHT</option></select>
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">DAY / NIGHT CYCLE
+    <input data-env="cycleEnabled" type="checkbox"> ON
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">CYCLE LENGTH (MINUTES)
+    <input data-env="cycleMinutes" type="number" min="1" max="60" step="1" value="8">
+  </label>
+  <div style="font-size:11px;color:#aaccdf">The cycle controls sky and lighting; panorama is hidden while active.</div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0;font-size:12px">
     <label>SKY <input data-env="sky" type="color"></label>
     <label>GROUND <input data-env="ground" type="color"></label>
@@ -3033,6 +3105,24 @@ environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
   </label>
   <label style="display:block;font-size:12px;margin:9px 0">GROUND IMAGE (JPG / PNG)
     <input data-ground-file type="file" accept="image/jpeg,image/png">
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">GROUND IMAGE REPEAT
+    <input data-env="groundRepeat" type="range" min="0.2" max="10" step="0.1" value="1"> <span data-value="groundRepeat"></span>
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">GROUND IMAGE ROTATION (DEGREES)
+    <input data-env="groundRotation" type="range" min="0" max="360" step="1" value="0"> <span data-value="groundRotation"></span>
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">FOG
+    <input data-env="fogEnabled" type="checkbox"> ON
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">FOG COLOR
+    <input data-env="fogColor" type="color" value="#9caab8">
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">FOG DENSITY
+    <input data-env="fogDensity" type="range" min="0.05" max="1" step="0.05" value="0.5"> <span data-value="fogDensity"></span>
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">FOG VISIBILITY (METERS)
+    <input data-env="fogDistance" type="range" min="5" max="200" step="1" value="60"> <span data-value="fogDistance"></span>
   </label>
   <label style="display:block;font-size:12px;margin:9px 0">PARTICLES
     <select data-env="particles"><option value="off">OFF</option><option value="spark">SPARKS</option><option value="smoke">SMOKE</option><option value="custom">CUSTOM IMAGE</option></select>
@@ -3172,6 +3262,17 @@ environmentEditor.addEventListener("input",(event)=>{
   const display=environmentEditor.querySelector<HTMLElement>(`[data-value="${key}"]`);
   if(display) display.textContent=input.value;
 });
+environmentEditor.querySelector<HTMLSelectElement>('[data-env="environmentPreset"]')!
+  .addEventListener("change",(event)=>{
+    const key=(event.target as HTMLSelectElement).value as keyof typeof timePresets;
+    const preset=timePresets[key];
+    if(!preset) return;
+    for(const [field,value] of Object.entries(preset)) {
+      const input=environmentEditor.querySelector<HTMLInputElement>(`[data-env="${field}"]`);
+      if(input) input.value=String(value);
+    }
+    environmentEditor.querySelector<HTMLSelectElement>('[data-env="skyMode"]')!.value="color";
+  });
 environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEventListener("click",()=>{
   if (!activeRoom) return;
   const payload:any={};
@@ -3180,7 +3281,8 @@ environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEvent
     if (!input) continue;
     payload[key]=input.type==="checkbox"?input.checked:
       input.type==="range" || key==="groundSize" ||
-      key==="particleCount" || key==="particleDuration"?Number(input.value):input.value;
+      key==="particleCount" || key==="particleDuration" ||
+      key==="cycleMinutes"?Number(input.value):input.value;
   }
   payload.skyAssetRef=uploadedPanoramaRef || currentWorldEnvironment.skyAssetRef;
   payload.groundAssetRef=uploadedGroundRef || currentWorldEnvironment.groundAssetRef;

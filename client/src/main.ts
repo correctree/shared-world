@@ -198,10 +198,12 @@ const floor = new pc.Entity("Floor");
 floor.addComponent("render", { type: "box" });
 floor.setLocalScale(15, 0.15, 15);
 floor.setPosition(0, -0.075, 0);
-floor.render!.material = material([0.15, 0.17, 0.2]);
+const floorMaterial = material([0.15, 0.17, 0.2]);
+floor.render!.material = floorMaterial;
 app.root.addChild(floor);
 
 const gridMaterial = material([0.28, 0.3, 0.34]);
+const gridEntities: pc.Entity[] = [];
 for (let i = -7; i <= 7; i++) {
   const lineX = new pc.Entity(`grid-x-${i}`);
   lineX.addComponent("render", { type: "box" });
@@ -209,6 +211,7 @@ for (let i = -7; i <= 7; i++) {
   lineX.setPosition(0, 0.01, i);
   lineX.render!.material = gridMaterial;
   app.root.addChild(lineX);
+  gridEntities.push(lineX);
 
   const lineZ = new pc.Entity(`grid-z-${i}`);
   lineZ.addComponent("render", { type: "box" });
@@ -216,6 +219,7 @@ for (let i = -7; i <= 7; i++) {
   lineZ.setPosition(i, 0.01, 0);
   lineZ.render!.material = gridMaterial;
   app.root.addChild(lineZ);
+  gridEntities.push(lineZ);
 }
 
 // Legacy SharedObject removed in Prototype 0.11 / Stage 3.1
@@ -230,6 +234,48 @@ camera.addComponent("camera", { clearColor: new pc.Color(0.035, 0.045, 0.065), f
 camera.setPosition(0, 10, 11);
 camera.lookAt(0, 0, 0);
 app.root.addChild(camera);
+
+// 0.18 / Shared environment scene primitives.
+type WorldEnvironment = {
+  sky:string;ground:string;grid:string;gridVisible:boolean;
+  ambient:number;sunlight:number;lightColor:string;sunAngle:number
+};
+const defaultWorldEnvironment:WorldEnvironment = {
+  sky:"#090c11",ground:"#262b33",grid:"#474d57",gridVisible:true,
+  ambient:0.45,sunlight:1.5,lightColor:"#ffffff",sunAngle:45
+};
+let currentWorldEnvironment:WorldEnvironment={...defaultWorldEnvironment};
+function colorFromHex(hex:string):pc.Color {
+  const value=parseInt(hex.slice(1),16);
+  return new pc.Color(((value>>16)&255)/255,((value>>8)&255)/255,(value&255)/255);
+}
+function applyWorldEnvironment(payload:any) {
+  if (!payload || typeof payload!=="object") return;
+  const color=(v:any,fallback:string)=>typeof v==="string" && /^#[0-9a-fA-F]{6}$/.test(v)?v:fallback;
+  const number=(v:any,fallback:number,min:number,max:number)=>{
+    const n=Number(v);return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback;
+  };
+  currentWorldEnvironment={
+    sky:color(payload.sky,defaultWorldEnvironment.sky),
+    ground:color(payload.ground,defaultWorldEnvironment.ground),
+    grid:color(payload.grid,defaultWorldEnvironment.grid),
+    gridVisible:payload.gridVisible!==false,
+    ambient:number(payload.ambient,0.45,0,1.5),
+    sunlight:number(payload.sunlight,1.5,0,5),
+    lightColor:color(payload.lightColor,"#ffffff"),
+    sunAngle:number(payload.sunAngle,45,5,85)
+  };
+  camera.camera!.clearColor=colorFromHex(currentWorldEnvironment.sky);
+  floorMaterial.diffuse=colorFromHex(currentWorldEnvironment.ground);floorMaterial.update();
+  gridMaterial.diffuse=colorFromHex(currentWorldEnvironment.grid);gridMaterial.update();
+  for (const entity of gridEntities) entity.enabled=currentWorldEnvironment.gridVisible;
+  const ambient=currentWorldEnvironment.ambient;
+  app.scene.ambientLight=new pc.Color(ambient,ambient,ambient);
+  light.light!.intensity=currentWorldEnvironment.sunlight;
+  light.light!.color=colorFromHex(currentWorldEnvironment.lightColor);
+  light.setEulerAngles(currentWorldEnvironment.sunAngle,35,0);
+  refreshEnvironmentEditor();
+}
 
 // =========================================================
 // Prototype 0.11 / Stage 3.1
@@ -1706,6 +1752,7 @@ async function enterWorld() {
     currentSessionId = "";
   }
   resetClientWorldForReentry();
+  applyWorldEnvironment(defaultWorldEnvironment);
   pendingMediaDeletes.clear();
   pendingWorldPackageExport = false;
 
@@ -1834,6 +1881,10 @@ async function enterWorld() {
       if (payload?.ok) console.log("[MEDIA EDIT SYNC ACCEPTED]", String(payload.id || ""));
       else console.warn("[MEDIA EDIT SYNC REJECTED]", String(payload?.id || ""), String(payload?.reason || "unknown"));
     });
+    room.onMessage("environment:state",(payload:any)=>{
+      if (room===activeRoom) applyWorldEnvironment(payload);
+    });
+    room.send("environment:get",{});
     room.onMessage("world:export:result", (manifest:any) => {
       if (room === activeRoom && pendingWorldPackageExport) {
         pendingWorldPackageExport = false;
@@ -2653,6 +2704,42 @@ mediaManagerPanel.innerHTML = `
 `;
 document.body.appendChild(mediaManagerPanel);
 mediaManagerPanel.appendChild(worldManifestControls);
+
+const environmentEditor=document.createElement("div");
+environmentEditor.style.cssText="border:1px solid #54718c;border-radius:12px;padding:12px;margin:12px 0;color:#e7f3ff";
+environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0;font-size:12px">
+    <label>SKY <input data-env="sky" type="color"></label>
+    <label>GROUND <input data-env="ground" type="color"></label>
+    <label>GRID <input data-env="grid" type="color"></label>
+    <label>LIGHT COLOR <input data-env="lightColor" type="color"></label>
+    <label>GRID VISIBLE <input data-env="gridVisible" type="checkbox"></label>
+    <label>AMBIENT <input data-env="ambient" type="range" min="0" max="1.5" step="0.05"></label>
+    <label>SUNLIGHT <input data-env="sunlight" type="range" min="0" max="5" step="0.1"></label>
+    <label>SUN ANGLE <input data-env="sunAngle" type="range" min="5" max="85" step="1"></label>
+  </div><button type="button" data-env-apply>APPLY TO ROOM</button>
+  <div style="font-size:11px;margin-top:7px;color:#aaccdf">The same lighting is shared with all visitors.</div>`;
+mediaManagerPanel.appendChild(environmentEditor);
+function refreshEnvironmentEditor() {
+  if (!environmentEditor) return;
+  for (const [key,value] of Object.entries(currentWorldEnvironment)) {
+    const input=environmentEditor.querySelector<HTMLInputElement>(`[data-env="${key}"]`);
+    if (!input) continue;
+    if (input.type==="checkbox") input.checked=Boolean(value);
+    else input.value=String(value);
+  }
+}
+refreshEnvironmentEditor();
+environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEventListener("click",()=>{
+  if (!activeRoom) return;
+  const payload:any={};
+  for (const key of Object.keys(currentWorldEnvironment)) {
+    const input=environmentEditor.querySelector<HTMLInputElement>(`[data-env="${key}"]`);
+    if (!input) continue;
+    payload[key]=input.type==="checkbox"?input.checked:input.type==="range"?Number(input.value):input.value;
+  }
+  activeRoom.send("environment:set",payload);
+});
 
 // Prototype 0.16.1.3 / MEDIA OBJECTS > EDIT / AUDIO SETTINGS + AUDIO REACTIVE
 const managedAudioEditPanel = document.createElement("section");

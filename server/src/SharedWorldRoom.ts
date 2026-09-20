@@ -30,6 +30,28 @@ type MediaActionPayload = {
 };
 
 export class SharedWorldRoom extends Room<WorldState> {
+  private environment = {
+    sky:"#090c11", ground:"#262b33", grid:"#474d57", gridVisible:true,
+    ambient:0.45, sunlight:1.5, lightColor:"#ffffff", sunAngle:45
+  };
+  private cleanEnvironment(input:any) {
+    if (!input || typeof input!=="object") return null;
+    const color=(value:unknown,fallback:string)=>
+      typeof value==="string" && /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : fallback;
+    const number=(value:unknown,fallback:number,min:number,max:number)=>{
+      const n=Number(value);return Number.isFinite(n)?Math.max(min,Math.min(max,n)):fallback;
+    };
+    return {
+      sky:color(input.sky,this.environment.sky),
+      ground:color(input.ground,this.environment.ground),
+      grid:color(input.grid,this.environment.grid),
+      gridVisible:input.gridVisible===false?false:true,
+      ambient:number(input.ambient,this.environment.ambient,0,1.5),
+      sunlight:number(input.sunlight,this.environment.sunlight,0,5),
+      lightColor:color(input.lightColor,this.environment.lightColor),
+      sunAngle:number(input.sunAngle,this.environment.sunAngle,5,85)
+    };
+  }
   private mediaBehaviors = new Map<string, Record<string, unknown>>();
   private proximityActors = new Map<string, Set<string>>();
   private mediaActionSequence = 0;
@@ -318,6 +340,18 @@ export class SharedWorldRoom extends Room<WorldState> {
     });
 
     // 0.17 / Portable world manifest. Assets remain at their original URLs.
+    this.onMessage("environment:get",(client:Client)=>{
+      client.send("environment:state",this.environment);
+    });
+    this.onMessage("environment:set",(client:Client,payload:any)=>{
+      if (!this.state.players.has(client.sessionId)) return;
+      const next=this.cleanEnvironment(payload);
+      if (!next) return;
+      this.environment=next;
+      this.broadcast("environment:state",next);
+      client.send("environment:state",next);
+    });
+
     this.onMessage("world:export", (client: Client) => {
       const mediaObjects = Array.from(this.state.mediaObjects, ([id, media]) => ({
         id, title: media.title, type: media.type, assetRef: media.assetRef,
@@ -328,7 +362,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       client.send("world:export:result", {
         format: "shared-world-manifest", version: 1,
         roomCode: String(this.metadata?.roomCode || "ART001"),
-        exportedAt: new Date().toISOString(), mediaObjects
+        exportedAt: new Date().toISOString(), environment:this.environment, mediaObjects
       });
     });
 
@@ -389,6 +423,14 @@ export class SharedWorldRoom extends Room<WorldState> {
         this.mediaBehaviors.set(entry.id, entry.behavior);
         this.state.mediaObjects.set(entry.id, entry.media);
         this.broadcast("media:behavior", {id:entry.id, behavior:entry.behavior});
+      }
+      if (payload.environment) {
+        const imported=this.cleanEnvironment(payload.environment);
+        if (imported) {
+          this.environment=imported;
+          this.broadcast("environment:state",imported);
+          client.send("environment:state",imported);
+        }
       }
       client.send("world:import:result", {ok:true, count:entries.length});
     });

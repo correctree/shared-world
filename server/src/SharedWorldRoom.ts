@@ -403,12 +403,14 @@ export class SharedWorldRoom extends Room<WorldState> {
       );
       if (!media || !authorized) {
         console.warn("[media:delete rejected]", id);
+        client.send("media:delete:result", {id, ok:false, reason:media ? "owner-mismatch" : "media-not-found"});
         return;
       }
       this.state.mediaObjects.delete(id);
       this.mediaBehaviors.delete(id);
       this.proximityActors.delete(id);
       console.log("[media:delete stored]", id, "total:", this.state.mediaObjects.size);
+      client.send("media:delete:result", {id, ok:true});
     });
 
     console.log("[room:create] message handlers ready");

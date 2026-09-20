@@ -1706,6 +1706,7 @@ async function enterWorld() {
     currentSessionId = "";
   }
   resetClientWorldForReentry();
+  pendingMediaDeletes.clear();
 
   const name = (nameInput.value.trim() || "Guest").slice(0, 16);
   const roomCode = (roomInput.value.trim() || "ART001")
@@ -1816,6 +1817,18 @@ async function enterWorld() {
       else pendingSharedMediaTransforms.set(mediaId,transform);
     });
 
+    room.onMessage("media:delete:result", (payload:any) => {
+      if (room !== activeRoom) return;
+      const id = String(payload?.id || "");
+      if (!pendingMediaDeletes.delete(id)) return;
+      if (payload?.ok || payload?.reason === "media-not-found") {
+        if (editingManagedMediaId === id) editingManagedMediaId = null;
+        removeSharedMediaLifecycle(id, "delete-confirmed");
+      } else {
+        console.warn("[SHARED MEDIA DELETE REJECTED]", id, String(payload?.reason || "unknown"));
+        window.alert("DELETE failed: you are not the owner of this artwork.");
+      }
+    });
     room.onMessage("media:update:result", (payload:any) => {
       if (payload?.ok) console.log("[MEDIA EDIT SYNC ACCEPTED]", String(payload.id || ""));
       else console.warn("[MEDIA EDIT SYNC REJECTED]", String(payload?.id || ""), String(payload?.reason || "unknown"));
@@ -2987,9 +3000,18 @@ function flushSharedMediaTransform(id: string) {
   sendSharedMediaTransform(id);
 }
 
+const pendingMediaDeletes = new Set<string>();
 function deleteManagedMedia(id: string) {
   const item = managedPlacedMedia.get(id);
-  if (!item) return;
+  if (!item || pendingMediaDeletes.has(id)) return;
+  // Shared objects, including imported objects, must be removed by the server.
+  // Keep the artwork visible until the server confirms the deletion.
+  if (activeRoom && authoritativeMediaExists(id)) {
+    pendingMediaDeletes.add(id);
+    activeRoom.send("media:delete", {id});
+    console.log("[SHARED MEDIA DELETE SENT]", id);
+    return;
+  }
 
   // Prototype 0.16.1.1 / AUDIO DELETE LIFECYCLE FIX
   // Use the same authoritative cleanup path for every media type. Audio Reactive
@@ -3008,11 +3030,6 @@ function deleteManagedMedia(id: string) {
       a.__xrReactiveLevel = 0;
       audioElements.delete(id);
     }
-  }
-
-  if (activeRoom && !sharedRemoteMediaIds.has(id)) {
-    activeRoom.send("media:delete", { id });
-    console.log("[SHARED MEDIA DELETE SENT]", id);
   }
 
   if (editingManagedMediaId === id) editingManagedMediaId = null;

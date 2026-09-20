@@ -1707,6 +1707,7 @@ async function enterWorld() {
   }
   resetClientWorldForReentry();
   pendingMediaDeletes.clear();
+  pendingWorldPackageExport = false;
 
   const name = (nameInput.value.trim() || "Guest").slice(0, 16);
   const roomCode = (roomInput.value.trim() || "ART001")
@@ -1834,6 +1835,11 @@ async function enterWorld() {
       else console.warn("[MEDIA EDIT SYNC REJECTED]", String(payload?.id || ""), String(payload?.reason || "unknown"));
     });
     room.onMessage("world:export:result", (manifest:any) => {
+      if (room === activeRoom && pendingWorldPackageExport) {
+        pendingWorldPackageExport = false;
+        void exportPortableWorld(manifest, room);
+        return;
+      }
       if (room !== activeRoom || manifest?.format !== "shared-world-manifest") return;
       const blob = new Blob([JSON.stringify(manifest,null,2)],{type:"application/json"});
       const url = URL.createObjectURL(blob);
@@ -2370,6 +2376,134 @@ worldImportInput.addEventListener("change", async () => {
     worldManifestStatus.textContent = "Importing objects into the current room…";
     activeRoom.send("world:import", manifest);
   } catch (error) { worldManifestStatus.textContent = `Import failed: ${String(error)}`; }
+});
+
+// 0.17.3 / A portable ZIP stores real uploaded media alongside the manifest.
+let pendingWorldPackageExport = false;
+let worldPackageBusy = false;
+const worldPackageExportButton = document.createElement("button");
+worldPackageExportButton.type = "button";
+worldPackageExportButton.textContent = "EXPORT WORLD + ASSETS ZIP";
+const worldPackageImportButton = document.createElement("button");
+worldPackageImportButton.type = "button";
+worldPackageImportButton.textContent = "IMPORT WORLD ZIP";
+const worldPackageInput = document.createElement("input");
+worldPackageInput.type = "file";
+worldPackageInput.accept = ".zip,application/zip";
+worldPackageInput.hidden = true;
+worldManifestControls.append(worldPackageExportButton,worldPackageImportButton,worldPackageInput);
+const assetNamePattern = /^[a-zA-Z0-9_-]{1,80}\.(zip|glb|webm|mp3|wav)$/i;
+function portableAssetName(value:unknown):string|null {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const url=new URL(value,SERVER_URL);
+    if (url.origin !== new URL(SERVER_URL).origin || url.search || url.hash) return null;
+    const match=/^\/assets\/([^/]+)$/.exec(url.pathname);
+    if (!match) return null;
+    const name=decodeURIComponent(match[1]);
+    return assetNamePattern.test(name) ? name : null;
+  } catch { return null; }
+}
+async function exportPortableWorld(manifest:any, room:Room) {
+  if (worldPackageBusy) return;
+  worldPackageBusy = true;
+  try {
+    if (room !== activeRoom || manifest?.format !== "shared-world-manifest" ||
+        manifest?.version !== 1 || !Array.isArray(manifest.mediaObjects)) throw new Error("Invalid world response");
+    const zip=new JSZip();
+    const names=new Set<string>();
+    let total=0;
+    for (const media of manifest.mediaObjects) {
+      for (const field of ["assetRef","fallbackRef"] as const) {
+        const ref=media?.[field];
+        if (!ref) continue;
+        const name=portableAssetName(ref);
+        if (!name) throw new Error(`Unsupported asset URL: ${String(ref).slice(0,80)}`);
+        if (names.has(name)) continue;
+        names.add(name);
+        worldManifestStatus.textContent=`Downloading asset ${names.size}: ${name}`;
+        const response=await fetch(new URL(`/assets/${name}`,SERVER_URL),{cache:"no-store"});
+        if (!response.ok) throw new Error(`${name}: HTTP ${response.status}. Export before the server restarts.`);
+        const blob=await response.blob();
+        if (!blob.size || blob.size>20*1024*1024) throw new Error(`${name}: invalid asset size`);
+        total+=blob.size;
+        if (total>80*1024*1024) throw new Error("Package exceeds 80 MB of media");
+        zip.file(`assets/${name}`,blob);
+      }
+    }
+    if (room !== activeRoom) throw new Error("Room changed during export");
+    zip.file("world.json",JSON.stringify(manifest,null,2));
+    worldManifestStatus.textContent="Compressing world ZIP…";
+    const output=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:3}});
+    const link=document.createElement("a");
+    const url=URL.createObjectURL(output);
+    link.href=url;
+    link.download=`shared-world-${String(manifest.roomCode||"ART001")}-${Date.now()}.zip`;
+    document.body.appendChild(link); link.click(); link.remove();
+    window.setTimeout(()=>URL.revokeObjectURL(url),60000);
+    worldManifestStatus.textContent=`World ZIP saved: ${manifest.mediaObjects.length} objects, ${names.size} files.`;
+  } catch (error) { worldManifestStatus.textContent=`ZIP export failed: ${String(error)}`; }
+  finally { worldPackageBusy=false; }
+}
+worldPackageExportButton.addEventListener("click",()=>{
+  if (!activeRoom || worldPackageBusy || pendingWorldPackageExport) return;
+  pendingWorldPackageExport=true;
+  worldManifestStatus.textContent="Reading room state…";
+  activeRoom.send("world:export",{});
+});
+worldPackageImportButton.addEventListener("click",()=>{
+  if (!activeRoom || worldPackageBusy) return;
+  worldPackageInput.click();
+});
+worldPackageInput.addEventListener("change",async()=>{
+  const file=worldPackageInput.files?.[0]; worldPackageInput.value="";
+  if (!file || !activeRoom || worldPackageBusy) return;
+  worldPackageBusy=true;
+  const room=activeRoom;
+  try {
+    if (file.size>90*1024*1024) throw new Error("ZIP exceeds 90 MB");
+    const zip=await JSZip.loadAsync(file);
+    if (Object.keys(zip.files).length>70) throw new Error("Too many ZIP entries");
+    const manifestEntry=zip.file("world.json");
+    if (!manifestEntry) throw new Error("Missing world.json");
+    const json=await manifestEntry.async("string");
+    if (json.length>256*1024) throw new Error("World JSON exceeds 256 KB");
+    const manifest=JSON.parse(json);
+    if (manifest?.format!=="shared-world-manifest" || manifest?.version!==1 ||
+        !Array.isArray(manifest.mediaObjects) || manifest.mediaObjects.length>64)
+      throw new Error("Unsupported world manifest");
+    const uploaded=new Map<string,string>();
+    let total=0;
+    for (const media of manifest.mediaObjects) {
+      if (!media || !["sprite","glb","webm","audio"].includes(media.type)) throw new Error("Invalid object type");
+      for (const field of ["assetRef","fallbackRef"] as const) {
+        const original=media[field];
+        if (!original) continue;
+        const name=portableAssetName(original);
+        if (!name) throw new Error(`Unsupported asset URL in ${field}`);
+        if (!uploaded.has(name)) {
+          const entry=zip.file(`assets/${name}`);
+          if (!entry) throw new Error(`Missing media in ZIP: ${name}`);
+          const blob=await entry.async("blob");
+          if (!blob.size || blob.size>20*1024*1024) throw new Error(`Invalid size: ${name}`);
+          total+=blob.size;
+          if (total>80*1024*1024) throw new Error("ZIP media exceeds 80 MB");
+          const extension=name.split(".").pop()!.toLowerCase();
+          const newName=`restore-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}.${extension}`;
+          const url=new URL(`/assets/${newName}`,SERVER_URL).href;
+          worldManifestStatus.textContent=`Uploading ${uploaded.size+1}: ${name}`;
+          const response=await fetch(url,{method:"PUT",body:blob});
+          if (!response.ok) throw new Error(`Upload ${name}: HTTP ${response.status}`);
+          uploaded.set(name,url);
+        }
+        media[field]=uploaded.get(name);
+      }
+    }
+    if (room !== activeRoom) throw new Error("Room changed during import");
+    worldManifestStatus.textContent="Restoring artwork and behavior…";
+    room.send("world:import",manifest);
+  } catch (error) { worldManifestStatus.textContent=`ZIP import failed: ${String(error)}`; }
+  finally { worldPackageBusy=false; }
 });
 
 const managedPlacedMedia = new Map<string, ManagedPlacedMedia>();

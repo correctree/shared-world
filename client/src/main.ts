@@ -238,13 +238,103 @@ app.root.addChild(camera);
 // 0.18 / Shared environment scene primitives.
 type WorldEnvironment = {
   sky:string;ground:string;grid:string;gridVisible:boolean;
-  ambient:number;sunlight:number;lightColor:string;sunAngle:number
+  ambient:number;sunlight:number;lightColor:string;sunAngle:number;
+  skyMode:"color"|"panorama";skyAssetRef:string;groundMode:"plain"|"soil"|"water"
 };
 const defaultWorldEnvironment:WorldEnvironment = {
   sky:"#090c11",ground:"#262b33",grid:"#474d57",gridVisible:true,
-  ambient:0.45,sunlight:1.5,lightColor:"#ffffff",sunAngle:45
+  ambient:0.45,sunlight:1.5,lightColor:"#ffffff",sunAngle:45,
+  skyMode:"color",skyAssetRef:"",groundMode:"plain"
 };
 let currentWorldEnvironment:WorldEnvironment={...defaultWorldEnvironment};
+let panoramaEntity:pc.Entity|null=null;
+let panoramaTexture:pc.Texture|null=null;
+let panoramaObjectURL:string|null=null;
+let panoramaRequest=0;
+let soilTexture:pc.Texture|null=null;
+let waterTexture:pc.Texture|null=null;
+let waterCanvas:HTMLCanvasElement|null=null;
+let waterFrame=0;
+function proceduralCanvas(mode:"soil"|"water",time=0) {
+  const canvas=document.createElement("canvas");canvas.width=256;canvas.height=256;
+  const ctx=canvas.getContext("2d")!;
+  const image=ctx.createImageData(256,256);
+  for(let y=0;y<256;y++) for(let x=0;x<256;x++) {
+    const i=(y*256+x)*4;
+    const noise=(Math.sin(x*12.9898+y*78.233)*43758.5453)%1;
+    if(mode==="soil") {
+      const n=Math.abs(noise);
+      image.data[i]=68+n*38;image.data[i+1]=48+n*30;image.data[i+2]=29+n*19;
+    } else {
+      const wave=Math.sin(x*.11+time*2+Math.sin(y*.06-time)*2)*.5+
+        Math.sin(y*.14-time*1.5+x*.045)*.5;
+      const v=wave*20+Math.abs(noise)*10;
+      image.data[i]=18+v*.35;image.data[i+1]=76+v;image.data[i+2]=102+v*1.5;
+    }
+    image.data[i+3]=255;
+  }
+  ctx.putImageData(image,0,0);
+  return canvas;
+}
+function groundTexture(canvas:HTMLCanvasElement):pc.Texture {
+  const texture=new pc.Texture(app.graphicsDevice,{mipmaps:true});
+  texture.addressU=pc.ADDRESS_REPEAT; texture.addressV=pc.ADDRESS_REPEAT;
+  texture.setSource(canvas);
+  return texture;
+}
+function setGroundStyle(mode:WorldEnvironment["groundMode"]) {
+  if(mode==="plain") floorMaterial.diffuseMap=null;
+  if(mode==="soil") {
+    if(!soilTexture) soilTexture=groundTexture(proceduralCanvas("soil"));
+    floorMaterial.diffuseMap=soilTexture;
+  }
+  if(mode==="water") {
+    if(!waterCanvas) waterCanvas=proceduralCanvas("water");
+    if(!waterTexture) waterTexture=groundTexture(waterCanvas);
+    floorMaterial.diffuseMap=waterTexture;
+  }
+  floorMaterial.update();
+}
+async function setPanorama(ref:string) {
+  const request=++panoramaRequest;
+  if(panoramaEntity) {panoramaEntity.destroy();panoramaEntity=null;}
+  if(panoramaTexture) {panoramaTexture.destroy();panoramaTexture=null;}
+  if(panoramaObjectURL) {URL.revokeObjectURL(panoramaObjectURL);panoramaObjectURL=null;}
+  if(!ref) return;
+  try {
+    const response=await fetch(ref,{cache:"no-store"});
+    if(!response.ok) throw new Error(`HTTP ${response.status}`);
+    const archive=await JSZip.loadAsync(await response.blob());
+    const file=archive.file("panorama.jpg");
+    if(!file) throw new Error("panorama.jpg missing");
+    const blob=await file.async("blob");
+    if(blob.size>8*1024*1024) throw new Error("Panorama too large");
+    const url=URL.createObjectURL(blob);
+    const img=new Image();img.src=url;await img.decode();
+    if(request!==panoramaRequest) {URL.revokeObjectURL(url);return;}
+    const texture=new pc.Texture(app.graphicsDevice,{mipmaps:true});
+    texture.setSource(img);
+    const skyMaterial=new pc.StandardMaterial();
+    skyMaterial.emissive=new pc.Color(1,1,1);
+    skyMaterial.emissiveMap=texture;
+    skyMaterial.useLighting=false;
+    skyMaterial.cull=pc.CULLFACE_FRONT;
+    skyMaterial.update();
+    const sphere=new pc.Entity("PanoramaSky");sphere.addComponent("render",{type:"sphere"});
+    sphere.setLocalScale(150,150,150);
+    sphere.render!.material=skyMaterial;
+    sphere.render!.castShadows=false;
+    app.root.addChild(sphere);
+    panoramaEntity=sphere;panoramaTexture=texture;panoramaObjectURL=url;
+  } catch(error) {console.warn("[PANORAMA LOAD FAILED]",error);}
+}
+app.on("update",(dt:number)=>{
+  if(currentWorldEnvironment.groundMode!=="water" || !waterTexture) return;
+  waterFrame+=dt;
+  if(waterFrame<.12) return;
+  waterFrame=0;
+  waterTexture.setSource(proceduralCanvas("water",performance.now()*.001));
+});
 function colorFromHex(hex:string):pc.Color {
   const value=parseInt(hex.slice(1),16);
   return new pc.Color(((value>>16)&255)/255,((value>>8)&255)/255,(value&255)/255);
@@ -263,10 +353,16 @@ function applyWorldEnvironment(payload:any) {
     ambient:number(payload.ambient,0.45,0,1.5),
     sunlight:number(payload.sunlight,1.5,0,5),
     lightColor:color(payload.lightColor,"#ffffff"),
-    sunAngle:number(payload.sunAngle,45,5,85)
+    sunAngle:number(payload.sunAngle,45,5,85),
+    skyMode:payload.skyMode==="panorama"?"panorama":"color",
+    skyAssetRef:typeof payload.skyAssetRef==="string"?payload.skyAssetRef:"",
+    groundMode:["plain","soil","water"].includes(payload.groundMode)?payload.groundMode:"plain"
   };
   camera.camera!.clearColor=colorFromHex(currentWorldEnvironment.sky);
-  floorMaterial.diffuse=colorFromHex(currentWorldEnvironment.ground);floorMaterial.update();
+  floorMaterial.diffuse=currentWorldEnvironment.groundMode==="plain"
+    ? colorFromHex(currentWorldEnvironment.ground) : new pc.Color(1,1,1);
+  setGroundStyle(currentWorldEnvironment.groundMode);
+  void setPanorama(currentWorldEnvironment.skyMode==="panorama"?currentWorldEnvironment.skyAssetRef:"");
   gridMaterial.diffuse=colorFromHex(currentWorldEnvironment.grid);gridMaterial.update();
   for (const entity of gridEntities) entity.enabled=currentWorldEnvironment.gridVisible;
   const ambient=currentWorldEnvironment.ambient;
@@ -1752,6 +1848,7 @@ async function enterWorld() {
     currentSessionId = "";
   }
   resetClientWorldForReentry();
+  uploadedPanoramaRef="";
   applyWorldEnvironment(defaultWorldEnvironment);
   pendingMediaDeletes.clear();
   pendingWorldPackageExport = false;
@@ -2492,6 +2589,19 @@ async function exportPortableWorld(manifest:any, room:Room) {
         zip.file(`assets/${name}`,blob);
       }
     }
+    const skyRef=manifest.environment?.skyAssetRef;
+    if (skyRef) {
+      const name=portableAssetName(skyRef);
+      if(!name || !name.endsWith(".zip")) throw new Error("Invalid panorama asset URL");
+      if(!names.has(name)) {
+        const response=await fetch(new URL(`/assets/${name}`,SERVER_URL),{cache:"no-store"});
+        if(!response.ok) throw new Error(`Panorama: HTTP ${response.status}`);
+        const blob=await response.blob();
+        if(!blob.size || blob.size>20*1024*1024 || total+blob.size>80*1024*1024)
+          throw new Error("Panorama asset too large");
+        names.add(name);total+=blob.size;zip.file(`assets/${name}`,blob);
+      }
+    }
     if (room !== activeRoom) throw new Error("Room changed during export");
     zip.file("world.json",JSON.stringify(manifest,null,2));
     worldManifestStatus.textContent="Compressing world ZIP…";
@@ -2560,6 +2670,22 @@ worldPackageInput.addEventListener("change",async()=>{
         const settings=new URL(original,SERVER_URL).search;
         media[field]=uploaded.get(name)!+settings;
       }
+    }
+    if (manifest.environment?.skyAssetRef) {
+      const name=portableAssetName(manifest.environment.skyAssetRef);
+      if(!name || !name.endsWith(".zip")) throw new Error("Invalid panorama asset URL");
+      if(!uploaded.has(name)) {
+        const entry=zip.file(`assets/${name}`);
+        if(!entry) throw new Error("Panorama image missing from ZIP");
+        const blob=await entry.async("blob");
+        if(!blob.size || blob.size>20*1024*1024 || total+blob.size>80*1024*1024)
+          throw new Error("Panorama asset too large");
+        const url=sharedAssetURL(`sky-restore-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,"zip");
+        const response=await fetch(url,{method:"PUT",body:blob});
+        if(!response.ok) throw new Error(`Panorama upload HTTP ${response.status}`);
+        uploaded.set(name,url);total+=blob.size;
+      }
+      manifest.environment.skyAssetRef=uploaded.get(name);
     }
     if (room !== activeRoom) throw new Error("Room changed during import");
     worldManifestStatus.textContent="Restoring artwork and behavior…";
@@ -2728,9 +2854,50 @@ environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
     <label>AMBIENT <input data-env="ambient" type="range" min="0" max="1.5" step="0.05"></label>
     <label>SUNLIGHT <input data-env="sunlight" type="range" min="0" max="5" step="0.1"></label>
     <label>SUN ANGLE <input data-env="sunAngle" type="range" min="5" max="85" step="1"></label>
-  </div><button type="button" data-env-apply>APPLY TO ROOM</button>
+  </div>
+  <label style="display:block;font-size:12px;margin:9px 0">SKY MODE
+    <select data-env="skyMode"><option value="color">COLOR</option><option value="panorama">360 PANORAMA</option></select>
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">360 IMAGE (2:1 JPG / PNG)
+    <input data-panorama-file type="file" accept="image/jpeg,image/png">
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">GROUND MODE
+    <select data-env="groundMode"><option value="plain">PLAIN</option><option value="soil">SOIL</option><option value="water">WATER</option></select>
+  </label>
+  <div data-panorama-status style="font-size:11px;color:#aaccdf;margin:8px 0"></div>
+  <button type="button" data-env-apply>APPLY TO ROOM</button>
   <div style="font-size:11px;margin-top:7px;color:#aaccdf">The same lighting is shared with all visitors.</div>`;
 mediaManagerPanel.appendChild(environmentEditor);
+let uploadedPanoramaRef="";
+const panoramaInput=environmentEditor.querySelector<HTMLInputElement>("[data-panorama-file]")!;
+const panoramaStatus=environmentEditor.querySelector<HTMLElement>("[data-panorama-status]")!;
+panoramaInput.addEventListener("change",async()=>{
+  const file=panoramaInput.files?.[0];panoramaInput.value="";
+  if(!file || !activeRoom) return;
+  if(file.size>12*1024*1024) {panoramaStatus.textContent="Image exceeds 12 MB";return;}
+  try {
+    const img=new Image();
+    const local=URL.createObjectURL(file);
+    try {img.src=local;await img.decode();}
+    finally {URL.revokeObjectURL(local);}
+    if(img.width/img.height<1.85 || img.width/img.height>2.15)
+      throw new Error("A 2:1 equirectangular image is required");
+    const canvas=document.createElement("canvas");
+    canvas.width=2048;canvas.height=1024;
+    canvas.getContext("2d")!.drawImage(img,0,0,2048,1024);
+    const jpeg=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(
+      b=>b?resolve(b):reject(new Error("Image conversion failed")),"image/jpeg",.82));
+    const archive=new JSZip();archive.file("panorama.jpg",jpeg);
+    const blob=await archive.generateAsync({type:"blob",compression:"STORE"});
+    const ref=sharedAssetURL(`sky-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,"zip");
+    panoramaStatus.textContent="Uploading 360 image…";
+    const response=await fetch(ref,{method:"PUT",body:blob});
+    if(!response.ok) throw new Error(`Upload HTTP ${response.status}`);
+    uploadedPanoramaRef=ref;
+    environmentEditor.querySelector<HTMLSelectElement>("[data-env=skyMode]")!.value="panorama";
+    panoramaStatus.textContent="Image ready. Press APPLY TO ROOM.";
+  } catch(error) {panoramaStatus.textContent=`Panorama error: ${String(error)}`;}
+});
 function refreshEnvironmentEditor() {
   if (!environmentEditor) return;
   for (const [key,value] of Object.entries(currentWorldEnvironment)) {
@@ -2748,6 +2915,11 @@ environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEvent
     const input=environmentEditor.querySelector<HTMLInputElement>(`[data-env="${key}"]`);
     if (!input) continue;
     payload[key]=input.type==="checkbox"?input.checked:input.type==="range"?Number(input.value):input.value;
+  }
+  payload.skyAssetRef=uploadedPanoramaRef || currentWorldEnvironment.skyAssetRef;
+  if(payload.skyMode==="panorama" && !payload.skyAssetRef) {
+    panoramaStatus.textContent="Select a 2:1 image first.";
+    return;
   }
   activeRoom.send("environment:set",payload);
 });

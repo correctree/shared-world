@@ -32,7 +32,8 @@ type MediaActionPayload = {
 export class SharedWorldRoom extends Room<WorldState> {
   private environment = {
     sky:"#090c11", ground:"#262b33", grid:"#474d57", gridVisible:true,
-    ambient:0.45, sunlight:1.5, lightColor:"#ffffff", sunAngle:45
+    ambient:0.45, sunlight:1.5, lightColor:"#ffffff", sunAngle:45,
+    skyMode:"color", skyAssetRef:"", groundMode:"plain"
   };
   private cleanEnvironment(input:any) {
     if (!input || typeof input!=="object") return null;
@@ -49,7 +50,12 @@ export class SharedWorldRoom extends Room<WorldState> {
       ambient:number(input.ambient,this.environment.ambient,0,1.5),
       sunlight:number(input.sunlight,this.environment.sunlight,0,5),
       lightColor:color(input.lightColor,this.environment.lightColor),
-      sunAngle:number(input.sunAngle,this.environment.sunAngle,5,85)
+      sunAngle:number(input.sunAngle,this.environment.sunAngle,5,85),
+      skyMode:input.skyMode==="panorama"?"panorama":"color",
+      skyAssetRef:typeof input.skyAssetRef==="string" && input.skyAssetRef.length<=240 &&
+        /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.skyAssetRef)
+        ?input.skyAssetRef:"",
+      groundMode:["plain","soil","water"].includes(input.groundMode)?input.groundMode:"plain"
     };
   }
   private mediaBehaviors = new Map<string, Record<string, unknown>>();

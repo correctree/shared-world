@@ -1820,6 +1820,24 @@ async function enterWorld() {
       if (payload?.ok) console.log("[MEDIA EDIT SYNC ACCEPTED]", String(payload.id || ""));
       else console.warn("[MEDIA EDIT SYNC REJECTED]", String(payload?.id || ""), String(payload?.reason || "unknown"));
     });
+    room.onMessage("world:export:result", (manifest:any) => {
+      if (room !== activeRoom || manifest?.format !== "shared-world-manifest") return;
+      const blob = new Blob([JSON.stringify(manifest,null,2)],{type:"application/json"});
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `shared-world-${String(manifest.roomCode || "ART001")}-${Date.now()}.json`;
+      document.body.appendChild(link); link.click(); link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      worldManifestStatus.textContent = `${manifest.mediaObjects?.length || 0} objects exported. Asset files are not included.`;
+    });
+    room.onMessage("world:import:result", (result:any) => {
+      if (room !== activeRoom) return;
+      worldManifestStatus.textContent = result?.ok
+        ? `${result.count} objects imported. Check that asset URLs are still available.`
+        : `Import failed: ${String(result?.reason || "unknown")}`;
+      if (result?.ok) room.send("media:snapshot:request", {});
+    });
     room.onMessage("media:behavior", (payload:any) => {
       const id=String(payload?.id||"");
       if (id) applySharedBehavior(id,payload?.behavior);
@@ -2306,6 +2324,41 @@ type ManagedPlacedMedia = {
   entity: pc.Entity;
 };
 
+// 0.17 / World manifest UI (server-authored export; additive import).
+const worldManifestControls = document.createElement("div");
+worldManifestControls.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin:12px 0";
+const worldExportButton = document.createElement("button");
+worldExportButton.type = "button"; worldExportButton.textContent = "EXPORT WORLD JSON";
+const worldImportButton = document.createElement("button");
+worldImportButton.type = "button"; worldImportButton.textContent = "IMPORT WORLD JSON";
+const worldImportInput = document.createElement("input");
+worldImportInput.type = "file"; worldImportInput.accept = ".json,application/json";
+worldImportInput.hidden = true;
+const worldManifestStatus = document.createElement("div");
+worldManifestStatus.style.cssText = "width:100%;font-size:11px;line-height:1.4;color:#c9d7e8";
+worldManifestStatus.textContent = "JSON saves positions and behavior. Uploaded asset files are not included.";
+worldManifestControls.append(worldExportButton,worldImportButton,worldImportInput,worldManifestStatus);
+worldExportButton.addEventListener("click", () => {
+  if (!activeRoom) { worldManifestStatus.textContent = "Connect to a room first."; return; }
+  activeRoom.send("world:export",{});
+});
+worldImportButton.addEventListener("click", () => {
+  if (!activeRoom) { worldManifestStatus.textContent = "Connect to a room first."; return; }
+  worldImportInput.click();
+});
+worldImportInput.addEventListener("change", async () => {
+  const file = worldImportInput.files?.[0]; worldImportInput.value = "";
+  if (!file || !activeRoom) return;
+  if (file.size > 256 * 1024) { worldManifestStatus.textContent = "JSON exceeds 256 KB."; return; }
+  try {
+    const manifest = JSON.parse(await file.text());
+    if (manifest?.format !== "shared-world-manifest" || manifest?.version !== 1 || !Array.isArray(manifest.mediaObjects))
+      throw new Error("Unsupported world manifest");
+    worldManifestStatus.textContent = "Importing objects into the current room…";
+    activeRoom.send("world:import", manifest);
+  } catch (error) { worldManifestStatus.textContent = `Import failed: ${String(error)}`; }
+});
+
 const managedPlacedMedia = new Map<string, ManagedPlacedMedia>();
 let selectedManagedMediaId: string | null = null;
 let editingManagedMediaId: string | null = null;
@@ -2452,6 +2505,7 @@ mediaManagerPanel.innerHTML = `
   </div>
 `;
 document.body.appendChild(mediaManagerPanel);
+mediaManagerPanel.appendChild(worldManifestControls);
 
 // Prototype 0.16.1.3 / MEDIA OBJECTS > EDIT / AUDIO SETTINGS + AUDIO REACTIVE
 const managedAudioEditPanel = document.createElement("section");

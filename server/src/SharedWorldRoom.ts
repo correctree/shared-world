@@ -317,6 +317,82 @@ export class SharedWorldRoom extends Room<WorldState> {
       console.log("[media:snapshot sent]", client.sessionId, mediaObjects.length);
     });
 
+    // 0.17 / Portable world manifest. Assets remain at their original URLs.
+    this.onMessage("world:export", (client: Client) => {
+      const mediaObjects = Array.from(this.state.mediaObjects, ([id, media]) => ({
+        id, title: media.title, type: media.type, assetRef: media.assetRef,
+        fallbackRef: media.fallbackRef, x: media.x, y: media.y, z: media.z,
+        rotationY: media.rotationY, scale: media.scale,
+        behavior: this.mediaBehaviors.get(id) || null
+      }));
+      client.send("world:export:result", {
+        format: "shared-world-manifest", version: 1,
+        roomCode: String(this.metadata?.roomCode || "ART001"),
+        exportedAt: new Date().toISOString(), mediaObjects
+      });
+    });
+
+    this.onMessage("world:import", (client: Client, payload: any) => {
+      const fail = (reason: string) => client.send("world:import:result", {ok:false, reason});
+      const player = this.state.players.get(client.sessionId);
+      const items = payload?.mediaObjects;
+      if (!player || payload?.format !== "shared-world-manifest" || payload?.version !== 1 ||
+          !Array.isArray(items) || items.length > MAX_MEDIA_OBJECTS) {
+        fail("invalid-manifest"); return;
+      }
+      if (items.length + this.state.mediaObjects.size > MAX_MEDIA_OBJECTS) {
+        fail("media-limit"); return;
+      }
+      const validTypes = ["sprite", "glb", "webm", "audio"];
+      const validTriggers = ["user-proximity", "look-at", "touch"];
+      const validActions = ["play", "stop", "move", "rotate", "scale", "float", "orbit", "shake", "none"];
+      const bounded = (value: unknown, fallback: number, min: number, max: number) => {
+        const n = Number(value); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+      };
+      // Validate the entire import before changing the shared state.
+      const entries: Array<{id:string; media:InstanceType<typeof SharedMediaObject>; behavior:Record<string, unknown>}> = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const transform = [item?.x, item?.y, item?.z, item?.rotationY, item?.scale].map(Number);
+        if (!item || !validTypes.includes(item.type) || !transform.every(Number.isFinite) ||
+            typeof item.assetRef !== "string" || item.assetRef.length > 240 ||
+            typeof item.fallbackRef !== "string" || item.fallbackRef.length > 240 ||
+            typeof item.title !== "string" || item.title.length > 80 ||
+            !/^(https?:\/\/|\/assets\/)/.test(item.assetRef)) {
+          fail(`invalid-media-${i + 1}`); return;
+        }
+        const [x,y,z,rotationY,scale] = transform;
+        const raw = item.behavior && typeof item.behavior === "object" ? item.behavior : {};
+        const behavior = {
+          trigger: validTriggers.includes(raw.trigger) ? raw.trigger : "user-proximity",
+          enterAction: validActions.includes(raw.enterAction) ? raw.enterAction : "play",
+          leaveAction: validActions.includes(raw.leaveAction) ? raw.leaveAction : "stop",
+          enabled: raw.enabled === true,
+          distance: bounded(raw.distance,3,.1,30), lookAngle: bounded(raw.lookAngle,12,1,89),
+          touchMode: raw.touchMode === "repeat" ? "repeat" : "toggle",
+          transformAmount: bounded(raw.transformAmount,1,0,20),
+          transformSpeed: bounded(raw.transformSpeed,1,.1,20),
+          transformAxis: ["x","y","z"].includes(raw.transformAxis) ? raw.transformAxis : "y",
+          transformDuration: bounded(raw.transformDuration,3,.1,60)
+        };
+        const id = `import-${Date.now().toString(36)}-${client.sessionId.slice(0,8)}-${i}`;
+        entries.push({id, behavior, media:new SharedMediaObject({
+          title:item.title, type:item.type, assetRef:item.assetRef,
+          fallbackRef:item.fallbackRef, ownerSessionId:client.sessionId,
+          ownerClientId:player.clientId,
+          x:bounded(x,0,-WORLD_LIMIT,WORLD_LIMIT), y:bounded(y,1.8,-10,20),
+          z:bounded(z,-3,-WORLD_LIMIT,WORLD_LIMIT), rotationY,
+          scale:bounded(scale,1,.05,20)
+        })});
+      }
+      for (const entry of entries) {
+        this.mediaBehaviors.set(entry.id, entry.behavior);
+        this.state.mediaObjects.set(entry.id, entry.media);
+        this.broadcast("media:behavior", {id:entry.id, behavior:entry.behavior});
+      }
+      client.send("world:import:result", {ok:true, count:entries.length});
+    });
+
     this.onMessage("media:delete", (client: Client, payload: DeleteMediaPayload) => {
       const id=String(payload?.id || "").trim().slice(0,80);
       const media=this.state.mediaObjects.get(id);

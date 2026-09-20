@@ -1032,7 +1032,10 @@ async function setAvatarTexture(avatar:Avatar,ref:string) {
     avatar.texture=texture;avatar.textureURL=url;
     const body=avatar.entity.render?.material;
     if(body instanceof pc.StandardMaterial) {body.diffuseMap=texture;body.update();}
-  } catch(error) {console.warn("[AVATAR IMAGE LOAD FAILED]",ref,error);}
+  } catch(error) {
+    if(request===avatar.textureRequest) avatar.textureRef="";
+    console.warn("[AVATAR IMAGE LOAD FAILED]",ref,error);
+  }
 }
 function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,assetRef:string) {
   const safeColor=/^#[0-9a-fA-F]{6}$/.test(color)?color:"#f0f0f5";
@@ -1285,6 +1288,12 @@ async function ensureSharedMediaFromState(mediaId: string, media: any) {
 
 function reconcileWorldFromServerState() {
   if (!activeRoom) return;
+  const playersMap:any=(activeRoom.state as any).players;
+  playersMap?.forEach?.((player:any,sessionId:string)=>{
+    const avatar=avatars.get(sessionId);
+    if(avatar) applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
+      player.avatarShape,player.avatarAssetRef);
+  });
   const mediaMap: any = (activeRoom.state as any).mediaObjects;
   if (!mediaMap) return;
 
@@ -2370,6 +2379,13 @@ async function enterWorld() {
       sharedStateDiagnostic.moveCorrections+=1;
       refreshSharedStateDiagnosticPanel();
       console.warn("[MOVE CORRECTED TO SERVER]",seq,x,z);
+    });
+    room.onMessage("avatar:style:applied",(payload:any)=>{
+      if(room!==activeRoom) return;
+      const avatar=avatars.get(String(payload?.sessionId||""));
+      if(!avatar) return;
+      applyAvatarStyle(avatar,payload.color,payload.accent,
+        payload.shape,payload.assetRef);
     });
     sharedStateDiagnostic.connection = "OPEN";
     sharedStateDiagnostic.lastError = "-";

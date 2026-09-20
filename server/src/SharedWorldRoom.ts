@@ -204,6 +204,11 @@ export class SharedWorldRoom extends Room<WorldState> {
       player.avatarAssetRef=typeof payload.assetRef==="string" && payload.assetRef.length<=240 &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(payload.assetRef)
         ?payload.assetRef:"";
+      this.broadcast("avatar:style:applied",{
+        sessionId:client.sessionId,
+        color:player.avatarColor,accent:player.avatarAccent,
+        shape:player.avatarShape,assetRef:player.avatarAssetRef
+      });
     });
 
     this.onMessage("media:add", (client: Client, payload: AddMediaPayload) => {

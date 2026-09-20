@@ -9,7 +9,8 @@ export const Player = schema({
   rotationY: t.number().default(0),
   avatarColor: t.string().default("#f0f0f5"),
   avatarAccent: t.string().default("#ff8c28"),
-  avatarShape: t.string().default("sphere")
+  avatarShape: t.string().default("sphere"),
+  avatarAssetRef: t.string().default("")
 }, "Player");
 export type Player = SchemaType<typeof Player>;
 

@@ -28,6 +28,10 @@ type Avatar = {
   proximityHalo: pc.Entity;
   forwardMarker:pc.Entity;
   styleKey:string;
+  textureRef:string;
+  textureRequest:number;
+  texture:pc.Texture|null;
+  textureURL:string|null;
 };
 
 // =========================================================
@@ -54,6 +58,9 @@ avatarControls.innerHTML=`<button type="button" id="avatarSettingsButton">AVATAR
     <label>BODY COLOR <input type="color" id="avatarBodyColor" value="#f0f0f5"></label>
     <label>ACCENT COLOR <input type="color" id="avatarAccentColor" value="#ff8c28"></label>
     <label>SHAPE <select id="avatarShape"><option value="sphere">ORB</option><option value="capsule">CAPSULE</option><option value="box">CUBE</option></select></label>
+    <label>BODY IMAGE (JPG / PNG)<input type="file" id="avatarImageFile" accept="image/jpeg,image/png"></label>
+    <div id="avatarImageStatus" style="font-size:11px;color:#b8d8ef;margin:8px 0"></div>
+    <button type="button" id="avatarClearImage">REMOVE IMAGE</button>
     <button type="button" id="avatarSaveButton">APPLY AVATAR</button>
   </div>
 </div>`;
@@ -695,18 +702,46 @@ let mobileAscend=false;
 let mobileDescend=false;
 let jumpRequested=false;
 const AVATAR_STYLE_KEY="shared-world-avatar-style-v1";
+const AVATAR_IMAGE_KEY="shared-world-avatar-image-v1";
 function savedAvatarStyle() {
   try {
     const input=JSON.parse(localStorage.getItem(AVATAR_STYLE_KEY)||"{}");
     return {
       color:typeof input.color==="string" && /^#[0-9a-fA-F]{6}$/.test(input.color)?input.color:"#f0f0f5",
       accent:typeof input.accent==="string" && /^#[0-9a-fA-F]{6}$/.test(input.accent)?input.accent:"#ff8c28",
-      shape:["sphere","capsule","box"].includes(input.shape)?input.shape:"sphere"
+      shape:["sphere","capsule","box"].includes(input.shape)?input.shape:"sphere",
+      assetRef:typeof input.assetRef==="string" &&
+        /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.assetRef)
+        ?input.assetRef:""
     };
-  } catch {return {color:"#f0f0f5",accent:"#ff8c28",shape:"sphere"};}
+  } catch {return {color:"#f0f0f5",accent:"#ff8c28",shape:"sphere",assetRef:""};}
 }
-function sendSavedAvatarStyle() {
-  if(activeRoom) activeRoom.send("avatar:style",savedAvatarStyle());
+let selectedAvatarAssetRef=savedAvatarStyle().assetRef;
+async function uploadAvatarImage(blob:Blob) {
+  const archive=new JSZip();archive.file("avatar.jpg",blob);
+  const body=await archive.generateAsync({type:"blob",compression:"STORE"});
+  const ref=sharedAssetURL(`avatar-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,9)}`,"zip");
+  const response=await fetch(ref,{method:"PUT",body});
+  if(!response.ok) throw new Error(`Upload HTTP ${response.status}`);
+  return ref;
+}
+async function sendSavedAvatarStyle(restoreImage=false,override?:ReturnType<typeof savedAvatarStyle>) {
+  const room=activeRoom;
+  if(!room) return;
+  let appearance=override || savedAvatarStyle();
+  if(restoreImage && appearance.assetRef) {
+    try {
+      const data=localStorage.getItem(AVATAR_IMAGE_KEY);
+      if(data && data.startsWith("data:image/jpeg;base64,")) {
+        const blob=await (await fetch(data)).blob();
+        const newRef=await uploadAvatarImage(blob);
+        appearance={...savedAvatarStyle(),assetRef:newRef};
+        selectedAvatarAssetRef=appearance.assetRef;
+        localStorage.setItem(AVATAR_STYLE_KEY,JSON.stringify(appearance));
+      }
+    } catch(error) {console.warn("[AVATAR IMAGE RESTORE FAILED]",error);}
+  }
+  if(room===activeRoom) room.send("avatar:style",appearance);
 }
 const avatarSettingsPanel=avatarControls.querySelector<HTMLElement>("#avatarSettingsPanel")!;
 avatarControls.querySelector<HTMLButtonElement>("#avatarSettingsButton")!.addEventListener("click",()=>{
@@ -716,14 +751,52 @@ const initialAvatarStyle=savedAvatarStyle();
 avatarControls.querySelector<HTMLInputElement>("#avatarBodyColor")!.value=initialAvatarStyle.color;
 avatarControls.querySelector<HTMLInputElement>("#avatarAccentColor")!.value=initialAvatarStyle.accent;
 avatarControls.querySelector<HTMLSelectElement>("#avatarShape")!.value=initialAvatarStyle.shape;
-avatarControls.querySelector<HTMLButtonElement>("#avatarSaveButton")!.addEventListener("click",()=>{
+const avatarImageInput=avatarControls.querySelector<HTMLInputElement>("#avatarImageFile")!;
+const avatarImageStatus=avatarControls.querySelector<HTMLElement>("#avatarImageStatus")!;
+const avatarSaveButton=avatarControls.querySelector<HTMLButtonElement>("#avatarSaveButton")!;
+avatarImageStatus.textContent=selectedAvatarAssetRef?"Saved image selected.":"No image selected.";
+avatarImageInput.addEventListener("change",async()=>{
+  const file=avatarImageInput.files?.[0];avatarImageInput.value="";
+  if(!file || !activeRoom) return;
+  if(!["image/png","image/jpeg"].includes(file.type) || file.size>8*1024*1024) {
+    avatarImageStatus.textContent="Select a JPG or PNG under 8 MB.";return;
+  }
+  avatarSaveButton.disabled=true;
+  try {
+    const image=new Image();const url=URL.createObjectURL(file);
+    try {image.src=url;await image.decode();}
+    finally {URL.revokeObjectURL(url);}
+    const canvas=document.createElement("canvas");canvas.width=512;canvas.height=512;
+    const context=canvas.getContext("2d")!;
+    context.fillStyle="#ffffff";context.fillRect(0,0,512,512);
+    const side=Math.min(image.naturalWidth,image.naturalHeight);
+    context.drawImage(image,(image.naturalWidth-side)/2,(image.naturalHeight-side)/2,
+      side,side,0,0,512,512);
+    const data=canvas.toDataURL("image/jpeg",.86);
+    const blob=await (await fetch(data)).blob();
+    avatarImageStatus.textContent="Uploading avatar image…";
+    selectedAvatarAssetRef=await uploadAvatarImage(blob);
+    try {localStorage.setItem(AVATAR_IMAGE_KEY,data);}
+    catch {avatarImageStatus.textContent="Image ready. Browser storage is full; choose it again after restarting.";}
+    if(!avatarImageStatus.textContent?.startsWith("Image ready."))
+      avatarImageStatus.textContent="512×512 image ready. Press APPLY AVATAR.";
+  } catch(error) {avatarImageStatus.textContent=`Avatar image error: ${String(error)}`;}
+  finally {avatarSaveButton.disabled=false;}
+});
+avatarControls.querySelector<HTMLButtonElement>("#avatarClearImage")!.addEventListener("click",()=>{
+  selectedAvatarAssetRef="";
+  try {localStorage.removeItem(AVATAR_IMAGE_KEY);} catch {}
+  avatarImageStatus.textContent="Image removed. Press APPLY AVATAR.";
+});
+avatarSaveButton.addEventListener("click",()=>{
   const appearance={
     color:avatarControls.querySelector<HTMLInputElement>("#avatarBodyColor")!.value,
     accent:avatarControls.querySelector<HTMLInputElement>("#avatarAccentColor")!.value,
-    shape:avatarControls.querySelector<HTMLSelectElement>("#avatarShape")!.value
+    shape:avatarControls.querySelector<HTMLSelectElement>("#avatarShape")!.value,
+    assetRef:selectedAvatarAssetRef
   };
   try {localStorage.setItem(AVATAR_STYLE_KEY,JSON.stringify(appearance));} catch {}
-  sendSavedAvatarStyle();
+  void sendSavedAvatarStyle(false,appearance);
   avatarSettingsPanel.hidden=true;
 });
 const flyButton=flightControls.querySelector<HTMLButtonElement>("#flyButton")!;
@@ -930,11 +1003,45 @@ function avatarMaterial(sessionId: string) {
   return material([r, g, b]);
 }
 
-function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string) {
+async function setAvatarTexture(avatar:Avatar,ref:string) {
+  if(ref===avatar.textureRef) return;
+  avatar.textureRef=ref;
+  const request=++avatar.textureRequest;
+  if(avatar.entity.render?.material instanceof pc.StandardMaterial) {
+    avatar.entity.render.material.diffuseMap=null;
+    avatar.entity.render.material.update();
+  }
+  if(avatar.texture) {avatar.texture.destroy();avatar.texture=null;}
+  if(avatar.textureURL) {URL.revokeObjectURL(avatar.textureURL);avatar.textureURL=null;}
+  if(!ref) return;
+  try {
+    const response=await fetch(ref,{cache:"no-store"});
+    if(!response.ok) throw new Error(`HTTP ${response.status}`);
+    const archive=await JSZip.loadAsync(await response.blob());
+    const entry=archive.file("avatar.jpg");
+    if(!entry) throw new Error("avatar.jpg missing");
+    const blob=await entry.async("blob");
+    if(!blob.size || blob.size>1024*1024) throw new Error("Avatar image too large");
+    const url=URL.createObjectURL(blob);
+    const image=new Image();image.src=url;
+    try {await image.decode();}
+    catch(error) {URL.revokeObjectURL(url);throw error;}
+    if(request!==avatar.textureRequest) {URL.revokeObjectURL(url);return;}
+    const texture=new pc.Texture(app.graphicsDevice,{mipmaps:true});
+    texture.setSource(image);
+    avatar.texture=texture;avatar.textureURL=url;
+    const body=avatar.entity.render?.material;
+    if(body instanceof pc.StandardMaterial) {body.diffuseMap=texture;body.update();}
+  } catch(error) {console.warn("[AVATAR IMAGE LOAD FAILED]",ref,error);}
+}
+function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,assetRef:string) {
   const safeColor=/^#[0-9a-fA-F]{6}$/.test(color)?color:"#f0f0f5";
   const safeAccent=/^#[0-9a-fA-F]{6}$/.test(accent)?accent:"#ff8c28";
   const safeShape=["sphere","capsule","box"].includes(shape)?shape:"sphere";
+  const safeRef=typeof assetRef==="string" &&
+    /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(assetRef)?assetRef:"";
   const key=`${safeColor}/${safeAccent}/${safeShape}`;
+  void setAvatarTexture(avatar,safeRef);
   if(key===avatar.styleKey) return;
   const body=avatar.entity.render!;
   const oldBody=body.material;
@@ -942,7 +1049,9 @@ function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string)
   body.type=safeShape;
   avatar.entity.setLocalScale(.65,safeShape==="capsule"?.85:.65,.65);
   const bodyColor=colorFromHex(safeColor);
-  body.material=material([bodyColor.r,bodyColor.g,bodyColor.b]);
+  const newBodyMaterial=material([bodyColor.r,bodyColor.g,bodyColor.b]);
+  if(avatar.texture) {newBodyMaterial.diffuseMap=avatar.texture;newBodyMaterial.update();}
+  body.material=newBodyMaterial;
   const accentColor=colorFromHex(safeAccent);
   avatar.forwardMarker.render!.material=material([accentColor.r,accentColor.g,accentColor.b]);
   avatar.styleKey=key;
@@ -1001,9 +1110,14 @@ function createAvatar(sessionId: string, player: any) {
     名前ラベル,
     proximityHalo,
     forwardMarker,
-    styleKey:""
+    styleKey:"",
+    textureRef:"",
+    textureRequest:0,
+    texture:null,
+    textureURL:null
   });
-  applyAvatarStyle(avatars.get(sessionId)!,player.avatarColor,player.avatarAccent,player.avatarShape);
+  applyAvatarStyle(avatars.get(sessionId)!,player.avatarColor,player.avatarAccent,
+    player.avatarShape,player.avatarAssetRef);
 
   if (sessionId === currentSessionId) {
     localPosition.set(player.x, player.y, player.z);
@@ -1018,8 +1132,11 @@ function removeAvatar(sessionId: string) {
   const bodyMaterial=avatar.entity.render?.material;
   const markerMaterial=avatar.forwardMarker.render?.material;
   const haloMaterial=avatar.proximityHalo.render?.material;
+  avatar.textureRequest++;
   avatar.entity.destroy();
   bodyMaterial?.destroy();markerMaterial?.destroy();haloMaterial?.destroy();
+  avatar.texture?.destroy();
+  if(avatar.textureURL) URL.revokeObjectURL(avatar.textureURL);
   avatars.delete(sessionId);
   updatePlayerCount();
 }
@@ -2261,7 +2378,7 @@ async function enterWorld() {
     const $ = getStateCallbacks(room);
     $(room.state).players.onAdd((player: any, sessionId: string) => {
       createAvatar(sessionId, player);
-      if(sessionId===currentSessionId) sendSavedAvatarStyle();
+      if(sessionId===currentSessionId) void sendSavedAvatarStyle(true);
       $(player).onChange(() => {
         const avatar = avatars.get(sessionId);
         if (!avatar) return;
@@ -2269,7 +2386,8 @@ async function enterWorld() {
         avatar.name = player.name;
         avatar.名前ラベル.textContent = player.name;
         avatar.entity.setEulerAngles(0, player.rotationY ?? 0, 0);
-        applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,player.avatarShape);
+        applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
+          player.avatarShape,player.avatarAssetRef);
       });
     });
 

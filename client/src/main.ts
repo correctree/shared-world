@@ -374,23 +374,11 @@ let particleTime=0;
 function particleMaterial(mode:"spark"|"smoke") {
   const existing=particleMaterials.get(mode);
   if(existing) return existing;
-  const canvas=document.createElement("canvas");canvas.width=64;canvas.height=64;
-  const ctx=canvas.getContext("2d")!;
-  const gradient=ctx.createRadialGradient(32,32,2,32,32,31);
-  if(mode==="smoke") {
-    gradient.addColorStop(0,"rgba(225,230,235,.4)");
-    gradient.addColorStop(.45,"rgba(200,210,220,.2)");
-  } else {
-    gradient.addColorStop(0,"rgba(255,245,205,1)");
-    gradient.addColorStop(.25,"rgba(255,174,70,.8)");
-  }
-  gradient.addColorStop(1,"rgba(255,255,255,0)");
-  ctx.fillStyle=gradient;ctx.fillRect(0,0,64,64);
-  const texture=new pc.Texture(app.graphicsDevice,{mipmaps:true});texture.setSource(canvas);
   const mat=new pc.StandardMaterial();
-  mat.diffuse=new pc.Color(1,1,1);mat.diffuseMap=texture;
-  mat.opacityMap=texture;mat.opacityMapChannel="a";
-  mat.blendType=pc.BLEND_NORMAL;mat.depthWrite=false;mat.cull=pc.CULLFACE_NONE;
+  mat.diffuse=mode==="smoke"?new pc.Color(.7,.76,.82):new pc.Color(1,.66,.2);
+  mat.emissive=mode==="smoke"?new pc.Color(.3,.34,.38):new pc.Color(1,.6,.15);
+  mat.opacity=mode==="smoke"?.42:1;
+  if(mode==="smoke") {mat.blendType=pc.BLEND_NORMAL;mat.depthWrite=false;}
   mat.useLighting=false;mat.update();
   particleMaterials.set(mode,mat);
   return mat;
@@ -403,27 +391,26 @@ function setAmbientParticles(mode:WorldEnvironment["particles"],count:number) {
   const mat=particleMaterial(mode);
   for(let i=0;i<count;i++) {
     const entity=new pc.Entity(`Ambient-${mode}-${i}`);
-    entity.addComponent("render",{type:"plane"});
+    entity.addComponent("render",{type:"sphere"});
     entity.render!.material=mat;entity.render!.castShadows=false;
-    const size=mode==="smoke"?2.5:0.45;
-    entity.setLocalScale(size,1,size);
+    const size=mode==="smoke"?1.2+(i%3)*.35:.14+(i%3)*.055;
+    entity.setLocalScale(size,size,size);
     app.root.addChild(entity);ambientParticles.push(entity);
   }
 }
 app.on("update",(dt:number)=>{
   if(!ambientParticles.length) return;
   particleTime+=Math.min(.05,dt);
-  const radius=Math.min(20,Math.max(6,currentWorldEnvironment.groundSize*.2));
+  const radius=Math.min(8,Math.max(4,currentWorldEnvironment.groundSize*.14));
   const center=activeRoom?localPosition:new pc.Vec3(0,0,0);
   for(let i=0;i<ambientParticles.length;i++) {
     const entity=ambientParticles[i];
     const a=i*2.39996;
-    const distance=radius*(.3+(i%9)/12);
+    const distance=radius*(.35+(i%9)/13);
     const x=center.x+Math.sin(a)*distance;
     const z=center.z+Math.cos(a)*distance;
     const rise=(particleTime*(activeParticleMode==="smoke"?.3:.8)+i*.37)%4;
     entity.setPosition(x,.6+rise,z);
-    entity.lookAt(camera.getPosition());
   }
 });
 app.on("update",(dt:number)=>{
@@ -3015,7 +3002,9 @@ customGroundInput.addEventListener("change",async()=>{
     try {image.src=local;await image.decode();}
     finally {URL.revokeObjectURL(local);}
     const canvas=document.createElement("canvas");canvas.width=1024;canvas.height=1024;
-    canvas.getContext("2d")!.drawImage(image,0,0,1024,1024);
+    const side=Math.min(image.naturalWidth,image.naturalHeight);
+    canvas.getContext("2d")!.drawImage(image,
+      (image.naturalWidth-side)/2,(image.naturalHeight-side)/2,side,side,0,0,1024,1024);
     const jpeg=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(
       b=>b?resolve(b):reject(new Error("Image conversion failed")),"image/jpeg",.86));
     const archive=new JSZip();archive.file("ground.jpg",jpeg);
@@ -3026,7 +3015,7 @@ customGroundInput.addEventListener("change",async()=>{
     if(!response.ok) throw new Error(`Upload HTTP ${response.status}`);
     uploadedGroundRef=ref;
     environmentEditor.querySelector<HTMLSelectElement>("[data-env=groundMode]")!.value="custom";
-    customGroundStatus.textContent="Ground image ready. Press APPLY TO ROOM.";
+    customGroundStatus.textContent=`${image.naturalWidth}×${image.naturalHeight} → 1024×1024 (${Math.round(jpeg.size/1024)} KB). Press APPLY TO ROOM.`;
   } catch(error) {customGroundStatus.textContent=`Ground image error: ${String(error)}`;}
 });
 const panoramaInput=environmentEditor.querySelector<HTMLInputElement>("[data-panorama-file]")!;

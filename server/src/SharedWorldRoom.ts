@@ -56,7 +56,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       skyAssetRef:typeof input.skyAssetRef==="string" && input.skyAssetRef.length<=240 &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.skyAssetRef)
         ?input.skyAssetRef:"",
-      groundMode:["plain","soil","water"].includes(input.groundMode)?input.groundMode:"plain",
+      groundMode:["plain","soil","water","custom"].includes(input.groundMode)?input.groundMode:"plain",
       groundSize:[15,60,160].includes(Number(input.groundSize))?Number(input.groundSize):15,
       groundAssetRef:typeof input.groundAssetRef==="string" && input.groundAssetRef.length<=240 &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.groundAssetRef)

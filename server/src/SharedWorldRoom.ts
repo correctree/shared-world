@@ -1,7 +1,6 @@
 import { Room, type Client } from "colyseus";
 import { Player, SharedMediaObject, WorldState } from "./state.js";
 
-const WORLD_LIMIT = 6.5;
 const MAX_STEP = 0.75;
 const MAX_MEDIA_OBJECTS = 64;
 
@@ -33,8 +32,9 @@ export class SharedWorldRoom extends Room<WorldState> {
   private environment = {
     sky:"#090c11", ground:"#262b33", grid:"#474d57", gridVisible:true,
     ambient:0.45, sunlight:1.5, lightColor:"#ffffff", sunAngle:45,
-    skyMode:"color", skyAssetRef:"", groundMode:"plain"
+    skyMode:"color", skyAssetRef:"", groundMode:"plain", groundSize:15
   };
+  private worldLimit(size:number=this.environment.groundSize) { return Math.max(6.5,size/2-1); }
   private cleanEnvironment(input:any) {
     if (!input || typeof input!=="object") return null;
     const color=(value:unknown,fallback:string)=>
@@ -55,7 +55,8 @@ export class SharedWorldRoom extends Room<WorldState> {
       skyAssetRef:typeof input.skyAssetRef==="string" && input.skyAssetRef.length<=240 &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.skyAssetRef)
         ?input.skyAssetRef:"",
-      groundMode:["plain","soil","water"].includes(input.groundMode)?input.groundMode:"plain"
+      groundMode:["plain","soil","water"].includes(input.groundMode)?input.groundMode:"plain",
+      groundSize:[15,60,160].includes(Number(input.groundSize))?Number(input.groundSize):15
     };
   }
   private mediaBehaviors = new Map<string, Record<string, unknown>>();
@@ -129,8 +130,8 @@ export class SharedWorldRoom extends Room<WorldState> {
       if (!Number.isFinite(nextX) || !Number.isFinite(nextZ)) return;
       if (!Number.isFinite(nextRotationY)) return;
 
-      const clampedX = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, nextX));
-      const clampedZ = Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, nextZ));
+      const clampedX = Math.max(-this.worldLimit(), Math.min(this.worldLimit(), nextX));
+      const clampedZ = Math.max(-this.worldLimit(), Math.min(this.worldLimit(), nextZ));
       const dx = clampedX - player.x;
       const dz = clampedZ - player.z;
       const distance = Math.hypot(dx, dz);
@@ -185,9 +186,9 @@ export class SharedWorldRoom extends Room<WorldState> {
         fallbackRef: String(payload?.fallbackRef || "").slice(0, 240),
         ownerSessionId: client.sessionId,
         ownerClientId: this.state.players.get(client.sessionId)?.clientId || "",
-        x: Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, x)),
+        x: Math.max(-this.worldLimit(), Math.min(this.worldLimit(), x)),
         y: Math.max(-10, Math.min(20, y)),
-        z: Math.max(-WORLD_LIMIT, Math.min(WORLD_LIMIT, z)),
+        z: Math.max(-this.worldLimit(), Math.min(this.worldLimit(), z)),
         rotationY,
         scale: Math.max(0.05, Math.min(20, scale))
       }));
@@ -247,9 +248,9 @@ export class SharedWorldRoom extends Room<WorldState> {
         client.send("media:update:result", {id, ok:false, reason:"invalid-transform"});
         return;
       }
-      media.x=Math.max(-WORLD_LIMIT,Math.min(WORLD_LIMIT,x));
+      media.x=Math.max(-this.worldLimit(),Math.min(this.worldLimit(),x));
       media.y=Math.max(-10,Math.min(20,y));
-      media.z=Math.max(-WORLD_LIMIT,Math.min(WORLD_LIMIT,z));
+      media.z=Math.max(-this.worldLimit(),Math.min(this.worldLimit(),z));
       media.rotationY=rotationY;
       media.scale=Math.max(0.05,Math.min(20,scale));
       // Apply transforms to already-loaded clients without waiting for a state patch.
@@ -354,6 +355,11 @@ export class SharedWorldRoom extends Room<WorldState> {
       const next=this.cleanEnvironment(payload);
       if (!next) return;
       this.environment=next;
+      const limit=this.worldLimit();
+      for(const player of this.state.players.values()) {
+        player.x=Math.max(-limit,Math.min(limit,player.x));
+        player.z=Math.max(-limit,Math.min(limit,player.z));
+      }
       this.broadcast("environment:state",next);
       client.send("environment:state",next);
     });
@@ -390,6 +396,8 @@ export class SharedWorldRoom extends Room<WorldState> {
         const n = Number(value); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
       };
       // Validate the entire import before changing the shared state.
+      const importedEnvironment=payload.environment?this.cleanEnvironment(payload.environment):null;
+      const importLimit=this.worldLimit(importedEnvironment?.groundSize ?? this.environment.groundSize);
       const entries: Array<{id:string; media:InstanceType<typeof SharedMediaObject>; behavior:Record<string, unknown>}> = [];
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
@@ -420,8 +428,8 @@ export class SharedWorldRoom extends Room<WorldState> {
           title:item.title, type:item.type, assetRef:item.assetRef,
           fallbackRef:item.fallbackRef, ownerSessionId:client.sessionId,
           ownerClientId:player.clientId,
-          x:bounded(x,0,-WORLD_LIMIT,WORLD_LIMIT), y:bounded(y,1.8,-10,20),
-          z:bounded(z,-3,-WORLD_LIMIT,WORLD_LIMIT), rotationY,
+          x:bounded(x,0,-importLimit,importLimit), y:bounded(y,1.8,-10,20),
+          z:bounded(z,-3,-importLimit,importLimit), rotationY,
           scale:bounded(scale,1,.05,20)
         })});
       }
@@ -431,7 +439,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         this.broadcast("media:behavior", {id:entry.id, behavior:entry.behavior});
       }
       if (payload.environment) {
-        const imported=this.cleanEnvironment(payload.environment);
+        const imported=importedEnvironment;
         if (imported) {
           this.environment=imported;
           this.broadcast("environment:state",imported);

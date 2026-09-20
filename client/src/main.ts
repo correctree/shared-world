@@ -230,7 +230,7 @@ light.setEulerAngles(45, 35, 0);
 app.root.addChild(light);
 
 const camera = new pc.Entity("Camera");
-camera.addComponent("camera", { clearColor: new pc.Color(0.035, 0.045, 0.065), farClip: 100 });
+camera.addComponent("camera", { clearColor: new pc.Color(0.035, 0.045, 0.065), farClip: 400 });
 camera.setPosition(0, 10, 11);
 camera.lookAt(0, 0, 0);
 app.root.addChild(camera);
@@ -239,12 +239,12 @@ app.root.addChild(camera);
 type WorldEnvironment = {
   sky:string;ground:string;grid:string;gridVisible:boolean;
   ambient:number;sunlight:number;lightColor:string;sunAngle:number;
-  skyMode:"color"|"panorama";skyAssetRef:string;groundMode:"plain"|"soil"|"water"
+  skyMode:"color"|"panorama";skyAssetRef:string;groundMode:"plain"|"soil"|"water";groundSize:number
 };
 const defaultWorldEnvironment:WorldEnvironment = {
   sky:"#090c11",ground:"#262b33",grid:"#474d57",gridVisible:true,
   ambient:0.45,sunlight:1.5,lightColor:"#ffffff",sunAngle:45,
-  skyMode:"color",skyAssetRef:"",groundMode:"plain"
+  skyMode:"color",skyAssetRef:"",groundMode:"plain",groundSize:15
 };
 let currentWorldEnvironment:WorldEnvironment={...defaultWorldEnvironment};
 let panoramaEntity:pc.Entity|null=null;
@@ -321,7 +321,7 @@ async function setPanorama(ref:string) {
     skyMaterial.cull=pc.CULLFACE_FRONT;
     skyMaterial.update();
     const sphere=new pc.Entity("PanoramaSky");sphere.addComponent("render",{type:"sphere"});
-    sphere.setLocalScale(150,150,150);
+    sphere.setLocalScale(650,650,650);
     sphere.render!.material=skyMaterial;
     sphere.render!.castShadows=false;
     app.root.addChild(sphere);
@@ -356,7 +356,8 @@ function applyWorldEnvironment(payload:any) {
     sunAngle:number(payload.sunAngle,45,5,85),
     skyMode:payload.skyMode==="panorama"?"panorama":"color",
     skyAssetRef:typeof payload.skyAssetRef==="string"?payload.skyAssetRef:"",
-    groundMode:["plain","soil","water"].includes(payload.groundMode)?payload.groundMode:"plain"
+    groundMode:["plain","soil","water"].includes(payload.groundMode)?payload.groundMode:"plain",
+    groundSize:[15,60,160].includes(Number(payload.groundSize))?Number(payload.groundSize):15
   };
   camera.camera!.clearColor=colorFromHex(currentWorldEnvironment.sky);
   floorMaterial.diffuse=currentWorldEnvironment.groundMode==="plain"
@@ -364,7 +365,22 @@ function applyWorldEnvironment(payload:any) {
   setGroundStyle(currentWorldEnvironment.groundMode);
   void setPanorama(currentWorldEnvironment.skyMode==="panorama"?currentWorldEnvironment.skyAssetRef:"");
   gridMaterial.diffuse=colorFromHex(currentWorldEnvironment.grid);gridMaterial.update();
-  for (const entity of gridEntities) entity.enabled=currentWorldEnvironment.gridVisible;
+  const size=currentWorldEnvironment.groundSize;
+  const limit=Math.max(6.5,size/2-1);
+  if (activeRoom && currentSessionId) {
+    localPosition.x=Math.max(-limit,Math.min(limit,localPosition.x));
+    localPosition.z=Math.max(-limit,Math.min(limit,localPosition.z));
+    avatars.get(currentSessionId)?.entity.setPosition(localPosition);
+  }
+  floor.setLocalScale(size,0.15,size);
+  gridEntities.forEach((entity,index)=>{
+    const i=Math.floor(index/2)-7;
+    if(index%2===0) {entity.setLocalScale(size,.012,.012);entity.setPosition(0,.01,i*size/15);}
+    else {entity.setLocalScale(.012,.012,size);entity.setPosition(i*size/15,.01,0);}
+    entity.enabled=currentWorldEnvironment.gridVisible;
+  });
+  floorMaterial.diffuseMapTiling=new pc.Vec2(size/15,size/15);
+  floorMaterial.update();
   const ambient=currentWorldEnvironment.ambient;
   app.scene.ambientLight=new pc.Color(ambient,ambient,ambient);
   light.light!.intensity=currentWorldEnvironment.sunlight;
@@ -2861,6 +2877,9 @@ environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
   <label style="display:block;font-size:12px;margin:9px 0">360 IMAGE (2:1 JPG / PNG)
     <input data-panorama-file type="file" accept="image/jpeg,image/png">
   </label>
+  <label style="display:block;font-size:12px;margin:9px 0">GROUND SIZE
+    <select data-env="groundSize"><option value="15">15 m</option><option value="60">60 m</option><option value="160">160 m</option></select>
+  </label>
   <label style="display:block;font-size:12px;margin:9px 0">GROUND MODE
     <select data-env="groundMode"><option value="plain">PLAIN</option><option value="soil">SOIL</option><option value="water">WATER</option></select>
   </label>
@@ -2914,7 +2933,8 @@ environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEvent
   for (const key of Object.keys(currentWorldEnvironment)) {
     const input=environmentEditor.querySelector<HTMLInputElement>(`[data-env="${key}"]`);
     if (!input) continue;
-    payload[key]=input.type==="checkbox"?input.checked:input.type==="range"?Number(input.value):input.value;
+    payload[key]=input.type==="checkbox"?input.checked:
+      input.type==="range" || key==="groundSize"?Number(input.value):input.value;
   }
   payload.skyAssetRef=uploadedPanoramaRef || currentWorldEnvironment.skyAssetRef;
   if(payload.skyMode==="panorama" && !payload.skyAssetRef) {
@@ -5235,14 +5255,14 @@ app.on("update", (dt: number) => {
 
     localPosition.x = pc.math.clamp(
       localPosition.x + moveX * MOVE_SPEED * Math.min(dt,0.1),
-      -6.5,
-      6.5
+      -Math.max(6.5,currentWorldEnvironment.groundSize/2-1),
+      Math.max(6.5,currentWorldEnvironment.groundSize/2-1)
     );
 
     localPosition.z = pc.math.clamp(
       localPosition.z + moveZ * MOVE_SPEED * Math.min(dt,0.1),
-      -6.5,
-      6.5
+      -Math.max(6.5,currentWorldEnvironment.groundSize/2-1),
+      Math.max(6.5,currentWorldEnvironment.groundSize/2-1)
     );
 
     me.entity.setPosition(localPosition);

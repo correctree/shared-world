@@ -160,15 +160,16 @@ export class SharedWorldRoom extends Room<WorldState> {
     // "media:add" are guaranteed to reach this Room on Colyseus 0.18.
     this.onMessage("move", (
       client: Client,
-      payload: { x?: number; z?: number; rotationY?: number; seq?: number }
+      payload: { x?: number; y?: number; z?: number; rotationY?: number; seq?: number }
     ) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
 
       const nextX = Number(payload?.x);
+      const nextY = payload?.y === undefined ? player.y : Number(payload.y);
       const nextZ = Number(payload?.z);
       const nextRotationY = Number(payload?.rotationY);
-      if (!Number.isFinite(nextX) || !Number.isFinite(nextZ)) return;
+      if (!Number.isFinite(nextX) || !Number.isFinite(nextY) || !Number.isFinite(nextZ)) return;
       if (!Number.isFinite(nextRotationY)) return;
 
       const clampedX = Math.max(-this.worldLimit(), Math.min(this.worldLimit(), nextX));
@@ -176,17 +177,30 @@ export class SharedWorldRoom extends Room<WorldState> {
       const dx = clampedX - player.x;
       const dz = clampedZ - player.z;
       const distance = Math.hypot(dx, dz);
+      const clampedY=Math.max(0.65,Math.min(8.65,nextY));
+      const dy=Math.abs(clampedY-player.y);
 
-      if (distance > MAX_STEP) {
-        client.send("move:ack",{seq:payload?.seq,ok:false,x:player.x,z:player.z,rotationY:player.rotationY});
+      if (distance > MAX_STEP || dy > MAX_STEP || nextY<0.65 || nextY>8.65) {
+        client.send("move:ack",{seq:payload?.seq,ok:false,x:player.x,y:player.y,z:player.z,rotationY:player.rotationY});
         return;
       }
 
       player.x = clampedX;
+      player.y = clampedY;
       player.z = clampedZ;
       player.rotationY = nextRotationY;
-      client.send("move:ack",{seq:payload?.seq,ok:true,x:player.x,z:player.z,rotationY:player.rotationY});
+      client.send("move:ack",{seq:payload?.seq,ok:true,x:player.x,y:player.y,z:player.z,rotationY:player.rotationY});
       this.evaluateProximity(client);
+    });
+
+    this.onMessage("avatar:style",(client:Client,payload:any)=>{
+      const player=this.state.players.get(client.sessionId);
+      if(!player || !payload || typeof payload!=="object") return;
+      const color=(input:unknown,fallback:string)=>typeof input==="string" &&
+        /^#[0-9a-fA-F]{6}$/.test(input)?input.toLowerCase():fallback;
+      player.avatarColor=color(payload.color,player.avatarColor);
+      player.avatarAccent=color(payload.accent,player.avatarAccent);
+      player.avatarShape=["sphere","capsule","box"].includes(payload.shape)?payload.shape:player.avatarShape;
     });
 
     this.onMessage("media:add", (client: Client, payload: AddMediaPayload) => {

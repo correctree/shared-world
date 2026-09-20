@@ -26,6 +26,8 @@ type Avatar = {
   name: string;
   名前ラベル: HTMLDivElement;
   proximityHalo: pc.Entity;
+  forwardMarker:pc.Entity;
+  styleKey:string;
 };
 
 // =========================================================
@@ -44,6 +46,40 @@ const playersLabel = document.querySelector<HTMLElement>("#playersLabel")!;
 const joystick = document.querySelector<HTMLDivElement>("#joystick")!;
 const joystickKnob = document.querySelector<HTMLDivElement>("#joystickKnob")!;
 const viewToggle = document.querySelector<HTMLButtonElement>("#viewToggle")!;
+const avatarControls=document.createElement("div");
+avatarControls.id="avatarControls";
+avatarControls.innerHTML=`<button type="button" id="avatarSettingsButton">AVATAR</button>
+  <div id="avatarSettingsPanel" hidden>
+    <strong>AVATAR DESIGN</strong>
+    <label>BODY COLOR <input type="color" id="avatarBodyColor" value="#f0f0f5"></label>
+    <label>ACCENT COLOR <input type="color" id="avatarAccentColor" value="#ff8c28"></label>
+    <label>SHAPE <select id="avatarShape"><option value="sphere">ORB</option><option value="capsule">CAPSULE</option><option value="box">CUBE</option></select></label>
+    <button type="button" id="avatarSaveButton">APPLY AVATAR</button>
+  </div>
+</div>`;
+document.body.appendChild(avatarControls);
+const flightControls=document.createElement("div");
+flightControls.id="flightControls";
+flightControls.innerHTML=`<button type="button" id="jumpButton">JUMP / UP</button>
+  <button type="button" id="flyButton">FLY OFF</button>
+  <button type="button" id="descendButton">DOWN</button>`;
+document.body.appendChild(flightControls);
+const avatarStyleSheet=document.createElement("style");
+avatarStyleSheet.textContent=`
+  #avatarControls {position:fixed;top:125px;left:22px;z-index:35;display:none;width:190px}
+  #avatarControls button,#flightControls button {margin:0;padding:10px 12px;width:auto;border:1px solid #9fb3c6;background:rgba(9,15,24,.9);color:#fff;border-radius:10px;font-size:11px}
+  #avatarSettingsPanel {margin-top:8px;padding:12px;max-height:60vh;overflow:auto;background:rgba(9,15,24,.96);border:1px solid #7191ae;border-radius:12px}
+  #avatarSettingsPanel[hidden] {display:none}
+  #avatarSettingsPanel label {font-size:11px;margin:10px 0}
+  #avatarSettingsPanel input,#avatarSettingsPanel select {width:100%;margin:4px 0;padding:5px;background:#172433;color:white;border:1px solid #7191ae;border-radius:6px}
+  #avatarSettingsPanel input[type=color] {height:38px;padding:3px}
+  #avatarSettingsPanel button {width:100%;margin-top:8px}
+  #flightControls {position:fixed;right:106px;bottom:35px;z-index:35;display:none;gap:5px;align-items:center}
+  #flightControls button {touch-action:none;white-space:nowrap;min-height:45px}
+  @media (pointer:coarse) {#flightControls.room-active {display:flex} #avatarControls {top:140px}}
+  @media (max-width:640px) {#flightControls {right:12px;bottom:155px;gap:3px} #flightControls button {font-size:10px;padding:8px 5px} #avatarControls {left:12px;top:135px;width:165px}}
+`;
+document.head.appendChild(avatarStyleSheet);
 
 // Prototype 0.9 / ADD ARTWORK UI
 const addArtworkButton = document.querySelector<HTMLButtonElement>("#addArtworkButton");
@@ -652,12 +688,75 @@ let localPosition = new pc.Vec3();
 let lastSend = 0;
 let moveSequence = 0;
 let latestMoveAck = 0;
-let lastSentMove = {x:NaN,z:NaN,rotationY:NaN};
+let lastSentMove = {x:NaN,y:NaN,z:NaN,rotationY:NaN};
+let verticalVelocity=0;
+let flying=false;
+let mobileAscend=false;
+let mobileDescend=false;
+let jumpRequested=false;
+const AVATAR_STYLE_KEY="shared-world-avatar-style-v1";
+function savedAvatarStyle() {
+  try {
+    const input=JSON.parse(localStorage.getItem(AVATAR_STYLE_KEY)||"{}");
+    return {
+      color:typeof input.color==="string" && /^#[0-9a-fA-F]{6}$/.test(input.color)?input.color:"#f0f0f5",
+      accent:typeof input.accent==="string" && /^#[0-9a-fA-F]{6}$/.test(input.accent)?input.accent:"#ff8c28",
+      shape:["sphere","capsule","box"].includes(input.shape)?input.shape:"sphere"
+    };
+  } catch {return {color:"#f0f0f5",accent:"#ff8c28",shape:"sphere"};}
+}
+function sendSavedAvatarStyle() {
+  if(activeRoom) activeRoom.send("avatar:style",savedAvatarStyle());
+}
+const avatarSettingsPanel=avatarControls.querySelector<HTMLElement>("#avatarSettingsPanel")!;
+avatarControls.querySelector<HTMLButtonElement>("#avatarSettingsButton")!.addEventListener("click",()=>{
+  avatarSettingsPanel.hidden=!avatarSettingsPanel.hidden;
+});
+const initialAvatarStyle=savedAvatarStyle();
+avatarControls.querySelector<HTMLInputElement>("#avatarBodyColor")!.value=initialAvatarStyle.color;
+avatarControls.querySelector<HTMLInputElement>("#avatarAccentColor")!.value=initialAvatarStyle.accent;
+avatarControls.querySelector<HTMLSelectElement>("#avatarShape")!.value=initialAvatarStyle.shape;
+avatarControls.querySelector<HTMLButtonElement>("#avatarSaveButton")!.addEventListener("click",()=>{
+  const appearance={
+    color:avatarControls.querySelector<HTMLInputElement>("#avatarBodyColor")!.value,
+    accent:avatarControls.querySelector<HTMLInputElement>("#avatarAccentColor")!.value,
+    shape:avatarControls.querySelector<HTMLSelectElement>("#avatarShape")!.value
+  };
+  try {localStorage.setItem(AVATAR_STYLE_KEY,JSON.stringify(appearance));} catch {}
+  sendSavedAvatarStyle();
+  avatarSettingsPanel.hidden=true;
+});
+const flyButton=flightControls.querySelector<HTMLButtonElement>("#flyButton")!;
+function setFlightMode(enabled:boolean) {
+  flying=enabled;
+  verticalVelocity=0;
+  mobileAscend=false;mobileDescend=false;
+  flyButton.textContent=flying?"FLY ON":"FLY OFF";
+  flyButton.style.borderColor=flying?"#50caff":"#9fb3c6";
+}
+flyButton.addEventListener("click",()=>{if(activeRoom) setFlightMode(!flying);});
+const jumpButton=flightControls.querySelector<HTMLButtonElement>("#jumpButton")!;
+jumpButton.addEventListener("pointerdown",(event)=>{
+  event.preventDefault();
+  if(!activeRoom) return;
+  mobileAscend=true;
+  if(!flying) jumpRequested=true;
+  jumpButton.setPointerCapture(event.pointerId);
+});
+for(const type of ["pointerup","pointercancel","lostpointercapture"])
+  jumpButton.addEventListener(type,()=>{mobileAscend=false;});
+const descendButton=flightControls.querySelector<HTMLButtonElement>("#descendButton")!;
+descendButton.addEventListener("pointerdown",(event)=>{
+  event.preventDefault();mobileDescend=true;
+  descendButton.setPointerCapture(event.pointerId);
+});
+for(const type of ["pointerup","pointercancel","lostpointercapture"])
+  descendButton.addEventListener(type,()=>{mobileDescend=false;});
 function sendLocalMovement(rotationY:number) {
   if (!activeRoom) return;
   const seq=++moveSequence;
-  activeRoom.send("move",{x:localPosition.x,z:localPosition.z,rotationY,seq});
-  lastSentMove={x:localPosition.x,z:localPosition.z,rotationY};
+  activeRoom.send("move",{x:localPosition.x,y:localPosition.y,z:localPosition.z,rotationY,seq});
+  lastSentMove={x:localPosition.x,y:localPosition.y,z:localPosition.z,rotationY};
   lastSend=performance.now();
 }
 
@@ -786,6 +885,19 @@ canvas.addEventListener("wheel", (e) => {
 }, { passive: false });
 
 window.addEventListener("keydown", (e) => {
+  const target=e.target as HTMLElement;
+  if(target?.closest?.("input,textarea,select,button") || target?.isContentEditable) return;
+  if(e.code==="Space") {
+    e.preventDefault();
+    if(!e.repeat && !flying) jumpRequested=true;
+    keys.add("space");
+    return;
+  }
+  if(e.key.toLowerCase()==="f") {
+    if(!e.repeat && activeRoom) setFlightMode(!flying);
+    return;
+  }
+  if(e.key.toLowerCase()==="shift") {keys.add("shift");return;}
   if (e.key.toLowerCase() === "v") {
     toggleViewMode();
     return;
@@ -796,7 +908,10 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+window.addEventListener("keyup", (e) => {
+  if(e.code==="Space") keys.delete("space");
+  else keys.delete(e.key.toLowerCase());
+});
 viewToggle.addEventListener("click", toggleViewMode);
 
 // =========================================================
@@ -813,6 +928,25 @@ function avatarMaterial(sessionId: string) {
   const g = 0.25 + (((hash >> 8) & 255) / 255) * 0.55;
   const b = 0.25 + (((hash >> 16) & 255) / 255) * 0.55;
   return material([r, g, b]);
+}
+
+function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string) {
+  const safeColor=/^#[0-9a-fA-F]{6}$/.test(color)?color:"#f0f0f5";
+  const safeAccent=/^#[0-9a-fA-F]{6}$/.test(accent)?accent:"#ff8c28";
+  const safeShape=["sphere","capsule","box"].includes(shape)?shape:"sphere";
+  const key=`${safeColor}/${safeAccent}/${safeShape}`;
+  if(key===avatar.styleKey) return;
+  const body=avatar.entity.render!;
+  const oldBody=body.material;
+  const oldMarker=avatar.forwardMarker.render!.material;
+  body.type=safeShape;
+  avatar.entity.setLocalScale(.65,safeShape==="capsule"?.85:.65,.65);
+  const bodyColor=colorFromHex(safeColor);
+  body.material=material([bodyColor.r,bodyColor.g,bodyColor.b]);
+  const accentColor=colorFromHex(safeAccent);
+  avatar.forwardMarker.render!.material=material([accentColor.r,accentColor.g,accentColor.b]);
+  avatar.styleKey=key;
+  oldBody?.destroy();oldMarker?.destroy();
 }
 
 function 名前ラベルを作成(名前: string) {
@@ -865,8 +999,11 @@ function createAvatar(sessionId: string, player: any) {
     target: new pc.Vec3(player.x, player.y, player.z),
     name: player.name,
     名前ラベル,
-    proximityHalo
+    proximityHalo,
+    forwardMarker,
+    styleKey:""
   });
+  applyAvatarStyle(avatars.get(sessionId)!,player.avatarColor,player.avatarAccent,player.avatarShape);
 
   if (sessionId === currentSessionId) {
     localPosition.set(player.x, player.y, player.z);
@@ -878,7 +1015,11 @@ function removeAvatar(sessionId: string) {
   const avatar = avatars.get(sessionId);
   if (!avatar) return;
   avatar.名前ラベル.remove();
+  const bodyMaterial=avatar.entity.render?.material;
+  const markerMaterial=avatar.forwardMarker.render?.material;
+  const haloMaterial=avatar.proximityHalo.render?.material;
   avatar.entity.destroy();
+  bodyMaterial?.destroy();markerMaterial?.destroy();haloMaterial?.destroy();
   avatars.delete(sessionId);
   updatePlayerCount();
 }
@@ -2075,6 +2216,7 @@ async function enterWorld() {
     currentSessionId = "";
   }
   resetClientWorldForReentry();
+  setFlightMode(false);jumpRequested=false;
   uploadedPanoramaRef="";uploadedGroundRef="";
   applyWorldEnvironment(defaultWorldEnvironment);
   pendingMediaDeletes.clear();
@@ -2094,18 +2236,20 @@ async function enterWorld() {
     activeRoom = room;
     currentSessionId = room.sessionId;
     latestMoveAck=0;
-    lastSentMove={x:NaN,z:NaN,rotationY:NaN};
+    lastSentMove={x:NaN,y:NaN,z:NaN,rotationY:NaN};
     room.onMessage("move:ack",(ack:any) => {
       const seq=Number(ack?.seq);
       if (!Number.isSafeInteger(seq) || seq<=latestMoveAck) return;
       latestMoveAck=seq;
       if (ack?.ok !== false) return;
-      const x=Number(ack?.x),z=Number(ack?.z);
-      if (!Number.isFinite(x)||!Number.isFinite(z)) return;
+      const x=Number(ack?.x),y=Number(ack?.y),z=Number(ack?.z);
+      if (!Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(z)) return;
       localPosition.x=x;
+      localPosition.y=y;
       localPosition.z=z;
+      verticalVelocity=0;
       avatars.get(currentSessionId)?.entity.setPosition(localPosition);
-      lastSentMove={x:NaN,z:NaN,rotationY:NaN};
+      lastSentMove={x:NaN,y:NaN,z:NaN,rotationY:NaN};
       sharedStateDiagnostic.moveCorrections+=1;
       refreshSharedStateDiagnosticPanel();
       console.warn("[MOVE CORRECTED TO SERVER]",seq,x,z);
@@ -2117,6 +2261,7 @@ async function enterWorld() {
     const $ = getStateCallbacks(room);
     $(room.state).players.onAdd((player: any, sessionId: string) => {
       createAvatar(sessionId, player);
+      if(sessionId===currentSessionId) sendSavedAvatarStyle();
       $(player).onChange(() => {
         const avatar = avatars.get(sessionId);
         if (!avatar) return;
@@ -2124,6 +2269,7 @@ async function enterWorld() {
         avatar.name = player.name;
         avatar.名前ラベル.textContent = player.name;
         avatar.entity.setEulerAngles(0, player.rotationY ?? 0, 0);
+        applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,player.avatarShape);
       });
     });
 
@@ -2332,6 +2478,10 @@ async function enterWorld() {
     status.textContent = "接続しました";
     lobby.classList.add("hidden");
     hud.classList.remove("hidden");
+    avatarControls.style.display="block";
+    flightControls.classList.add("room-active");
+    hud.querySelector<HTMLElement>(".controls")!.textContent=
+      "WASD：移動 / SPACE：ジャンプ・上昇 / F：飛行 / SHIFT：下降";
   } catch (error) {
     console.error(error);
     status.textContent = `接続失敗: ${error instanceof Error ? error.message : String(error)}`;
@@ -5602,6 +5752,26 @@ app.on("update", (dt: number) => {
   const me = avatars.get(currentSessionId);
   if (!me) return;
 
+  // Ground level is the existing sphere's center (0.65 m). Keep the vertical
+  // motion bounded before sending it through the authoritative move handler.
+  const step=Math.min(dt,.1);
+  if(flying) {
+    const ascend=(keys.has("space")||mobileAscend)?1:0;
+    const descend=(keys.has("shift")||mobileDescend)?1:0;
+    localPosition.y=pc.math.clamp(localPosition.y+(ascend-descend)*2.7*step,.65,8.65);
+    verticalVelocity=0;
+    jumpRequested=false;
+  } else {
+    if(jumpRequested && localPosition.y<=.651) verticalVelocity=5.4;
+    jumpRequested=false;
+    if(localPosition.y>.65 || verticalVelocity>0) {
+      verticalVelocity=Math.max(-6,verticalVelocity-11*step);
+      localPosition.y=Math.max(.65,localPosition.y+verticalVelocity*step);
+      if(localPosition.y<=.65) verticalVelocity=0;
+    }
+  }
+  me.entity.setPosition(localPosition);
+
   // Prototype 0.12 / REACTIVE BEHAVIOR CORE
   // Evaluate media proximity every frame, even while the user is standing still.
   // XRMediaManager fires playback actions only when inside/outside state changes.
@@ -5653,6 +5823,7 @@ app.on("update", (dt: number) => {
   const currentRotation=me.entity.getEulerAngles().y;
   const unsent=!Number.isFinite(lastSentMove.x) ||
     Math.abs(localPosition.x-lastSentMove.x)>0.001 ||
+    Math.abs(localPosition.y-lastSentMove.y)>0.001 ||
     Math.abs(localPosition.z-lastSentMove.z)>0.001 ||
     Math.abs(currentRotation-lastSentMove.rotationY)>0.1;
   if ((unsent && (x===0 && z===0 || now-lastSend>=1000/SEND_HZ)) ||

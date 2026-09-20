@@ -239,12 +239,15 @@ app.root.addChild(camera);
 type WorldEnvironment = {
   sky:string;ground:string;grid:string;gridVisible:boolean;
   ambient:number;sunlight:number;lightColor:string;sunAngle:number;
-  skyMode:"color"|"panorama";skyAssetRef:string;groundMode:"plain"|"soil"|"water";groundSize:number
+  skyMode:"color"|"panorama";skyAssetRef:string;
+  groundMode:"plain"|"soil"|"water"|"custom";groundSize:number;groundAssetRef:string;
+  particles:"off"|"spark"|"smoke";particleCount:number
 };
 const defaultWorldEnvironment:WorldEnvironment = {
   sky:"#090c11",ground:"#262b33",grid:"#474d57",gridVisible:true,
   ambient:0.45,sunlight:1.5,lightColor:"#ffffff",sunAngle:45,
-  skyMode:"color",skyAssetRef:"",groundMode:"plain",groundSize:15
+  skyMode:"color",skyAssetRef:"",groundMode:"plain",groundSize:15,
+  groundAssetRef:"",particles:"off",particleCount:16
 };
 let currentWorldEnvironment:WorldEnvironment={...defaultWorldEnvironment};
 let panoramaEntity:pc.Entity|null=null;
@@ -255,6 +258,41 @@ let soilTexture:pc.Texture|null=null;
 let waterTexture:pc.Texture|null=null;
 let waterCanvas:HTMLCanvasElement|null=null;
 let waterFrame=0;
+let customGroundTexture:pc.Texture|null=null;
+let customGroundObjectURL:string|null=null;
+let customGroundRequest=0;
+let currentCustomGroundRef="";
+async function setCustomGround(ref:string) {
+  if(ref===currentCustomGroundRef && customGroundTexture) return;
+  const request=++customGroundRequest;
+  currentCustomGroundRef=ref;
+  if(floorMaterial.diffuseMap===customGroundTexture) {
+    floorMaterial.diffuseMap=null;floorMaterial.update();
+  }
+  if(customGroundTexture) {customGroundTexture.destroy();customGroundTexture=null;}
+  if(customGroundObjectURL) {URL.revokeObjectURL(customGroundObjectURL);customGroundObjectURL=null;}
+  if(!ref) return;
+  try {
+    const response=await fetch(ref,{cache:"no-store"});
+    if(!response.ok) throw new Error(`HTTP ${response.status}`);
+    const archive=await JSZip.loadAsync(await response.blob());
+    const entry=archive.file("ground.jpg");
+    if(!entry) throw new Error("ground.jpg missing");
+    const blob=await entry.async("blob");
+    if(!blob.size || blob.size>8*1024*1024) throw new Error("Ground image too large");
+    const url=URL.createObjectURL(blob);
+    const image=new Image();image.src=url;await image.decode();
+    if(request!==customGroundRequest) {URL.revokeObjectURL(url);return;}
+    const texture=new pc.Texture(app.graphicsDevice,{mipmaps:true});
+    texture.addressU=pc.ADDRESS_REPEAT;texture.addressV=pc.ADDRESS_REPEAT;
+    texture.setSource(image);
+    customGroundTexture=texture;customGroundObjectURL=url;
+    if(currentWorldEnvironment.groundMode==="custom") {
+      floorMaterial.diffuseMap=texture;floorMaterial.update();
+    }
+  } catch(error) {console.warn("[CUSTOM GROUND LOAD FAILED]",error);}
+}
+
 function proceduralCanvas(mode:"soil"|"water",time=0) {
   const canvas=document.createElement("canvas");canvas.width=256;canvas.height=256;
   const ctx=canvas.getContext("2d")!;
@@ -283,7 +321,7 @@ function groundTexture(canvas:HTMLCanvasElement):pc.Texture {
   return texture;
 }
 function setGroundStyle(mode:WorldEnvironment["groundMode"]) {
-  if(mode==="plain") floorMaterial.diffuseMap=null;
+  if(mode==="plain" || mode==="custom") floorMaterial.diffuseMap=mode==="custom"?customGroundTexture:null;
   if(mode==="soil") {
     if(!soilTexture) soilTexture=groundTexture(proceduralCanvas("soil"));
     floorMaterial.diffuseMap=soilTexture;
@@ -328,6 +366,66 @@ async function setPanorama(ref:string) {
     panoramaEntity=sphere;panoramaTexture=texture;panoramaObjectURL=url;
   } catch(error) {console.warn("[PANORAMA LOAD FAILED]",error);}
 }
+const ambientParticles:pc.Entity[]=[];
+const particleMaterials=new Map<string,pc.StandardMaterial>();
+let activeParticleMode="off";
+let activeParticleCount=0;
+let particleTime=0;
+function particleMaterial(mode:"spark"|"smoke") {
+  const existing=particleMaterials.get(mode);
+  if(existing) return existing;
+  const canvas=document.createElement("canvas");canvas.width=64;canvas.height=64;
+  const ctx=canvas.getContext("2d")!;
+  const gradient=ctx.createRadialGradient(32,32,2,32,32,31);
+  if(mode==="smoke") {
+    gradient.addColorStop(0,"rgba(225,230,235,.4)");
+    gradient.addColorStop(.45,"rgba(200,210,220,.2)");
+  } else {
+    gradient.addColorStop(0,"rgba(255,245,205,1)");
+    gradient.addColorStop(.25,"rgba(255,174,70,.8)");
+  }
+  gradient.addColorStop(1,"rgba(255,255,255,0)");
+  ctx.fillStyle=gradient;ctx.fillRect(0,0,64,64);
+  const texture=new pc.Texture(app.graphicsDevice,{mipmaps:true});texture.setSource(canvas);
+  const mat=new pc.StandardMaterial();
+  mat.diffuse=new pc.Color(1,1,1);mat.diffuseMap=texture;
+  mat.opacityMap=texture;mat.opacityMapChannel="a";
+  mat.blendType=pc.BLEND_NORMAL;mat.depthWrite=false;mat.cull=pc.CULLFACE_NONE;
+  mat.useLighting=false;mat.update();
+  particleMaterials.set(mode,mat);
+  return mat;
+}
+function setAmbientParticles(mode:WorldEnvironment["particles"],count:number) {
+  if(mode===activeParticleMode && count===activeParticleCount) return;
+  for(const entity of ambientParticles) entity.destroy();
+  ambientParticles.length=0;activeParticleMode=mode;activeParticleCount=count;
+  if(mode==="off") return;
+  const mat=particleMaterial(mode);
+  for(let i=0;i<count;i++) {
+    const entity=new pc.Entity(`Ambient-${mode}-${i}`);
+    entity.addComponent("render",{type:"plane"});
+    entity.render!.material=mat;entity.render!.castShadows=false;
+    const size=mode==="smoke"?2.5:0.45;
+    entity.setLocalScale(size,1,size);
+    app.root.addChild(entity);ambientParticles.push(entity);
+  }
+}
+app.on("update",(dt:number)=>{
+  if(!ambientParticles.length) return;
+  particleTime+=Math.min(.05,dt);
+  const radius=Math.min(20,Math.max(6,currentWorldEnvironment.groundSize*.2));
+  const center=activeRoom?localPosition:new pc.Vec3(0,0,0);
+  for(let i=0;i<ambientParticles.length;i++) {
+    const entity=ambientParticles[i];
+    const a=i*2.39996;
+    const distance=radius*(.3+(i%9)/12);
+    const x=center.x+Math.sin(a)*distance;
+    const z=center.z+Math.cos(a)*distance;
+    const rise=(particleTime*(activeParticleMode==="smoke"?.3:.8)+i*.37)%4;
+    entity.setPosition(x,.6+rise,z);
+    entity.lookAt(camera.getPosition());
+  }
+});
 app.on("update",(dt:number)=>{
   if(currentWorldEnvironment.groundMode!=="water" || !waterTexture) return;
   waterFrame+=dt;
@@ -356,13 +454,18 @@ function applyWorldEnvironment(payload:any) {
     sunAngle:number(payload.sunAngle,45,5,85),
     skyMode:payload.skyMode==="panorama"?"panorama":"color",
     skyAssetRef:typeof payload.skyAssetRef==="string"?payload.skyAssetRef:"",
-    groundMode:["plain","soil","water"].includes(payload.groundMode)?payload.groundMode:"plain",
-    groundSize:[15,60,160].includes(Number(payload.groundSize))?Number(payload.groundSize):15
+    groundMode:["plain","soil","water","custom"].includes(payload.groundMode)?payload.groundMode:"plain",
+    groundSize:[15,60,160].includes(Number(payload.groundSize))?Number(payload.groundSize):15,
+    groundAssetRef:typeof payload.groundAssetRef==="string"?payload.groundAssetRef:"",
+    particles:["off","spark","smoke"].includes(payload.particles)?payload.particles:"off",
+    particleCount:[8,16,24].includes(Number(payload.particleCount))?Number(payload.particleCount):16
   };
   camera.camera!.clearColor=colorFromHex(currentWorldEnvironment.sky);
   floorMaterial.diffuse=currentWorldEnvironment.groundMode==="plain"
     ? colorFromHex(currentWorldEnvironment.ground) : new pc.Color(1,1,1);
   setGroundStyle(currentWorldEnvironment.groundMode);
+  void setCustomGround(currentWorldEnvironment.groundMode==="custom"?currentWorldEnvironment.groundAssetRef:"");
+  setAmbientParticles(currentWorldEnvironment.particles,currentWorldEnvironment.particleCount);
   void setPanorama(currentWorldEnvironment.skyMode==="panorama"?currentWorldEnvironment.skyAssetRef:"");
   gridMaterial.diffuse=colorFromHex(currentWorldEnvironment.grid);gridMaterial.update();
   const size=currentWorldEnvironment.groundSize;
@@ -1864,7 +1967,7 @@ async function enterWorld() {
     currentSessionId = "";
   }
   resetClientWorldForReentry();
-  uploadedPanoramaRef="";
+  uploadedPanoramaRef="";uploadedGroundRef="";
   applyWorldEnvironment(defaultWorldEnvironment);
   pendingMediaDeletes.clear();
   pendingWorldPackageExport = false;
@@ -2605,18 +2708,18 @@ async function exportPortableWorld(manifest:any, room:Room) {
         zip.file(`assets/${name}`,blob);
       }
     }
-    const skyRef=manifest.environment?.skyAssetRef;
-    if (skyRef) {
-      const name=portableAssetName(skyRef);
-      if(!name || !name.endsWith(".zip")) throw new Error("Invalid panorama asset URL");
-      if(!names.has(name)) {
-        const response=await fetch(new URL(`/assets/${name}`,SERVER_URL),{cache:"no-store"});
-        if(!response.ok) throw new Error(`Panorama: HTTP ${response.status}`);
-        const blob=await response.blob();
-        if(!blob.size || blob.size>20*1024*1024 || total+blob.size>80*1024*1024)
-          throw new Error("Panorama asset too large");
-        names.add(name);total+=blob.size;zip.file(`assets/${name}`,blob);
-      }
+    for (const field of ["skyAssetRef","groundAssetRef"] as const) {
+      const ref=manifest.environment?.[field];
+      if (!ref) continue;
+      const name=portableAssetName(ref);
+      if(!name || !name.endsWith(".zip")) throw new Error(`Invalid ${field} URL`);
+      if(names.has(name)) continue;
+      const response=await fetch(new URL(`/assets/${name}`,SERVER_URL),{cache:"no-store"});
+      if(!response.ok) throw new Error(`${field}: HTTP ${response.status}`);
+      const blob=await response.blob();
+      if(!blob.size || blob.size>20*1024*1024 || total+blob.size>80*1024*1024)
+        throw new Error(`${field} asset too large`);
+      names.add(name);total+=blob.size;zip.file(`assets/${name}`,blob);
     }
     if (room !== activeRoom) throw new Error("Room changed during export");
     zip.file("world.json",JSON.stringify(manifest,null,2));
@@ -2687,21 +2790,23 @@ worldPackageInput.addEventListener("change",async()=>{
         media[field]=uploaded.get(name)!+settings;
       }
     }
-    if (manifest.environment?.skyAssetRef) {
-      const name=portableAssetName(manifest.environment.skyAssetRef);
-      if(!name || !name.endsWith(".zip")) throw new Error("Invalid panorama asset URL");
+    for (const field of ["skyAssetRef","groundAssetRef"] as const) {
+      const ref=manifest.environment?.[field];
+      if(!ref) continue;
+      const name=portableAssetName(ref);
+      if(!name || !name.endsWith(".zip")) throw new Error(`Invalid ${field} URL`);
       if(!uploaded.has(name)) {
         const entry=zip.file(`assets/${name}`);
-        if(!entry) throw new Error("Panorama image missing from ZIP");
+        if(!entry) throw new Error(`${field} image missing from ZIP`);
         const blob=await entry.async("blob");
         if(!blob.size || blob.size>20*1024*1024 || total+blob.size>80*1024*1024)
-          throw new Error("Panorama asset too large");
-        const url=sharedAssetURL(`sky-restore-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,"zip");
+          throw new Error(`${field} asset too large`);
+        const url=sharedAssetURL(`${field}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,"zip");
         const response=await fetch(url,{method:"PUT",body:blob});
-        if(!response.ok) throw new Error(`Panorama upload HTTP ${response.status}`);
+        if(!response.ok) throw new Error(`${field} upload HTTP ${response.status}`);
         uploaded.set(name,url);total+=blob.size;
       }
-      manifest.environment.skyAssetRef=uploaded.get(name);
+      manifest.environment[field]=uploaded.get(name);
     }
     if (room !== activeRoom) throw new Error("Room changed during import");
     worldManifestStatus.textContent="Restoring artwork and behavior…";
@@ -2881,13 +2986,49 @@ environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
     <select data-env="groundSize"><option value="15">15 m</option><option value="60">60 m</option><option value="160">160 m</option></select>
   </label>
   <label style="display:block;font-size:12px;margin:9px 0">GROUND MODE
-    <select data-env="groundMode"><option value="plain">PLAIN</option><option value="soil">SOIL</option><option value="water">WATER</option></select>
+    <select data-env="groundMode"><option value="plain">PLAIN</option><option value="soil">SOIL</option><option value="water">WATER</option><option value="custom">CUSTOM IMAGE</option></select>
   </label>
+  <label style="display:block;font-size:12px;margin:9px 0">GROUND IMAGE (JPG / PNG)
+    <input data-ground-file type="file" accept="image/jpeg,image/png">
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">PARTICLES
+    <select data-env="particles"><option value="off">OFF</option><option value="spark">SPARKS</option><option value="smoke">SMOKE</option></select>
+  </label>
+  <label style="display:block;font-size:12px;margin:9px 0">PARTICLE COUNT
+    <select data-env="particleCount"><option value="8">8</option><option value="16">16</option><option value="24">24</option></select>
+  </label>
+  <div data-ground-status style="font-size:11px;color:#aaccdf;margin:8px 0"></div>
   <div data-panorama-status style="font-size:11px;color:#aaccdf;margin:8px 0"></div>
   <button type="button" data-env-apply>APPLY TO ROOM</button>
   <div style="font-size:11px;margin-top:7px;color:#aaccdf">The same lighting is shared with all visitors.</div>`;
 mediaManagerPanel.appendChild(environmentEditor);
 let uploadedPanoramaRef="";
+let uploadedGroundRef="";
+const customGroundInput=environmentEditor.querySelector<HTMLInputElement>("[data-ground-file]")!;
+const customGroundStatus=environmentEditor.querySelector<HTMLElement>("[data-ground-status]")!;
+customGroundInput.addEventListener("change",async()=>{
+  const file=customGroundInput.files?.[0];customGroundInput.value="";
+  if(!file || !activeRoom) return;
+  if(file.size>12*1024*1024) {customGroundStatus.textContent="Image exceeds 12 MB";return;}
+  try {
+    const image=new Image();const local=URL.createObjectURL(file);
+    try {image.src=local;await image.decode();}
+    finally {URL.revokeObjectURL(local);}
+    const canvas=document.createElement("canvas");canvas.width=1024;canvas.height=1024;
+    canvas.getContext("2d")!.drawImage(image,0,0,1024,1024);
+    const jpeg=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(
+      b=>b?resolve(b):reject(new Error("Image conversion failed")),"image/jpeg",.86));
+    const archive=new JSZip();archive.file("ground.jpg",jpeg);
+    const blob=await archive.generateAsync({type:"blob",compression:"STORE"});
+    const ref=sharedAssetURL(`ground-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,"zip");
+    customGroundStatus.textContent="Uploading ground image…";
+    const response=await fetch(ref,{method:"PUT",body:blob});
+    if(!response.ok) throw new Error(`Upload HTTP ${response.status}`);
+    uploadedGroundRef=ref;
+    environmentEditor.querySelector<HTMLSelectElement>("[data-env=groundMode]")!.value="custom";
+    customGroundStatus.textContent="Ground image ready. Press APPLY TO ROOM.";
+  } catch(error) {customGroundStatus.textContent=`Ground image error: ${String(error)}`;}
+});
 const panoramaInput=environmentEditor.querySelector<HTMLInputElement>("[data-panorama-file]")!;
 const panoramaStatus=environmentEditor.querySelector<HTMLElement>("[data-panorama-status]")!;
 panoramaInput.addEventListener("change",async()=>{
@@ -2934,9 +3075,14 @@ environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEvent
     const input=environmentEditor.querySelector<HTMLInputElement>(`[data-env="${key}"]`);
     if (!input) continue;
     payload[key]=input.type==="checkbox"?input.checked:
-      input.type==="range" || key==="groundSize"?Number(input.value):input.value;
+      input.type==="range" || key==="groundSize" || key==="particleCount"?Number(input.value):input.value;
   }
   payload.skyAssetRef=uploadedPanoramaRef || currentWorldEnvironment.skyAssetRef;
+  payload.groundAssetRef=uploadedGroundRef || currentWorldEnvironment.groundAssetRef;
+  if(payload.groundMode==="custom" && !payload.groundAssetRef) {
+    customGroundStatus.textContent="Select a ground image first.";
+    return;
+  }
   if(payload.skyMode==="panorama" && !payload.skyAssetRef) {
     panoramaStatus.textContent="Select a 2:1 image first.";
     return;

@@ -32,7 +32,8 @@ export class SharedWorldRoom extends Room<WorldState> {
   private environment = {
     sky:"#090c11", ground:"#262b33", grid:"#474d57", gridVisible:true,
     ambient:0.45, sunlight:1.5, lightColor:"#ffffff", sunAngle:45,
-    skyMode:"color", skyAssetRef:"", groundMode:"plain", groundSize:15
+    skyMode:"color", skyAssetRef:"", groundMode:"plain", groundSize:15,
+    groundAssetRef:"", particles:"off", particleCount:16
   };
   private worldLimit(size:number=this.environment.groundSize) { return Math.max(6.5,size/2-1); }
   private cleanEnvironment(input:any) {
@@ -56,7 +57,12 @@ export class SharedWorldRoom extends Room<WorldState> {
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.skyAssetRef)
         ?input.skyAssetRef:"",
       groundMode:["plain","soil","water"].includes(input.groundMode)?input.groundMode:"plain",
-      groundSize:[15,60,160].includes(Number(input.groundSize))?Number(input.groundSize):15
+      groundSize:[15,60,160].includes(Number(input.groundSize))?Number(input.groundSize):15,
+      groundAssetRef:typeof input.groundAssetRef==="string" && input.groundAssetRef.length<=240 &&
+        /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.groundAssetRef)
+        ?input.groundAssetRef:"",
+      particles:["off","spark","smoke"].includes(input.particles)?input.particles:"off",
+      particleCount:[8,16,24].includes(Number(input.particleCount))?Number(input.particleCount):16
     };
   }
   private mediaBehaviors = new Map<string, Record<string, unknown>>();

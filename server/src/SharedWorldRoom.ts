@@ -37,7 +37,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     particleDuration:0,particleRadius:5,particleSpeed:1,particleSize:1,
     particleColor:"#ffbb55",particleAssetRef:"",
     environmentPreset:"custom",cycleEnabled:false,cycleMinutes:8,cycleStartedAt:0,
-    fogEnabled:false,fogColor:"#9caab8",fogDensity:0.5,fogDistance:60,
+    fogEnabled:false,fogColor:"#b8cbd9",fogDensity:0.75,fogDistance:12,
     groundRepeat:1,groundRotation:0
   };
   private particleEndTimer:ReturnType<typeof setTimeout>|null=null;
@@ -93,9 +93,9 @@ export class SharedWorldRoom extends Room<WorldState> {
       cycleMinutes:number(input.cycleMinutes,8,1,60),
       cycleStartedAt:number(input.cycleStartedAt,0,0,Date.now()+60000),
       fogEnabled:input.fogEnabled===true,
-      fogColor:color(input.fogColor,"#9caab8"),
-      fogDensity:number(input.fogDensity,.5,.05,1),
-      fogDistance:number(input.fogDistance,60,5,200),
+      fogColor:color(input.fogColor,"#b8cbd9"),
+      fogDensity:number(input.fogDensity,.75,.05,1),
+      fogDistance:number(input.fogDistance,12,3,200),
       groundRepeat:number(input.groundRepeat,1,.2,10),
       groundRotation:number(input.groundRotation,0,0,360)
     };

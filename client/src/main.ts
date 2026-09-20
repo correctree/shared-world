@@ -257,7 +257,7 @@ const defaultWorldEnvironment:WorldEnvironment = {
   particleDuration:0,particleRadius:5,particleSpeed:1,particleSize:1,
   particleColor:"#ffbb55",particleAssetRef:"",
   environmentPreset:"custom",cycleEnabled:false,cycleMinutes:8,cycleStartedAt:0,
-  fogEnabled:false,fogColor:"#9caab8",fogDensity:.5,fogDistance:60,
+  fogEnabled:false,fogColor:"#b8cbd9",fogDensity:.75,fogDistance:12,
   groundRepeat:1,groundRotation:0
 };
 let currentWorldEnvironment:WorldEnvironment={...defaultWorldEnvironment};
@@ -555,9 +555,9 @@ function applyWorldEnvironment(payload:any) {
     cycleMinutes:number(payload.cycleMinutes,8,1,60),
     cycleStartedAt:number(payload.cycleStartedAt,0,0,Date.now()+60000),
     fogEnabled:payload.fogEnabled===true,
-    fogColor:color(payload.fogColor,"#9caab8"),
-    fogDensity:number(payload.fogDensity,.5,.05,1),
-    fogDistance:number(payload.fogDistance,60,5,200),
+    fogColor:color(payload.fogColor,"#b8cbd9"),
+    fogDensity:number(payload.fogDensity,.75,.05,1),
+    fogDistance:number(payload.fogDistance,12,3,200),
     groundRepeat:number(payload.groundRepeat,1,.2,10),
     groundRotation:number(payload.groundRotation,0,0,360)
   };
@@ -565,7 +565,7 @@ function applyWorldEnvironment(payload:any) {
   app.scene.fog.type=currentWorldEnvironment.fogEnabled?pc.FOG_LINEAR:pc.FOG_NONE;
   app.scene.fog.color=colorFromHex(currentWorldEnvironment.fogColor);
   app.scene.fog.end=currentWorldEnvironment.fogDistance;
-  app.scene.fog.start=currentWorldEnvironment.fogDistance*(1-.8*currentWorldEnvironment.fogDensity);
+  app.scene.fog.start=currentWorldEnvironment.fogDistance*(1-.95*currentWorldEnvironment.fogDensity);
   floorMaterial.diffuse=currentWorldEnvironment.groundMode==="plain"
     ? colorFromHex(currentWorldEnvironment.ground) : new pc.Color(1,1,1);
   setGroundStyle(currentWorldEnvironment.groundMode);
@@ -3116,14 +3116,16 @@ environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
     <input data-env="fogEnabled" type="checkbox"> ON
   </label>
   <label style="display:block;font-size:12px;margin:9px 0">FOG COLOR
-    <input data-env="fogColor" type="color" value="#9caab8">
+    <input data-env="fogColor" type="color" value="#b8cbd9">
   </label>
   <label style="display:block;font-size:12px;margin:9px 0">FOG DENSITY
-    <input data-env="fogDensity" type="range" min="0.05" max="1" step="0.05" value="0.5"> <span data-value="fogDensity"></span>
+    <input data-env="fogDensity" type="range" min="0.05" max="1" step="0.05" value="0.75"> <span data-value="fogDensity"></span>
   </label>
-  <label style="display:block;font-size:12px;margin:9px 0">FOG VISIBILITY (METERS)
-    <input data-env="fogDistance" type="range" min="5" max="200" step="1" value="60"> <span data-value="fogDistance"></span>
+  <label style="display:block;font-size:12px;margin:9px 0">FOG END DISTANCE (METERS)
+    <input data-env="fogDistance" type="range" min="3" max="200" step="1" value="12"> <span data-value="fogDistance"></span>
   </label>
+  <div style="font-size:11px;color:#aaccdf;margin:8px 0">Distant artworks and ground fade into fog. Try 8 m in a 15 m room. Nearby objects and empty sky stay clear.</div>
+  <button type="button" data-fog-demo style="margin-bottom:8px">TRY VISIBLE FOG (8 m)</button>
   <label style="display:block;font-size:12px;margin:9px 0">PARTICLES
     <select data-env="particles"><option value="off">OFF</option><option value="spark">SPARKS</option><option value="smoke">SMOKE</option><option value="custom">CUSTOM IMAGE</option></select>
   </label>
@@ -3300,6 +3302,17 @@ environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEvent
     return;
   }
   activeRoom.send("environment:set",payload);
+});
+environmentEditor.querySelector<HTMLButtonElement>("[data-fog-demo]")!.addEventListener("click",()=>{
+  environmentEditor.querySelector<HTMLInputElement>('[data-env="fogEnabled"]')!.checked=true;
+  environmentEditor.querySelector<HTMLInputElement>('[data-env="fogColor"]')!.value="#b8cbd9";
+  environmentEditor.querySelector<HTMLInputElement>('[data-env="fogDensity"]')!.value="0.85";
+  environmentEditor.querySelector<HTMLInputElement>('[data-env="fogDistance"]')!.value="8";
+  for(const key of ["fogDensity","fogDistance"]) {
+    environmentEditor.querySelector<HTMLElement>(`[data-value="${key}"]`)!.textContent=
+      environmentEditor.querySelector<HTMLInputElement>(`[data-env="${key}"]`)!.value;
+  }
+  environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.click();
 });
 
 // Prototype 0.16.1.3 / MEDIA OBJECTS > EDIT / AUDIO SETTINGS + AUDIO REACTIVE

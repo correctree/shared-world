@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.7.1 CUSTOM HEARTS & RANDOM SOUND LOADED]");
+console.log("[PROTOTYPE 0.19.8 MESSAGE & PHOTO LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -62,6 +62,8 @@ type Avatar = {
   heartCount:number;
   heartMotion:string;
   heartSpeed:number;
+  messageBubble:HTMLDivElement|null;
+  messageExpiresAt:number;
 };
 
 // =========================================================
@@ -127,10 +129,16 @@ const emoteControls=document.createElement("div");
 emoteControls.id="emoteControls";
 emoteControls.innerHTML=`<button type="button" data-emote="wave">WAVE</button><button type="button" data-emote="joy">JOY</button><button type="button" data-emote="spin">SPIN</button>`;
 document.body.appendChild(emoteControls);
+const communicationControls=document.createElement("div");
+communicationControls.id="communicationControls";
+communicationControls.innerHTML=`<div id="messageComposer"><input id="avatarMessageInput" maxlength="48" placeholder="MESSAGE / EMOJI"><button type="button" id="sendAvatarMessage">SEND</button></div>
+  <div id="quickMessages"><button type="button">👋</button><button type="button">❤️</button><button type="button">✨</button><button type="button">😊</button></div>
+  <button type="button" id="takeWorldPhoto">PHOTO</button>`;
+document.body.appendChild(communicationControls);
 const avatarStyleSheet=document.createElement("style");
 avatarStyleSheet.textContent=`
   #avatarControls {position:fixed;top:125px;left:22px;z-index:35;display:none;width:190px}
-  #avatarControls button,#flightControls button,#emoteControls button {margin:0;padding:10px 12px;width:auto;border:1px solid #9fb3c6;background:rgba(9,15,24,.9);color:#fff;border-radius:10px;font-size:11px}
+  #avatarControls button,#flightControls button,#emoteControls button,#communicationControls button {margin:0;padding:10px 12px;width:auto;border:1px solid #9fb3c6;background:rgba(9,15,24,.9);color:#fff;border-radius:10px;font-size:11px}
   #avatarSettingsPanel {margin-top:8px;padding:12px;max-height:60vh;overflow:auto;background:rgba(9,15,24,.96);border:1px solid #7191ae;border-radius:12px}
   #avatarSettingsPanel[hidden] {display:none}
   #avatarSettingsPanel label {font-size:11px;margin:10px 0}
@@ -141,8 +149,13 @@ avatarStyleSheet.textContent=`
   #flightControls button {touch-action:none;white-space:nowrap;min-height:45px}
   #emoteControls {position:fixed;right:22px;bottom:92px;z-index:35;display:none;gap:5px}
   #emoteControls.room-active {display:flex}
+  #communicationControls {position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:36;display:none;gap:6px;align-items:center}
+  #communicationControls.room-active {display:flex}
+  #messageComposer {display:flex;gap:4px}
+  #avatarMessageInput {width:180px;padding:9px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff}
+  #quickMessages {display:flex;gap:3px} #quickMessages button {padding:8px}
   @media (pointer:coarse) {#flightControls.room-active {display:flex} #avatarControls {top:140px}}
-  @media (max-width:640px) {#flightControls {right:12px;bottom:155px;gap:3px} #flightControls button,#emoteControls button {font-size:10px;padding:8px 7px} #emoteControls {right:12px;bottom:210px;gap:3px} #avatarControls {left:12px;top:135px;width:165px}}
+  @media (max-width:640px) {#flightControls {right:12px;bottom:155px;gap:3px} #flightControls button,#emoteControls button {font-size:10px;padding:8px 7px} #emoteControls {right:12px;bottom:210px;gap:3px} #avatarControls {left:12px;top:135px;width:165px} #communicationControls {left:10px;right:10px;bottom:18px;transform:none;flex-wrap:wrap} #avatarMessageInput {width:145px} #quickMessages {order:3;width:100%}}
 `;
 document.head.appendChild(avatarStyleSheet);
 
@@ -274,7 +287,7 @@ const glbAnimationStatus =
 // =========================================================
 
 const app = new pc.Application(canvas, {
-  graphicsDeviceOptions: { alpha: false, antialias: true }
+  graphicsDeviceOptions: { alpha: false, antialias: true, preserveDrawingBuffer: true }
 });
 app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW);
 app.setCanvasResolution(pc.RESOLUTION_AUTO);
@@ -1072,6 +1085,43 @@ emoteControls.addEventListener("click",event=>{
   const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button[data-emote]");
   if(activeRoom && button?.dataset.emote) activeRoom.send("avatar:emote",{type:button.dataset.emote});
 });
+const avatarMessageInput=communicationControls.querySelector<HTMLInputElement>("#avatarMessageInput")!;
+const sendAvatarMessageButton=communicationControls.querySelector<HTMLButtonElement>("#sendAvatarMessage")!;
+function sendAvatarMessage(text=avatarMessageInput.value) {
+  const message=text.replace(/[\u0000-\u001f\u007f]/g," ").trim().slice(0,48);
+  if(!activeRoom||!message)return;
+  activeRoom.send("avatar:message",{text:message});avatarMessageInput.value="";
+}
+sendAvatarMessageButton.addEventListener("click",()=>sendAvatarMessage());
+avatarMessageInput.addEventListener("keydown",event=>{
+  if(event.key==="Enter"&&!event.isComposing) {event.preventDefault();sendAvatarMessage();}
+});
+communicationControls.querySelector<HTMLElement>("#quickMessages")!.addEventListener("click",event=>{
+  const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button");
+  if(button)sendAvatarMessage(button.textContent||"");
+});
+const takeWorldPhotoButton=communicationControls.querySelector<HTMLButtonElement>("#takeWorldPhoto")!;
+async function takeWorldPhoto() {
+  takeWorldPhotoButton.disabled=true;takeWorldPhotoButton.textContent="CAPTURING…";
+  try {
+    app.renderNextFrame=true;
+    await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
+    const blob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(new Error("PNG capture failed")),"image/png"));
+    const stamp=new Date().toISOString().replace(/[:.]/g,"-");
+    const file=new File([blob],`shared-world-${stamp}.png`,{type:"image/png"});
+    const shareNavigator=navigator as Navigator & {canShare?:(data:ShareData)=>boolean};
+    if(navigator.share && (!shareNavigator.canShare||shareNavigator.canShare({files:[file]})))
+      await navigator.share({files:[file],title:"Shared World Photo"});
+    else {
+      const url=URL.createObjectURL(blob);const anchor=document.createElement("a");
+      anchor.href=url;anchor.download=file.name;document.body.appendChild(anchor);anchor.click();anchor.remove();
+      window.setTimeout(()=>URL.revokeObjectURL(url),1500);
+    }
+  } catch(error) {
+    if((error as DOMException)?.name!=="AbortError") console.warn("[WORLD PHOTO FAILED]",error);
+  } finally {takeWorldPhotoButton.disabled=false;takeWorldPhotoButton.textContent="PHOTO";}
+}
+takeWorldPhotoButton.addEventListener("click",()=>void takeWorldPhoto());
 function sendLocalMovement(rotationY:number) {
   if (!activeRoom) return;
   const seq=++moveSequence;
@@ -1480,6 +1530,16 @@ function 名前ラベルを作成(名前: string) {
   document.body.appendChild(ラベル);
   return ラベル;
 }
+function showAvatarMessage(sessionId:string,text:string) {
+  const avatar=avatars.get(sessionId);if(!avatar)return;
+  avatar.messageBubble?.remove();
+  const bubble=document.createElement("div");bubble.textContent=text;
+  Object.assign(bubble.style,{position:"fixed",left:"0",top:"0",transform:"translate(-50%,-100%)",
+    maxWidth:"220px",padding:"8px 11px",borderRadius:"15px 15px 15px 4px",background:"rgba(255,255,255,.94)",
+    color:"#111827",fontFamily:"Arial,sans-serif",fontSize:"14px",fontWeight:"700",lineHeight:"1.25",
+    overflowWrap:"anywhere",pointerEvents:"none",zIndex:"42",boxShadow:"0 5px 18px rgba(0,0,0,.28)"});
+  document.body.appendChild(bubble);avatar.messageBubble=bubble;avatar.messageExpiresAt=performance.now()+6000;
+}
 
 function createAvatar(sessionId: string, player: any) {
   const entity = new pc.Entity(`Player-${sessionId}`);
@@ -1558,7 +1618,9 @@ function createAvatar(sessionId: string, player: any) {
     heartSize:1,
     heartCount:3,
     heartMotion:"float",
-    heartSpeed:1
+    heartSpeed:1,
+    messageBubble:null,
+    messageExpiresAt:0
   });
   applyAvatarStyle(avatars.get(sessionId)!,player.avatarColor,player.avatarAccent,
     player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
@@ -1579,6 +1641,7 @@ function removeAvatar(sessionId: string) {
   const avatar = avatars.get(sessionId);
   if (!avatar) return;
   avatar.名前ラベル.remove();
+  avatar.messageBubble?.remove();
   const bodyMaterial=avatar.body.render?.material;
   const markerMaterial=avatar.forwardMarker.render?.material;
   const haloMaterial=avatar.proximityHalo.render?.material;
@@ -2859,6 +2922,11 @@ async function enterWorld() {
       if(!avatar || !["wave","joy","spin"].includes(type)) return;
       avatar.emoteType=type;avatar.emoteStartedAt=performance.now();
     });
+    room.onMessage("avatar:message",(payload:any)=>{
+      if(room!==activeRoom)return;
+      const text=String(payload?.text||"").slice(0,48);
+      if(text)showAvatarMessage(String(payload?.sessionId||""),text);
+    });
     sharedStateDiagnostic.connection = "OPEN";
     sharedStateDiagnostic.lastError = "-";
     refreshSharedStateDiagnosticPanel();
@@ -3094,6 +3162,7 @@ async function enterWorld() {
     avatarControls.style.display="block";
     flightControls.classList.add("room-active");
     emoteControls.classList.add("room-active");
+    communicationControls.classList.add("room-active");
     hud.querySelector<HTMLElement>(".controls")!.textContent=
       "WASD：移動 / SPACE：ジャンプ・上昇 / F：飛行 / SHIFT：下降";
   } catch (error) {
@@ -6367,6 +6436,14 @@ app.on("update", (dt: number) => {
     const screenPos = camera.camera!.worldToScreen(worldPos);
     avatar.名前ラベル.style.left = `${screenPos.x}px`;
     avatar.名前ラベル.style.top = `${screenPos.y}px`;
+    if(avatar.messageBubble) {
+      if(performance.now()>=avatar.messageExpiresAt) {
+        avatar.messageBubble.remove();avatar.messageBubble=null;
+      } else {
+        avatar.messageBubble.style.left=`${screenPos.x}px`;
+        avatar.messageBubble.style.top=`${screenPos.y-36}px`;
+      }
+    }
   }
 
   const PROXIMITY_DISTANCE = 2.5;

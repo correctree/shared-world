@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.1.5 CONTINUOUS VOICE LOADED]");
+console.log("[PROTOTYPE 0.20.1.6 BIDIRECTIONAL DIRECT VOICE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1234,6 +1234,9 @@ async function rebuildVoiceSendStream() {
   try {voiceDestination?.disconnect();} catch {}
   voiceEffectNodes=[];voiceSourceNode=null;voiceInputGain=null;voiceDestination=null;
   const effect=voiceEffectSelect.value;
+  if(effect==="normal") {
+    voiceSendStream=voiceRawStream;installVoiceAnalyser(currentSessionId,voiceRawStream);
+  } else {
   voiceSourceNode=voiceAudioContext.createMediaStreamSource(voiceRawStream);
   const highpass=voiceAudioContext.createBiquadFilter();highpass.type="highpass";highpass.frequency.value=85;highpass.Q.value=.7;
   const compressor=voiceAudioContext.createDynamicsCompressor();compressor.threshold.value=-22;compressor.knee.value=16;
@@ -1242,8 +1245,7 @@ async function rebuildVoiceSendStream() {
   voiceSourceNode.connect(highpass);highpass.connect(compressor);compressor.connect(voiceInputGain);
   voiceDestination=voiceAudioContext.createMediaStreamDestination();
   voiceEffectNodes=[highpass,compressor];
-  if(effect==="normal")voiceInputGain.connect(voiceDestination);
-  else if(effect==="deep") {
+  if(effect==="deep") {
     const low=voiceAudioContext.createBiquadFilter();low.type="lowpass";low.frequency.value=1500;
     const shelf=voiceAudioContext.createBiquadFilter();shelf.type="lowshelf";shelf.frequency.value=280;shelf.gain.value=7;
     voiceInputGain.connect(low);low.connect(shelf);shelf.connect(voiceDestination);voiceEffectNodes.push(low,shelf);
@@ -1258,6 +1260,7 @@ async function rebuildVoiceSendStream() {
     voiceEffectNodes.push(delay,feedback);
   }
   voiceSendStream=voiceDestination.stream;installVoiceAnalyser(currentSessionId,voiceRawStream);
+  }
   const track=voiceSendStream.getAudioTracks()[0];
   for(const peer of voicePeers.values()) {
     const sender=peer.getSenders().find(item=>item.track?.kind==="audio");
@@ -1297,7 +1300,15 @@ async function ensureVoicePeer(sessionId:string,makeOffer=false) {
     peer.onicecandidate=event=>{if(event.candidate&&activeRoom)activeRoom.send("voice:signal",{targetSessionId:sessionId,candidate:event.candidate.toJSON()});};
     peer.ontrack=event=>{
       const stream=event.streams[0]||new MediaStream([event.track]);
-      void voiceAudioContext?.resume();installVoiceAnalyser(sessionId,stream,true);setVoiceStatus("LIVE");
+      const isiOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+      if(isiOS) {void voiceAudioContext?.resume();installVoiceAnalyser(sessionId,stream,true);}
+      else {
+        let audio=voiceAudioElements.get(sessionId);if(!audio){audio=document.createElement("audio");audio.autoplay=true;audio.playsInline=true;audio.hidden=true;document.body.appendChild(audio);voiceAudioElements.set(sessionId,audio);}
+        audio.srcObject=stream;audio.volume=Number(voiceVolumeSelect.value)||1;
+        void audio.play().catch(error=>{console.warn("[VOICE PLAYBACK BLOCKED]",error);setVoiceStatus("TAP MIC",true);});
+        installVoiceAnalyser(sessionId,stream,false);
+      }
+      setVoiceStatus("LIVE");
     };
     peer.onconnectionstatechange=()=>{
       if(peer?.connectionState==="connected") {const timer=voiceReconnectTimers.get(sessionId);if(timer!==undefined)window.clearTimeout(timer);voiceReconnectTimers.delete(sessionId);setVoiceStatus("LIVE");}
@@ -1342,7 +1353,7 @@ async function enableVoice() {
   if(!navigator.mediaDevices?.getUserMedia){setVoiceStatus("UNSUPPORTED",true);return;}
   setVoiceStatus("CONNECTING");voiceToggleButton.disabled=true;
   try {
-    voiceRawStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:{ideal:true},noiseSuppression:{ideal:true},autoGainControl:{ideal:false},channelCount:{ideal:1}},video:false});
+    voiceRawStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:{ideal:true},noiseSuppression:{ideal:false},autoGainControl:{ideal:false},channelCount:{ideal:1}},video:false});
     voiceEnabled=true;await rebuildVoiceSendStream();voiceToggleButton.textContent="MIC ON";voiceToggleButton.classList.add("active");
     activeRoom?.send("voice:ready",{});setVoiceStatus(avatars.size>1?"CONNECTING":"READY");
   } catch(error) {voiceEnabled=false;setVoiceStatus("DENIED",true);console.warn("[VOICE MIC ERROR]",error);}
@@ -1361,7 +1372,7 @@ function disableVoice(notify=true) {
 }
 voiceToggleButton.addEventListener("click",()=>{if(voiceEnabled)disableVoice();else {unlockVoiceOutput();void enableVoice();}});
 voiceEffectSelect.addEventListener("change",()=>{if(voiceEnabled)void rebuildVoiceSendStream();});
-voiceVolumeSelect.addEventListener("change",()=>{const volume=Number(voiceVolumeSelect.value)||1;for(const runtime of voiceAnalysers.values())if(runtime.outputGain)runtime.outputGain.gain.value=volume;});
+voiceVolumeSelect.addEventListener("change",()=>{const volume=Number(voiceVolumeSelect.value)||1;for(const runtime of voiceAnalysers.values())if(runtime.outputGain)runtime.outputGain.gain.value=volume;for(const audio of voiceAudioElements.values())audio.volume=volume;});
 window.addEventListener("beforeunload",()=>disableVoice(false));
 const takeWorldPhotoButton=communicationControls.querySelector<HTMLButtonElement>("#takeWorldPhoto")!;
 const selfieModeButton=communicationControls.querySelector<HTMLButtonElement>("#selfieMode")!;

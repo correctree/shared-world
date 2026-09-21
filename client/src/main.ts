@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.1.2 IOS VOICE OUTPUT LOADED]");
+console.log("[PROTOTYPE 0.20.1.3 VOICE DECLICK & VAD LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1165,7 +1165,8 @@ const voiceVolumeSelect=communicationControls.querySelector<HTMLSelectElement>("
 const voiceStatus=communicationControls.querySelector<HTMLElement>("#voiceStatus")!;
 const voicePeers=new Map<string,RTCPeerConnection>();
 const voiceAudioElements=new Map<string,HTMLAudioElement>();
-const voiceAnalysers=new Map<string,{source:MediaStreamAudioSourceNode,analyser:AnalyserNode,data:Uint8Array,outputGain:GainNode|null}>();
+const voiceAnalysers=new Map<string,{source:MediaStreamAudioSourceNode,analyser:AnalyserNode,data:Uint8Array,
+  outputGain:GainNode|null,gateGain:GainNode|null,outputNodes:AudioNode[],smoothedLevel:number,activeFrames:number}>();
 const voicePendingCandidates=new Map<string,RTCIceCandidateInit[]>();
 const voiceReconnectTimers=new Map<string,number>();
 let voiceEnabled=false;
@@ -1181,11 +1182,18 @@ function setVoiceStatus(text:string,error=false) {
 }
 function installVoiceAnalyser(sessionId:string,stream:MediaStream,playOutput=false) {
   const context=voiceAudioContext;if(!context)return;
-  const old=voiceAnalysers.get(sessionId);if(old){try {old.source.disconnect();old.analyser.disconnect();old.outputGain?.disconnect();} catch {} voiceAnalysers.delete(sessionId);}
+  const old=voiceAnalysers.get(sessionId);if(old){try {old.source.disconnect();old.analyser.disconnect();for(const node of old.outputNodes)node.disconnect();} catch {} voiceAnalysers.delete(sessionId);}
   const source=context.createMediaStreamSource(stream);const analyser=context.createAnalyser();analyser.fftSize=256;
-  source.connect(analyser);let outputGain:GainNode|null=null;
-  if(playOutput){outputGain=context.createGain();outputGain.gain.value=Number(voiceVolumeSelect.value)||1;source.connect(outputGain);outputGain.connect(context.destination);}
-  voiceAnalysers.set(sessionId,{source,analyser,data:new Uint8Array(analyser.fftSize),outputGain});
+  source.connect(analyser);let outputGain:GainNode|null=null,gateGain:GainNode|null=null;const outputNodes:AudioNode[]=[];
+  if(playOutput){
+    const highpass=context.createBiquadFilter();highpass.type="highpass";highpass.frequency.value=85;highpass.Q.value=.7;
+    const compressor=context.createDynamicsCompressor();compressor.threshold.value=-24;compressor.knee.value=18;
+    compressor.ratio.value=5;compressor.attack.value=.008;compressor.release.value=.16;
+    gateGain=context.createGain();gateGain.gain.value=0;outputGain=context.createGain();outputGain.gain.value=Number(voiceVolumeSelect.value)||1;
+    source.connect(highpass);highpass.connect(compressor);compressor.connect(gateGain);gateGain.connect(outputGain);outputGain.connect(context.destination);
+    outputNodes.push(highpass,compressor,gateGain,outputGain);
+  }
+  voiceAnalysers.set(sessionId,{source,analyser,data:new Uint8Array(analyser.fftSize),outputGain,gateGain,outputNodes,smoothedLevel:0,activeFrames:0});
 }
 function unlockVoiceOutput() {
   try {
@@ -1258,7 +1266,7 @@ function closeVoicePeer(sessionId:string) {
   const timer=voiceReconnectTimers.get(sessionId);if(timer!==undefined)window.clearTimeout(timer);voiceReconnectTimers.delete(sessionId);
   const peer=voicePeers.get(sessionId);if(peer){peer.ontrack=null;peer.onicecandidate=null;peer.onconnectionstatechange=null;peer.oniceconnectionstatechange=null;peer.close();voicePeers.delete(sessionId);}
   const audio=voiceAudioElements.get(sessionId);if(audio){audio.pause();audio.srcObject=null;audio.remove();voiceAudioElements.delete(sessionId);}
-  const analyser=voiceAnalysers.get(sessionId);if(analyser)try {analyser.source.disconnect();analyser.analyser.disconnect();analyser.outputGain?.disconnect();} catch {}
+  const analyser=voiceAnalysers.get(sessionId);if(analyser)try {analyser.source.disconnect();analyser.analyser.disconnect();for(const node of analyser.outputNodes)node.disconnect();} catch {}
   voiceAnalysers.delete(sessionId);voicePendingCandidates.delete(sessionId);
   if(voiceEnabled&&voicePeers.size===0)setVoiceStatus(avatars.size>1?"CONNECTING":"READY");
 }
@@ -1346,7 +1354,7 @@ function disableVoice(notify=true) {
   for(const node of voiceEffectNodes)try {node.disconnect();} catch {}
   try {voiceDestination?.disconnect();} catch {}
   voiceSourceNode=null;voiceInputGain=null;voiceEffectNodes=[];voiceDestination=null;
-  for(const analyser of voiceAnalysers.values())try {analyser.source.disconnect();analyser.analyser.disconnect();analyser.outputGain?.disconnect();} catch {}
+  for(const analyser of voiceAnalysers.values())try {analyser.source.disconnect();analyser.analyser.disconnect();for(const node of analyser.outputNodes)node.disconnect();} catch {}
   voiceAnalysers.clear();voiceToggleButton.textContent="MIC OFF";voiceToggleButton.classList.remove("active");setVoiceStatus("OFF");
 }
 voiceToggleButton.addEventListener("click",()=>{if(voiceEnabled)disableVoice();else {unlockVoiceOutput();void enableVoice();}});
@@ -6750,9 +6758,16 @@ app.on("update", (dt: number) => {
     if(runtime) {
       runtime.analyser.getByteTimeDomainData(runtime.data as any);
       let sum=0;for(const sample of runtime.data){const value=(sample-128)/128;sum+=value*value;}
-      level=Math.min(1,Math.sqrt(sum/runtime.data.length)*4.5);
+      const measured=Math.min(1,Math.sqrt(sum/runtime.data.length)*4.5);
+      runtime.smoothedLevel=runtime.smoothedLevel*.82+measured*.18;
+      runtime.activeFrames=measured>.095?Math.min(8,runtime.activeFrames+1):Math.max(0,runtime.activeFrames-1);
+      level=runtime.smoothedLevel;
+      if(runtime.gateGain&&voiceAudioContext) {
+        const open=runtime.activeFrames>=2||level>.075;
+        runtime.gateGain.gain.setTargetAtTime(open?1:0,voiceAudioContext.currentTime,open?.022:.11);
+      }
     }
-    const speaking=level>.075;
+    const speaking=!!runtime&&runtime.activeFrames>=3&&level>.065;
     avatar.名前ラベル.style.boxShadow=speaking?`0 0 ${12+level*22}px rgba(82,215,255,.95)`:"none";
     avatar.名前ラベル.style.border=speaking?"1px solid rgba(82,215,255,.95)":"1px solid transparent";
   }

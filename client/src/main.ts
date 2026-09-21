@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.8 MESSAGE & PHOTO LOADED]");
+console.log("[PROTOTYPE 0.19.9 PHOTO STUDIO LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -133,8 +133,11 @@ const communicationControls=document.createElement("div");
 communicationControls.id="communicationControls";
 communicationControls.innerHTML=`<div id="messageComposer"><input id="avatarMessageInput" maxlength="48" placeholder="MESSAGE / EMOJI"><button type="button" id="sendAvatarMessage">SEND</button></div>
   <div id="quickMessages"><button type="button">👋</button><button type="button">❤️</button><button type="button">✨</button><button type="button">😊</button></div>
-  <button type="button" id="takeWorldPhoto">PHOTO</button>`;
+  <div id="photoStudio"><button type="button" id="selfieMode">SELFIE</button><button type="button" id="groupPhotoMode">GROUP</button>
+  <select id="photoTimer" aria-label="Photo timer"><option value="0">TIMER OFF</option><option value="3">3 SEC</option><option value="5">5 SEC</option><option value="10">10 SEC</option></select>
+  <button type="button" id="takeWorldPhoto">PHOTO</button></div>`;
 document.body.appendChild(communicationControls);
+const photoCountdown=document.createElement("div");photoCountdown.id="photoCountdown";photoCountdown.hidden=true;document.body.appendChild(photoCountdown);
 const avatarStyleSheet=document.createElement("style");
 avatarStyleSheet.textContent=`
   #avatarControls {position:fixed;top:125px;left:22px;z-index:35;display:none;width:190px}
@@ -154,8 +157,12 @@ avatarStyleSheet.textContent=`
   #messageComposer {display:flex;gap:4px}
   #avatarMessageInput {width:180px;padding:9px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff}
   #quickMessages {display:flex;gap:3px} #quickMessages button {padding:8px}
+  #photoStudio {display:flex;gap:4px;align-items:center} #photoStudio select {padding:9px 6px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff;font-size:11px}
+  #photoStudio button.active {border-color:#52d7ff;color:#52d7ff;box-shadow:0 0 12px rgba(82,215,255,.35)}
+  #photoCountdown {position:fixed;inset:0;z-index:80;display:grid;place-items:center;pointer-events:none;color:#fff;font:900 clamp(72px,18vw,190px)/1 Arial,sans-serif;text-shadow:0 4px 28px rgba(0,0,0,.7)}
+  #photoCountdown[hidden] {display:none}
   @media (pointer:coarse) {#flightControls.room-active {display:flex} #avatarControls {top:140px}}
-  @media (max-width:640px) {#flightControls {right:12px;bottom:155px;gap:3px} #flightControls button,#emoteControls button {font-size:10px;padding:8px 7px} #emoteControls {right:12px;bottom:210px;gap:3px} #avatarControls {left:12px;top:135px;width:165px} #communicationControls {left:10px;right:10px;bottom:18px;transform:none;flex-wrap:wrap} #avatarMessageInput {width:145px} #quickMessages {order:3;width:100%}}
+  @media (max-width:640px) {#flightControls {right:12px;bottom:190px;gap:3px} #flightControls button,#emoteControls button {font-size:10px;padding:8px 7px} #emoteControls {right:12px;bottom:245px;gap:3px} #avatarControls {left:12px;top:135px;width:165px} #communicationControls {left:10px;right:10px;bottom:12px;transform:none;flex-wrap:wrap} #avatarMessageInput {width:145px} #quickMessages {order:3} #photoStudio {order:4;width:100%;flex-wrap:wrap} #photoStudio button,#photoStudio select {font-size:10px;padding:7px}}
 `;
 document.head.appendChild(avatarStyleSheet);
 
@@ -731,6 +738,8 @@ let lastMouseX = 0;
 let lastMouseY = 0;
 let cameraPointerId: number | null = null;
 let firstPersonMode = false;
+type PhotoCameraMode="normal"|"selfie"|"group";
+let photoCameraMode:PhotoCameraMode="normal";
 
 function toggleViewMode() {
   firstPersonMode = !firstPersonMode;
@@ -1101,9 +1110,27 @@ communicationControls.querySelector<HTMLElement>("#quickMessages")!.addEventList
   if(button)sendAvatarMessage(button.textContent||"");
 });
 const takeWorldPhotoButton=communicationControls.querySelector<HTMLButtonElement>("#takeWorldPhoto")!;
+const selfieModeButton=communicationControls.querySelector<HTMLButtonElement>("#selfieMode")!;
+const groupPhotoModeButton=communicationControls.querySelector<HTMLButtonElement>("#groupPhotoMode")!;
+const photoTimerSelect=communicationControls.querySelector<HTMLSelectElement>("#photoTimer")!;
+function setPhotoCameraMode(mode:PhotoCameraMode) {
+  photoCameraMode=photoCameraMode===mode?"normal":mode;
+  if(photoCameraMode!=="normal"&&firstPersonMode)toggleViewMode();
+  selfieModeButton.classList.toggle("active",photoCameraMode==="selfie");
+  groupPhotoModeButton.classList.toggle("active",photoCameraMode==="group");
+}
+selfieModeButton.addEventListener("click",()=>setPhotoCameraMode("selfie"));
+groupPhotoModeButton.addEventListener("click",()=>setPhotoCameraMode("group"));
+const wait=(milliseconds:number)=>new Promise<void>(resolve=>window.setTimeout(resolve,milliseconds));
 async function takeWorldPhoto() {
   takeWorldPhotoButton.disabled=true;takeWorldPhotoButton.textContent="CAPTURING…";
   try {
+    const countdown=Math.max(0,Math.min(10,Number(photoTimerSelect.value)||0));
+    for(let remaining=countdown;remaining>0;remaining--) {
+      photoCountdown.hidden=false;photoCountdown.textContent=String(remaining);
+      await wait(1000);
+    }
+    photoCountdown.hidden=false;photoCountdown.textContent="●";await wait(120);photoCountdown.hidden=true;
     app.renderNextFrame=true;
     await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
     const blob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(new Error("PNG capture failed")),"image/png"));
@@ -1119,7 +1146,7 @@ async function takeWorldPhoto() {
     }
   } catch(error) {
     if((error as DOMException)?.name!=="AbortError") console.warn("[WORLD PHOTO FAILED]",error);
-  } finally {takeWorldPhotoButton.disabled=false;takeWorldPhotoButton.textContent="PHOTO";}
+  } finally {photoCountdown.hidden=true;takeWorldPhotoButton.disabled=false;takeWorldPhotoButton.textContent="PHOTO";}
 }
 takeWorldPhotoButton.addEventListener("click",()=>void takeWorldPhoto());
 function sendLocalMovement(rotationY:number) {
@@ -6345,7 +6372,7 @@ app.on("update", (dt: number) => {
   const selfAvatar = currentSessionId ? avatars.get(currentSessionId) : undefined;
 
   if (selfAvatar) {
-    selfAvatar.entity.enabled = !firstPersonMode;
+    selfAvatar.entity.enabled = photoCameraMode!=="normal" || !firstPersonMode;
     selfAvatar.名前ラベル.style.display = firstPersonMode || !selfAvatar.labelVisible ? "none" : "";
   }
 
@@ -6357,7 +6384,24 @@ app.on("update", (dt: number) => {
   const cameraY = cameraTarget.y - Math.sin(pitchRad) * cameraDistance;
   const cameraZ = cameraTarget.z + Math.cos(yawRad) * horizontalDistance;
 
-  if (firstPersonMode) {
+  if(photoCameraMode==="selfie"&&selfAvatar) {
+    const avatarPosition=selfAvatar.entity.getPosition();
+    const facing=selfAvatar.entity.getEulerAngles().y*pc.math.DEG_TO_RAD;
+    const forwardX=-Math.sin(facing),forwardZ=-Math.cos(facing);
+    camera.setPosition(avatarPosition.x+forwardX*3.2,avatarPosition.y+1.25,avatarPosition.z+forwardZ*3.2);
+    camera.lookAt(avatarPosition.x,avatarPosition.y+.25,avatarPosition.z);
+  } else if(photoCameraMode==="group"&&avatars.size) {
+    const positions=Array.from(avatars.values()).map(avatar=>avatar.entity.getPosition());
+    const groupCenter=new pc.Vec3();for(const position of positions)groupCenter.add(position);
+    groupCenter.mulScalar(1/positions.length);
+    let radius=1.5;
+    for(const position of positions)radius=Math.max(radius,
+      Math.hypot(position.x-groupCenter.x,position.z-groupCenter.z),Math.abs(position.y-groupCenter.y)*1.2);
+    const groupDistance=Math.max(7,radius*2.7+4);
+    const viewX=Math.sin(yawRad),viewZ=Math.cos(yawRad);
+    camera.setPosition(groupCenter.x+viewX*groupDistance,groupCenter.y+Math.max(4,radius*.85+2.5),groupCenter.z+viewZ*groupDistance);
+    camera.lookAt(groupCenter.x,groupCenter.y+.35,groupCenter.z);
+  } else if (firstPersonMode) {
     const eyeHeight = 0.55;
     camera.setPosition(cameraTarget.x, cameraTarget.y + eyeHeight, cameraTarget.z);
     const lookDistance = 10;

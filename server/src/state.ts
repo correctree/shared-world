@@ -23,6 +23,9 @@ export const Player = schema({
   avatarHaloSize: t.number().default(1.5),
   avatarHaloMotion: t.string().default("pulse"),
   avatarHaloSpeed: t.number().default(1),
+  avatarHaloShape: t.string().default("ring"),
+  avatarHaloGlow: t.number().default(0.6),
+  avatarHaloRings: t.number().default(1),
   avatarFlying: t.boolean().default(false)
 }, "Player");
 export type Player = SchemaType<typeof Player>;

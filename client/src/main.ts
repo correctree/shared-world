@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.5 PROXIMITY CIRCLE CUSTOMIZER LOADED]");
+console.log("[PROTOTYPE 0.19.6 PROXIMITY SHAPES & GLOW LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -53,6 +53,10 @@ type Avatar = {
   haloSize:number;
   haloMotion:string;
   haloSpeed:number;
+  haloShape:string;
+  haloGlow:number;
+  haloRings:number;
+  haloTexture:pc.Texture|null;
 };
 
 // =========================================================
@@ -94,6 +98,9 @@ avatarControls.innerHTML=`<button type="button" id="avatarSettingsButton">AVATAR
     <label>SIZE <input type="range" id="avatarHaloSize" min="0.5" max="4" step="0.1" value="1.5"><span id="avatarHaloSizeValue">1.5</span></label>
     <label>MOTION <select id="avatarHaloMotion"><option value="static">STATIC</option><option value="pulse" selected>PULSE</option><option value="orbit">ORBIT</option><option value="float">FLOAT</option></select></label>
     <label>SPEED <input type="range" id="avatarHaloSpeed" min="0.1" max="4" step="0.1" value="1"><span id="avatarHaloSpeedValue">1</span></label>
+    <label>SHAPE <select id="avatarHaloShape"><option value="ring">RING</option><option value="disc">DISC</option><option value="ripple">RIPPLE</option></select></label>
+    <label>GLOW <input type="range" id="avatarHaloGlow" min="0" max="2" step="0.1" value="0.6"><span id="avatarHaloGlowValue">0.6</span></label>
+    <label>RINGS <input type="range" id="avatarHaloRings" min="1" max="3" step="1" value="1"><span id="avatarHaloRingsValue">1</span></label>
     <button type="button" id="avatarClearImage">REMOVE IMAGE</button>
     <button type="button" id="avatarSaveButton">APPLY AVATAR</button>
   </div>
@@ -762,13 +769,17 @@ function savedAvatarStyle() {
       haloSize:Number.isFinite(Number(input.haloSize))?pc.math.clamp(Number(input.haloSize),.5,4):1.5,
       haloMotion:["static","pulse","orbit","float"].includes(input.haloMotion)?input.haloMotion:"pulse",
       haloSpeed:Number.isFinite(Number(input.haloSpeed))?pc.math.clamp(Number(input.haloSpeed),.1,4):1,
+      haloShape:["ring","disc","ripple"].includes(input.haloShape)?input.haloShape:"ring",
+      haloGlow:Number.isFinite(Number(input.haloGlow))?pc.math.clamp(Number(input.haloGlow),0,2):.6,
+      haloRings:Number.isFinite(Number(input.haloRings))?Math.round(pc.math.clamp(Number(input.haloRings),1,3)):1,
       assetRef:typeof input.assetRef==="string" &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.assetRef)
         ?input.assetRef:""
     };
   } catch {return {color:"#f0f0f5",accent:"#ff8c28",shape:"sphere",size:1,
     labelVisible:true,labelColor:"#ffffff",textureRepeat:1,textureRotation:0,part:"none",partColor:"#7fd8ff",
-    haloColor:"#ff7828",haloOpacity:.55,haloSize:1.5,haloMotion:"pulse",haloSpeed:1,assetRef:""};}
+    haloColor:"#ff7828",haloOpacity:.55,haloSize:1.5,haloMotion:"pulse",haloSpeed:1,
+    haloShape:"ring",haloGlow:.6,haloRings:1,assetRef:""};}
 }
 let selectedAvatarAssetRef=savedAvatarStyle().assetRef;
 async function uploadAvatarImage(blob:Blob) {
@@ -817,13 +828,18 @@ avatarControls.querySelector<HTMLInputElement>("#avatarHaloOpacity")!.value=Stri
 avatarControls.querySelector<HTMLInputElement>("#avatarHaloSize")!.value=String(initialAvatarStyle.haloSize);
 avatarControls.querySelector<HTMLSelectElement>("#avatarHaloMotion")!.value=initialAvatarStyle.haloMotion;
 avatarControls.querySelector<HTMLInputElement>("#avatarHaloSpeed")!.value=String(initialAvatarStyle.haloSpeed);
+avatarControls.querySelector<HTMLSelectElement>("#avatarHaloShape")!.value=initialAvatarStyle.haloShape;
+avatarControls.querySelector<HTMLInputElement>("#avatarHaloGlow")!.value=String(initialAvatarStyle.haloGlow);
+avatarControls.querySelector<HTMLInputElement>("#avatarHaloRings")!.value=String(initialAvatarStyle.haloRings);
 for(const [inputId,valueId,suffix] of [
   ["#avatarSize","#avatarSizeValue",""] as const,
   ["#avatarTextureRepeat","#avatarTextureRepeatValue",""] as const,
   ["#avatarTextureRotation","#avatarTextureRotationValue","°"] as const,
   ["#avatarHaloOpacity","#avatarHaloOpacityValue",""] as const,
   ["#avatarHaloSize","#avatarHaloSizeValue",""] as const,
-  ["#avatarHaloSpeed","#avatarHaloSpeedValue",""] as const
+  ["#avatarHaloSpeed","#avatarHaloSpeedValue",""] as const,
+  ["#avatarHaloGlow","#avatarHaloGlowValue",""] as const,
+  ["#avatarHaloRings","#avatarHaloRingsValue",""] as const
 ]) {
   const input=avatarControls.querySelector<HTMLInputElement>(inputId)!;
   const value=avatarControls.querySelector<HTMLElement>(valueId)!;
@@ -884,6 +900,9 @@ avatarSaveButton.addEventListener("click",()=>{
     haloSize:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHaloSize")!.value),
     haloMotion:avatarControls.querySelector<HTMLSelectElement>("#avatarHaloMotion")!.value,
     haloSpeed:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHaloSpeed")!.value),
+    haloShape:avatarControls.querySelector<HTMLSelectElement>("#avatarHaloShape")!.value,
+    haloGlow:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHaloGlow")!.value),
+    haloRings:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHaloRings")!.value),
     assetRef:selectedAvatarAssetRef
   };
   try {localStorage.setItem(AVATAR_STYLE_KEY,JSON.stringify(appearance));} catch {}
@@ -1169,10 +1188,37 @@ function rebuildAvatarParts(avatar:Avatar,part:string,partColor:string) {
     add("AvatarAntennaTip","sphere",[0,1.5,0],[.2,.2,.2]);
   }
 }
+function createHaloTexture(shape:string,rings:number) {
+  const canvas=document.createElement("canvas");canvas.width=256;canvas.height=256;
+  const context=canvas.getContext("2d")!;
+  context.clearRect(0,0,256,256);
+  context.strokeStyle="#ffffff";context.fillStyle="#ffffff";
+  context.lineCap="round";
+  if(shape==="disc") {
+    const gradient=context.createRadialGradient(128,128,8,128,128,116);
+    gradient.addColorStop(0,"rgba(255,255,255,.75)");
+    gradient.addColorStop(.75,"rgba(255,255,255,.5)");
+    gradient.addColorStop(1,"rgba(255,255,255,0)");
+    context.fillStyle=gradient;context.beginPath();context.arc(128,128,116,0,Math.PI*2);context.fill();
+  } else {
+    const count=Math.max(1,Math.min(3,Math.round(rings)));
+    context.lineWidth=shape==="ripple"?8:12;
+    for(let index=0;index<count;index++) {
+      context.globalAlpha=1-index*.23;
+      const radius=106-index*(shape==="ripple"?30:22);
+      context.beginPath();context.arc(128,128,radius,0,Math.PI*2);context.stroke();
+    }
+    context.globalAlpha=1;
+  }
+  const texture=new pc.Texture(app.graphicsDevice,{mipmaps:true,minFilter:pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter:pc.FILTER_LINEAR,addressU:pc.ADDRESS_CLAMP_TO_EDGE,addressV:pc.ADDRESS_CLAMP_TO_EDGE});
+  texture.setSource(canvas);return texture;
+}
 function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,assetRef:string,
   size=1,labelVisible=true,labelColor="#ffffff",textureRepeat=1,textureRotation=0,
   part="none",partColor="#7fd8ff",haloColor="#ff7828",haloOpacity=.55,
-  haloSize=1.5,haloMotion="pulse",haloSpeed=1) {
+  haloSize=1.5,haloMotion="pulse",haloSpeed=1,haloShape="ring",haloGlow=.6,
+  haloRings=1) {
   const safeColor=/^#[0-9a-fA-F]{6}$/.test(color)?color:"#f0f0f5";
   const safeAccent=/^#[0-9a-fA-F]{6}$/.test(accent)?accent:"#ff8c28";
   const safeShape=["sphere","capsule","box"].includes(shape)?shape:"sphere";
@@ -1189,7 +1235,10 @@ function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,
   const safeHaloSize=pc.math.clamp(Number(haloSize)||1.5,.5,4);
   const safeHaloMotion=["static","pulse","orbit","float"].includes(haloMotion)?haloMotion:"pulse";
   const safeHaloSpeed=pc.math.clamp(Number(haloSpeed)||1,.1,4);
-  const key=`${safeColor}/${safeAccent}/${safeShape}/${safeSize}/${safeLabelColor}/${safeRepeat}/${safeRotation}/${safePart}/${safePartColor}/${safeHaloColor}/${safeHaloOpacity}/${safeHaloSize}/${safeHaloMotion}/${safeHaloSpeed}`;
+  const safeHaloShape=["ring","disc","ripple"].includes(haloShape)?haloShape:"ring";
+  const safeHaloGlow=pc.math.clamp(Number(haloGlow)||0,0,2);
+  const safeHaloRings=Math.round(pc.math.clamp(Number(haloRings)||1,1,3));
+  const key=`${safeColor}/${safeAccent}/${safeShape}/${safeSize}/${safeLabelColor}/${safeRepeat}/${safeRotation}/${safePart}/${safePartColor}/${safeHaloColor}/${safeHaloOpacity}/${safeHaloSize}/${safeHaloMotion}/${safeHaloSpeed}/${safeHaloShape}/${safeHaloGlow}/${safeHaloRings}`;
   void setAvatarTexture(avatar,safeRef);
   avatar.labelVisible=labelVisible!==false;
   avatar.textureRepeat=safeRepeat;
@@ -1201,6 +1250,9 @@ function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,
   avatar.haloSize=safeHaloSize;
   avatar.haloMotion=safeHaloMotion;
   avatar.haloSpeed=safeHaloSpeed;
+  avatar.haloShape=safeHaloShape;
+  avatar.haloGlow=safeHaloGlow;
+  avatar.haloRings=safeHaloRings;
   if(key===avatar.styleKey) return;
   const body=avatar.body.render!;
   const oldBody=body.material;
@@ -1224,6 +1276,12 @@ function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,
   avatar.forwardMarker.render!.material=material([accentColor.r,accentColor.g,accentColor.b]);
   const haloColorValue=colorFromHex(safeHaloColor);
   const haloMaterial=material([haloColorValue.r,haloColorValue.g,haloColorValue.b]);
+  const haloTexture=createHaloTexture(safeHaloShape,safeHaloRings);
+  avatar.haloTexture?.destroy();avatar.haloTexture=haloTexture;
+  haloMaterial.diffuseMap=haloTexture;
+  haloMaterial.opacityMap=haloTexture;haloMaterial.opacityMapChannel="a";
+  haloMaterial.emissive=new pc.Color(haloColorValue.r*safeHaloGlow,
+    haloColorValue.g*safeHaloGlow,haloColorValue.b*safeHaloGlow);
   haloMaterial.opacity=safeHaloOpacity;
   haloMaterial.blendType=pc.BLEND_NORMAL;
   haloMaterial.depthWrite=false;
@@ -1275,9 +1333,9 @@ function createAvatar(sessionId: string, player: any) {
   body.addChild(forwardMarker);
 
   const proximityHalo = new pc.Entity(`ProximityHalo-${sessionId}`);
-  proximityHalo.addComponent("render", { type: "cylinder" });
-  proximityHalo.setLocalScale(1.5, 0.025, 1.5);
-  proximityHalo.setLocalPosition(0, -0.48, 0);
+  proximityHalo.addComponent("render", { type: "plane" });
+  proximityHalo.setLocalScale(1.5, 1, 1.5);
+  proximityHalo.setLocalPosition(0, -0.63, 0);
   const initialHaloMaterial=material([1.0, 0.45, 0.08]);
   initialHaloMaterial.opacity=.55;initialHaloMaterial.blendType=pc.BLEND_NORMAL;
   initialHaloMaterial.depthWrite=false;initialHaloMaterial.update();
@@ -1319,13 +1377,18 @@ function createAvatar(sessionId: string, player: any) {
     haloOpacity:.55,
     haloSize:1.5,
     haloMotion:"pulse",
-    haloSpeed:1
+    haloSpeed:1,
+    haloShape:"ring",
+    haloGlow:.6,
+    haloRings:1,
+    haloTexture:null
   });
   applyAvatarStyle(avatars.get(sessionId)!,player.avatarColor,player.avatarAccent,
     player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
     player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
     player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
-    player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed);
+    player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed,
+    player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
 
   if (sessionId === currentSessionId) {
     localPosition.set(player.x, player.y, player.z);
@@ -1345,6 +1408,7 @@ function removeAvatar(sessionId: string) {
   bodyMaterial?.destroy();markerMaterial?.destroy();haloMaterial?.destroy();
   avatar.partMaterial?.destroy();
   avatar.texture?.destroy();
+  avatar.haloTexture?.destroy();
   if(avatar.textureURL) URL.revokeObjectURL(avatar.textureURL);
   avatars.delete(sessionId);
   updatePlayerCount();
@@ -1397,7 +1461,7 @@ function refreshSharedStateDiagnosticPanel() {
   }
   sharedStateDiagnostic.localMedia = sharedRemoteMediaIds.size;
   if (sharedStateDiagnosticBody) sharedStateDiagnosticBody.textContent =
-    `SHARED STATE DIAGNOSTIC / 0.19.5\n` +
+    `SHARED STATE DIAGNOSTIC / 0.19.6\n` +
     `CONNECTION     ${sharedStateDiagnostic.connection}\n` +
     `SERVER MEDIA   ${sharedStateDiagnostic.serverMedia}\n` +
     `LOCAL MEDIA    ${sharedStateDiagnostic.localMedia}\n` +
@@ -1501,7 +1565,8 @@ function reconcileWorldFromServerState() {
       player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
       player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
       player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
-      player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed);
+      player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed,
+      player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
     if(avatar) avatar.flying=player.avatarFlying===true;
   });
   const mediaMap: any = (activeRoom.state as any).mediaObjects;
@@ -2598,7 +2663,8 @@ async function enterWorld() {
         payload.shape,payload.assetRef,payload.size,payload.labelVisible,
         payload.labelColor,payload.textureRepeat,payload.textureRotation,
         payload.part,payload.partColor,payload.haloColor,payload.haloOpacity,
-        payload.haloSize,payload.haloMotion,payload.haloSpeed);
+        payload.haloSize,payload.haloMotion,payload.haloSpeed,
+        payload.haloShape,payload.haloGlow,payload.haloRings);
     });
     room.onMessage("avatar:emote",(payload:any)=>{
       if(room!==activeRoom) return;
@@ -2626,7 +2692,8 @@ async function enterWorld() {
           player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
           player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
           player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
-          player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed);
+          player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed,
+          player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
         avatar.flying=player.avatarFlying===true;
       });
     });
@@ -6149,13 +6216,14 @@ app.on("update", (dt: number) => {
       const elapsed=performance.now()*.001*avatar.haloSpeed;
       const haloScale = avatar.haloSize + proximity * avatar.haloSize * .35;
       const pulse = avatar.haloMotion==="pulse"?1+Math.sin(elapsed*6)*.1:1;
-      const pulsedScale = haloScale * pulse;
-      avatar.proximityHalo.setLocalScale(pulsedScale, 0.025, pulsedScale);
+      const ripple=avatar.haloShape==="ripple"?1+(elapsed%1)*.14:1;
+      const pulsedScale = haloScale * pulse * ripple;
+      avatar.proximityHalo.setLocalScale(pulsedScale, 1, pulsedScale);
       if(avatar.haloMotion==="orbit")
-        avatar.proximityHalo.setLocalPosition(Math.cos(elapsed*2)*.32,-.48,Math.sin(elapsed*2)*.32);
+        avatar.proximityHalo.setLocalPosition(Math.cos(elapsed*2)*.32,-.63,Math.sin(elapsed*2)*.32);
       else if(avatar.haloMotion==="float")
-        avatar.proximityHalo.setLocalPosition(0,-.48+Math.sin(elapsed*3)*.18,0);
-      else avatar.proximityHalo.setLocalPosition(0,-.48,0);
+        avatar.proximityHalo.setLocalPosition(0,-.63+Math.sin(elapsed*3)*.18,0);
+      else avatar.proximityHalo.setLocalPosition(0,-.63,0);
     }
   }
 

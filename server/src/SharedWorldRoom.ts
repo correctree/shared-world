@@ -224,6 +224,10 @@ export class SharedWorldRoom extends Room<WorldState> {
       player.avatarHaloMotion=["static","pulse","orbit","float"].includes(payload.haloMotion)
         ?payload.haloMotion:player.avatarHaloMotion;
       player.avatarHaloSpeed=bounded(payload.haloSpeed,player.avatarHaloSpeed,.1,4);
+      player.avatarHaloShape=["ring","disc","ripple"].includes(payload.haloShape)
+        ?payload.haloShape:player.avatarHaloShape;
+      player.avatarHaloGlow=bounded(payload.haloGlow,player.avatarHaloGlow,0,2);
+      player.avatarHaloRings=Math.round(bounded(payload.haloRings,player.avatarHaloRings,1,3));
       this.broadcast("avatar:style:applied",{
         sessionId:client.sessionId,
         color:player.avatarColor,accent:player.avatarAccent,
@@ -234,7 +238,8 @@ export class SharedWorldRoom extends Room<WorldState> {
         part:player.avatarPart,partColor:player.avatarPartColor,
         haloColor:player.avatarHaloColor,haloOpacity:player.avatarHaloOpacity,
         haloSize:player.avatarHaloSize,haloMotion:player.avatarHaloMotion,
-        haloSpeed:player.avatarHaloSpeed
+        haloSpeed:player.avatarHaloSpeed,haloShape:player.avatarHaloShape,
+        haloGlow:player.avatarHaloGlow,haloRings:player.avatarHaloRings
       });
     });
 

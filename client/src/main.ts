@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.1.1 VOICE CLEAN AUDIO LOADED]");
+console.log("[PROTOTYPE 0.20.1.2 IOS VOICE OUTPUT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1165,7 +1165,7 @@ const voiceVolumeSelect=communicationControls.querySelector<HTMLSelectElement>("
 const voiceStatus=communicationControls.querySelector<HTMLElement>("#voiceStatus")!;
 const voicePeers=new Map<string,RTCPeerConnection>();
 const voiceAudioElements=new Map<string,HTMLAudioElement>();
-const voiceAnalysers=new Map<string,{source:MediaStreamAudioSourceNode,analyser:AnalyserNode,data:Uint8Array}>();
+const voiceAnalysers=new Map<string,{source:MediaStreamAudioSourceNode,analyser:AnalyserNode,data:Uint8Array,outputGain:GainNode|null}>();
 const voicePendingCandidates=new Map<string,RTCIceCandidateInit[]>();
 const voiceReconnectTimers=new Map<string,number>();
 let voiceEnabled=false;
@@ -1179,11 +1179,23 @@ let voiceDestination:MediaStreamAudioDestinationNode|null=null;
 function setVoiceStatus(text:string,error=false) {
   voiceStatus.textContent=`VOICE: ${text}`;voiceStatus.style.color=error?"#ff7187":text==="LIVE"?"#58e6bb":"#9fb3c6";
 }
-function installVoiceAnalyser(sessionId:string,stream:MediaStream) {
+function installVoiceAnalyser(sessionId:string,stream:MediaStream,playOutput=false) {
   const context=voiceAudioContext;if(!context)return;
-  const old=voiceAnalysers.get(sessionId);if(old){try {old.source.disconnect();old.analyser.disconnect();} catch {} voiceAnalysers.delete(sessionId);}
+  const old=voiceAnalysers.get(sessionId);if(old){try {old.source.disconnect();old.analyser.disconnect();old.outputGain?.disconnect();} catch {} voiceAnalysers.delete(sessionId);}
   const source=context.createMediaStreamSource(stream);const analyser=context.createAnalyser();analyser.fftSize=256;
-  source.connect(analyser);voiceAnalysers.set(sessionId,{source,analyser,data:new Uint8Array(analyser.fftSize)});
+  source.connect(analyser);let outputGain:GainNode|null=null;
+  if(playOutput){outputGain=context.createGain();outputGain.gain.value=Number(voiceVolumeSelect.value)||1;source.connect(outputGain);outputGain.connect(context.destination);}
+  voiceAnalysers.set(sessionId,{source,analyser,data:new Uint8Array(analyser.fftSize),outputGain});
+}
+function unlockVoiceOutput() {
+  try {
+    const AudioContextClass=window.AudioContext||(window as any).webkitAudioContext;
+    if(!voiceAudioContext)voiceAudioContext=new AudioContextClass();
+    void voiceAudioContext.resume();
+    const oscillator=voiceAudioContext.createOscillator(),gain=voiceAudioContext.createGain();gain.gain.value=0;
+    oscillator.connect(gain);gain.connect(voiceAudioContext.destination);oscillator.start();oscillator.stop(voiceAudioContext.currentTime+.02);
+    const audioSession=(navigator as any).audioSession;if(audioSession)audioSession.type="play-and-record";
+  } catch(error) {console.debug("[VOICE OUTPUT UNLOCK]",error);}
 }
 function tuneVoiceDescription(description:RTCSessionDescriptionInit) {
   if(!description.sdp)return description;
@@ -1246,7 +1258,7 @@ function closeVoicePeer(sessionId:string) {
   const timer=voiceReconnectTimers.get(sessionId);if(timer!==undefined)window.clearTimeout(timer);voiceReconnectTimers.delete(sessionId);
   const peer=voicePeers.get(sessionId);if(peer){peer.ontrack=null;peer.onicecandidate=null;peer.onconnectionstatechange=null;peer.oniceconnectionstatechange=null;peer.close();voicePeers.delete(sessionId);}
   const audio=voiceAudioElements.get(sessionId);if(audio){audio.pause();audio.srcObject=null;audio.remove();voiceAudioElements.delete(sessionId);}
-  const analyser=voiceAnalysers.get(sessionId);if(analyser)try {analyser.source.disconnect();analyser.analyser.disconnect();} catch {}
+  const analyser=voiceAnalysers.get(sessionId);if(analyser)try {analyser.source.disconnect();analyser.analyser.disconnect();analyser.outputGain?.disconnect();} catch {}
   voiceAnalysers.delete(sessionId);voicePendingCandidates.delete(sessionId);
   if(voiceEnabled&&voicePeers.size===0)setVoiceStatus(avatars.size>1?"CONNECTING":"READY");
 }
@@ -1275,8 +1287,7 @@ async function ensureVoicePeer(sessionId:string,makeOffer=false) {
     peer.onicecandidate=event=>{if(event.candidate&&activeRoom)activeRoom.send("voice:signal",{targetSessionId:sessionId,candidate:event.candidate.toJSON()});};
     peer.ontrack=event=>{
       const stream=event.streams[0]||new MediaStream([event.track]);
-      let audio=voiceAudioElements.get(sessionId);if(!audio){audio=document.createElement("audio");audio.autoplay=true;audio.playsInline=true;audio.hidden=true;document.body.appendChild(audio);voiceAudioElements.set(sessionId,audio);}
-      audio.srcObject=stream;audio.volume=Number(voiceVolumeSelect.value)||1;void audio.play().catch(()=>{});installVoiceAnalyser(sessionId,stream);setVoiceStatus("LIVE");
+      void voiceAudioContext?.resume();installVoiceAnalyser(sessionId,stream,true);setVoiceStatus("LIVE");
     };
     peer.onconnectionstatechange=()=>{
       if(peer?.connectionState==="connected") {const timer=voiceReconnectTimers.get(sessionId);if(timer!==undefined)window.clearTimeout(timer);voiceReconnectTimers.delete(sessionId);setVoiceStatus("LIVE");}
@@ -1335,12 +1346,12 @@ function disableVoice(notify=true) {
   for(const node of voiceEffectNodes)try {node.disconnect();} catch {}
   try {voiceDestination?.disconnect();} catch {}
   voiceSourceNode=null;voiceInputGain=null;voiceEffectNodes=[];voiceDestination=null;
-  for(const analyser of voiceAnalysers.values())try {analyser.source.disconnect();analyser.analyser.disconnect();} catch {}
+  for(const analyser of voiceAnalysers.values())try {analyser.source.disconnect();analyser.analyser.disconnect();analyser.outputGain?.disconnect();} catch {}
   voiceAnalysers.clear();voiceToggleButton.textContent="MIC OFF";voiceToggleButton.classList.remove("active");setVoiceStatus("OFF");
 }
-voiceToggleButton.addEventListener("click",()=>{if(voiceEnabled)disableVoice();else void enableVoice();});
+voiceToggleButton.addEventListener("click",()=>{if(voiceEnabled)disableVoice();else {unlockVoiceOutput();void enableVoice();}});
 voiceEffectSelect.addEventListener("change",()=>{if(voiceEnabled)void rebuildVoiceSendStream();});
-voiceVolumeSelect.addEventListener("change",()=>{const volume=Number(voiceVolumeSelect.value)||1;for(const audio of voiceAudioElements.values())audio.volume=volume;});
+voiceVolumeSelect.addEventListener("change",()=>{const volume=Number(voiceVolumeSelect.value)||1;for(const runtime of voiceAnalysers.values())if(runtime.outputGain)runtime.outputGain.gain.value=volume;});
 window.addEventListener("beforeunload",()=>disableVoice(false));
 const takeWorldPhotoButton=communicationControls.querySelector<HTMLButtonElement>("#takeWorldPhoto")!;
 const selfieModeButton=communicationControls.querySelector<HTMLButtonElement>("#selfieMode")!;

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.9 PHOTO STUDIO LOADED]");
+console.log("[PROTOTYPE 0.19.9.1 MOBILE COMPACT UI LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -138,6 +138,9 @@ communicationControls.innerHTML=`<div id="messageComposer"><input id="avatarMess
   <button type="button" id="takeWorldPhoto">PHOTO</button></div>`;
 document.body.appendChild(communicationControls);
 const photoCountdown=document.createElement("div");photoCountdown.id="photoCountdown";photoCountdown.hidden=true;document.body.appendChild(photoCountdown);
+const mobileActionDock=document.createElement("div");mobileActionDock.id="mobileActionDock";
+mobileActionDock.innerHTML=`<button type="button" data-mobile-panel="tools">TOOLS</button><button type="button" data-mobile-panel="move">MOVE</button><button type="button" data-mobile-panel="emote">EMOTE</button><button type="button" data-mobile-panel="chat">CHAT</button><button type="button" data-mobile-panel="photo">PHOTO</button>`;
+document.body.appendChild(mobileActionDock);
 const avatarStyleSheet=document.createElement("style");
 avatarStyleSheet.textContent=`
   #avatarControls {position:fixed;top:125px;left:22px;z-index:35;display:none;width:190px}
@@ -161,10 +164,52 @@ avatarStyleSheet.textContent=`
   #photoStudio button.active {border-color:#52d7ff;color:#52d7ff;box-shadow:0 0 12px rgba(82,215,255,.35)}
   #photoCountdown {position:fixed;inset:0;z-index:80;display:grid;place-items:center;pointer-events:none;color:#fff;font:900 clamp(72px,18vw,190px)/1 Arial,sans-serif;text-shadow:0 4px 28px rgba(0,0,0,.7)}
   #photoCountdown[hidden] {display:none}
+  #mobileActionDock {display:none}
   @media (pointer:coarse) {#flightControls.room-active {display:flex} #avatarControls {top:140px}}
-  @media (max-width:640px) {#flightControls {right:12px;bottom:190px;gap:3px} #flightControls button,#emoteControls button {font-size:10px;padding:8px 7px} #emoteControls {right:12px;bottom:245px;gap:3px} #avatarControls {left:12px;top:135px;width:165px} #communicationControls {left:10px;right:10px;bottom:12px;transform:none;flex-wrap:wrap} #avatarMessageInput {width:145px} #quickMessages {order:3} #photoStudio {order:4;width:100%;flex-wrap:wrap} #photoStudio button,#photoStudio select {font-size:10px;padding:7px}}
+  @media (max-width:640px), (pointer:coarse) {
+    body.mobile-compact #mobileActionDock.room-active {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));position:fixed;left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));z-index:70;gap:4px;padding:5px;border:1px solid rgba(120,160,195,.55);border-radius:14px;background:rgba(7,13,21,.88);backdrop-filter:blur(12px)}
+    #mobileActionDock button {min-width:0;padding:10px 3px;border:1px solid #7893aa;border-radius:9px;background:#0b1420;color:#fff;font-size:9px;font-weight:900;letter-spacing:.04em}
+    #mobileActionDock button.active {border-color:#52d7ff;color:#52d7ff;background:#102638}
+    body.mobile-compact #flightControls.room-active,body.mobile-compact #emoteControls.room-active,body.mobile-compact #communicationControls.room-active {display:none!important}
+    body.mobile-compact.mobile-panel-move #flightControls.room-active {display:flex!important;right:10px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));gap:4px}
+    body.mobile-compact.mobile-panel-emote #emoteControls.room-active {display:flex!important;right:10px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));gap:4px}
+    body.mobile-compact.mobile-panel-chat #communicationControls.room-active,body.mobile-compact.mobile-panel-photo #communicationControls.room-active {display:flex!important;left:10px;right:10px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));transform:none;flex-wrap:wrap;width:auto;padding:7px;border-radius:12px;background:rgba(7,13,21,.9);backdrop-filter:blur(12px)}
+    body.mobile-compact.mobile-panel-chat #photoStudio {display:none!important}
+    body.mobile-compact.mobile-panel-photo #messageComposer,body.mobile-compact.mobile-panel-photo #quickMessages {display:none!important}
+    body.mobile-compact #avatarControls,body.mobile-compact #addArtworkButton,body.mobile-compact #mediaManagerButton,body.mobile-compact #sharedStateDiagnosticPanel {display:none!important}
+    body.mobile-compact.mobile-tools-open #avatarControls {display:block!important;left:10px;top:125px;width:165px}
+    body.mobile-compact.mobile-tools-open #addArtworkButton {display:block!important}
+    body.mobile-compact.mobile-tools-open #mediaManagerButton {display:block!important}
+    body.mobile-compact.mobile-tools-open #sharedStateDiagnosticPanel {display:block!important;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));max-width:calc(100vw - 20px)}
+    body.mobile-compact .controls {display:none!important}
+    body.mobile-compact #flightControls button,body.mobile-compact #emoteControls button {font-size:10px;padding:9px 8px;min-height:40px}
+    body.mobile-compact #avatarMessageInput {width:min(44vw,180px)}
+    body.mobile-compact #photoStudio {display:flex;width:100%;justify-content:center;flex-wrap:wrap}
+    body.mobile-compact #photoStudio button,body.mobile-compact #photoStudio select {font-size:10px;padding:8px 6px}
+  }
 `;
 document.head.appendChild(avatarStyleSheet);
+const compactMobileQuery=window.matchMedia("(max-width: 640px), (pointer: coarse)");
+let activeMobilePanel="";
+const mobilePanelNames=["move","emote","chat","photo"];
+function refreshCompactMobileMode() {
+  document.body.classList.toggle("mobile-compact",compactMobileQuery.matches);
+  if(!compactMobileQuery.matches) {
+    document.body.classList.remove("mobile-tools-open",...mobilePanelNames.map(name=>`mobile-panel-${name}`));
+    activeMobilePanel="";
+  }
+}
+compactMobileQuery.addEventListener?.("change",refreshCompactMobileMode);refreshCompactMobileMode();
+mobileActionDock.addEventListener("click",event=>{
+  const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button[data-mobile-panel]");
+  if(!button)return;
+  const requested=String(button.dataset.mobilePanel||"");
+  const next=activeMobilePanel===requested?"":requested;activeMobilePanel=next;
+  document.body.classList.toggle("mobile-tools-open",next==="tools");
+  for(const name of mobilePanelNames)document.body.classList.toggle(`mobile-panel-${name}`,next===name);
+  for(const item of mobileActionDock.querySelectorAll<HTMLButtonElement>("button"))
+    item.classList.toggle("active",item.dataset.mobilePanel===next);
+});
 
 // Prototype 0.9 / ADD ARTWORK UI
 const addArtworkButton = document.querySelector<HTMLButtonElement>("#addArtworkButton");
@@ -3190,6 +3235,7 @@ async function enterWorld() {
     flightControls.classList.add("room-active");
     emoteControls.classList.add("room-active");
     communicationControls.classList.add("room-active");
+    mobileActionDock.classList.add("room-active");
     hud.querySelector<HTMLElement>(".controls")!.textContent=
       "WASD：移動 / SPACE：ジャンプ・上昇 / F：飛行 / SHIFT：下降";
   } catch (error) {

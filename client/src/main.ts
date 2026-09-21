@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.9.1 MOBILE COMPACT UI LOADED]");
+console.log("[PROTOTYPE 0.19.9.2 MOBILE SAFE LAYOUT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -167,13 +167,13 @@ avatarStyleSheet.textContent=`
   #mobileActionDock {display:none}
   @media (pointer:coarse) {#flightControls.room-active {display:flex} #avatarControls {top:140px}}
   @media (max-width:640px), (pointer:coarse) {
-    body.mobile-compact #mobileActionDock.room-active {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));position:fixed;left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));z-index:70;gap:4px;padding:5px;border:1px solid rgba(120,160,195,.55);border-radius:14px;background:rgba(7,13,21,.88);backdrop-filter:blur(12px)}
-    #mobileActionDock button {min-width:0;padding:10px 3px;border:1px solid #7893aa;border-radius:9px;background:#0b1420;color:#fff;font-size:9px;font-weight:900;letter-spacing:.04em}
+    body.mobile-compact #mobileActionDock.room-active {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-auto-rows:38px;position:fixed;left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));z-index:70;gap:4px;padding:5px;box-sizing:border-box;border:1px solid rgba(120,160,195,.55);border-radius:12px;background:rgba(7,13,21,.9);backdrop-filter:blur(12px)}
+    body.mobile-compact #mobileActionDock button {min-width:0!important;width:auto!important;height:38px!important;min-height:38px!important;max-height:38px!important;margin:0!important;padding:0 2px!important;line-height:36px!important;border:1px solid #7893aa;border-radius:8px;background:#0b1420;color:#fff;font-size:9px!important;font-weight:900;letter-spacing:.03em;box-sizing:border-box}
     #mobileActionDock button.active {border-color:#52d7ff;color:#52d7ff;background:#102638}
     body.mobile-compact #flightControls.room-active,body.mobile-compact #emoteControls.room-active,body.mobile-compact #communicationControls.room-active {display:none!important}
     body.mobile-compact.mobile-panel-move #flightControls.room-active {display:flex!important;right:10px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));gap:4px}
     body.mobile-compact.mobile-panel-emote #emoteControls.room-active {display:flex!important;right:10px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));gap:4px}
-    body.mobile-compact.mobile-panel-chat #communicationControls.room-active,body.mobile-compact.mobile-panel-photo #communicationControls.room-active {display:flex!important;left:10px;right:10px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));transform:none;flex-wrap:wrap;width:auto;padding:7px;border-radius:12px;background:rgba(7,13,21,.9);backdrop-filter:blur(12px)}
+    body.mobile-compact.mobile-panel-chat #communicationControls.room-active,body.mobile-compact.mobile-panel-photo #communicationControls.room-active {display:flex!important;left:10px;right:10px;bottom:max(62px,calc(env(safe-area-inset-bottom) + 58px));transform:none;flex-wrap:wrap;width:auto;padding:6px;box-sizing:border-box;border:1px solid rgba(120,160,195,.55);border-radius:11px;background:rgba(7,13,21,.92);backdrop-filter:blur(12px)}
     body.mobile-compact.mobile-panel-chat #photoStudio {display:none!important}
     body.mobile-compact.mobile-panel-photo #messageComposer,body.mobile-compact.mobile-panel-photo #quickMessages {display:none!important}
     body.mobile-compact #avatarControls,body.mobile-compact #addArtworkButton,body.mobile-compact #mediaManagerButton,body.mobile-compact #sharedStateDiagnosticPanel {display:none!important}
@@ -182,10 +182,12 @@ avatarStyleSheet.textContent=`
     body.mobile-compact.mobile-tools-open #mediaManagerButton {display:block!important}
     body.mobile-compact.mobile-tools-open #sharedStateDiagnosticPanel {display:block!important;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));max-width:calc(100vw - 20px)}
     body.mobile-compact .controls {display:none!important}
+    body.mobile-compact #viewToggle {position:fixed!important;top:max(112px,calc(env(safe-area-inset-top) + 72px))!important;right:10px!important;bottom:auto!important;left:auto!important;width:54px!important;height:40px!important;min-height:40px!important;padding:0!important;font-size:10px!important;border-radius:10px!important}
+    body.mobile-compact.mobile-panel-chat #joystick,body.mobile-compact.mobile-panel-photo #joystick {bottom:max(155px,calc(env(safe-area-inset-bottom) + 150px))!important}
     body.mobile-compact #flightControls button,body.mobile-compact #emoteControls button {font-size:10px;padding:9px 8px;min-height:40px}
     body.mobile-compact #avatarMessageInput {width:min(44vw,180px)}
     body.mobile-compact #photoStudio {display:flex;width:100%;justify-content:center;flex-wrap:wrap}
-    body.mobile-compact #photoStudio button,body.mobile-compact #photoStudio select {font-size:10px;padding:8px 6px}
+    body.mobile-compact #photoStudio button,body.mobile-compact #photoStudio select {height:36px!important;min-height:36px!important;margin:0!important;font-size:9px!important;padding:0 7px!important;box-sizing:border-box}
   }
 `;
 document.head.appendChild(avatarStyleSheet);

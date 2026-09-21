@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.1.4 PC TRANSMIT GATE LOADED]");
+console.log("[PROTOTYPE 0.20.1.5 CONTINUOUS VOICE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1184,14 +1184,14 @@ function installVoiceAnalyser(sessionId:string,stream:MediaStream,playOutput=fal
   const context=voiceAudioContext;if(!context)return;
   const old=voiceAnalysers.get(sessionId);if(old){try {old.source.disconnect();old.analyser.disconnect();for(const node of old.outputNodes)node.disconnect();} catch {} voiceAnalysers.delete(sessionId);}
   const source=context.createMediaStreamSource(stream);const analyser=context.createAnalyser();analyser.fftSize=256;
-  source.connect(analyser);let outputGain:GainNode|null=null,gateGain:GainNode|null=null;const outputNodes:AudioNode[]=[];
+  source.connect(analyser);let outputGain:GainNode|null=null;const gateGain:GainNode|null=null;const outputNodes:AudioNode[]=[];
   if(playOutput){
     const highpass=context.createBiquadFilter();highpass.type="highpass";highpass.frequency.value=85;highpass.Q.value=.7;
     const compressor=context.createDynamicsCompressor();compressor.threshold.value=-24;compressor.knee.value=18;
     compressor.ratio.value=5;compressor.attack.value=.008;compressor.release.value=.16;
-    gateGain=context.createGain();gateGain.gain.value=0;outputGain=context.createGain();outputGain.gain.value=Number(voiceVolumeSelect.value)||1;
-    source.connect(highpass);highpass.connect(compressor);compressor.connect(gateGain);gateGain.connect(outputGain);outputGain.connect(context.destination);
-    outputNodes.push(highpass,compressor,gateGain,outputGain);
+    outputGain=context.createGain();outputGain.gain.value=Number(voiceVolumeSelect.value)||1;
+    source.connect(highpass);highpass.connect(compressor);compressor.connect(outputGain);outputGain.connect(context.destination);
+    outputNodes.push(highpass,compressor,outputGain);
   }
   voiceAnalysers.set(sessionId,{source,analyser,data:new Uint8Array(analyser.fftSize),outputGain,gateGain,outputNodes,smoothedLevel:0,activeFrames:0,transmitGate:false});
 }
@@ -1238,7 +1238,7 @@ async function rebuildVoiceSendStream() {
   const highpass=voiceAudioContext.createBiquadFilter();highpass.type="highpass";highpass.frequency.value=85;highpass.Q.value=.7;
   const compressor=voiceAudioContext.createDynamicsCompressor();compressor.threshold.value=-22;compressor.knee.value=16;
   compressor.ratio.value=5;compressor.attack.value=.006;compressor.release.value=.14;
-  voiceInputGain=voiceAudioContext.createGain();voiceInputGain.gain.value=0;
+  voiceInputGain=voiceAudioContext.createGain();voiceInputGain.gain.value=.92;
   voiceSourceNode.connect(highpass);highpass.connect(compressor);compressor.connect(voiceInputGain);
   voiceDestination=voiceAudioContext.createMediaStreamDestination();
   voiceEffectNodes=[highpass,compressor];
@@ -1258,8 +1258,6 @@ async function rebuildVoiceSendStream() {
     voiceEffectNodes.push(delay,feedback);
   }
   voiceSendStream=voiceDestination.stream;installVoiceAnalyser(currentSessionId,voiceRawStream);
-  const localRuntime=voiceAnalysers.get(currentSessionId);
-  if(localRuntime){localRuntime.gateGain=voiceInputGain;localRuntime.transmitGate=true;}
   const track=voiceSendStream.getAudioTracks()[0];
   for(const peer of voicePeers.values()) {
     const sender=peer.getSenders().find(item=>item.track?.kind==="audio");
@@ -6764,16 +6762,10 @@ app.on("update", (dt: number) => {
       let sum=0;for(const sample of runtime.data){const value=(sample-128)/128;sum+=value*value;}
       const measured=Math.min(1,Math.sqrt(sum/runtime.data.length)*4.5);
       runtime.smoothedLevel=runtime.smoothedLevel*.82+measured*.18;
-      runtime.activeFrames=measured>.095?Math.min(18,runtime.activeFrames+1):Math.max(0,runtime.activeFrames-1);
+      runtime.activeFrames=measured>.085?Math.min(12,runtime.activeFrames+1):Math.max(0,runtime.activeFrames-1);
       level=runtime.smoothedLevel;
-      if(runtime.gateGain&&voiceAudioContext) {
-        const open=runtime.transmitGate
-          ?runtime.activeFrames>=6&&level>.07
-          :runtime.activeFrames>=3&&level>.075;
-        runtime.gateGain.gain.setTargetAtTime(open?1:0,voiceAudioContext.currentTime,open?.028:.13);
-      }
     }
-    const speaking=!!runtime&&runtime.activeFrames>=6&&level>.07;
+    const speaking=!!runtime&&runtime.activeFrames>=3&&level>.06;
     avatar.名前ラベル.style.boxShadow=speaking?`0 0 ${12+level*22}px rgba(82,215,255,.95)`:"none";
     avatar.名前ラベル.style.border=speaking?"1px solid rgba(82,215,255,.95)":"1px solid transparent";
   }

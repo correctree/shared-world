@@ -22,6 +22,7 @@ let activeXRMediaId: string | null = null;
 
 type Avatar = {
   entity: pc.Entity;
+  body:pc.Entity;
   target: pc.Vec3;
   name: string;
   名前ラベル: HTMLDivElement;
@@ -32,6 +33,15 @@ type Avatar = {
   textureRequest:number;
   texture:pc.Texture|null;
   textureURL:string|null;
+  size:number;
+  labelVisible:boolean;
+  lastMotionPosition:pc.Vec3;
+  motionPhase:number;
+  textureRepeat:number;
+  textureRotation:number;
+  baseScale:pc.Vec3;
+  flying:boolean;
+  baseBodyY:number;
 };
 
 // =========================================================
@@ -58,8 +68,13 @@ avatarControls.innerHTML=`<button type="button" id="avatarSettingsButton">AVATAR
     <label>BODY COLOR <input type="color" id="avatarBodyColor" value="#f0f0f5"></label>
     <label>ACCENT COLOR <input type="color" id="avatarAccentColor" value="#ff8c28"></label>
     <label>SHAPE <select id="avatarShape"><option value="sphere">ORB</option><option value="capsule">CAPSULE</option><option value="box">CUBE</option></select></label>
+    <label>BODY SIZE <input type="range" id="avatarSize" min="0.5" max="2" step="0.05" value="1"><span id="avatarSizeValue">1</span></label>
     <label>BODY IMAGE (JPG / PNG)<input type="file" id="avatarImageFile" accept="image/jpeg,image/png"></label>
     <div id="avatarImageStatus" style="font-size:11px;color:#b8d8ef;margin:8px 0"></div>
+    <label>IMAGE REPEAT <input type="range" id="avatarTextureRepeat" min="0.25" max="8" step="0.25" value="1"><span id="avatarTextureRepeatValue">1</span></label>
+    <label>IMAGE ROTATION <input type="range" id="avatarTextureRotation" min="0" max="360" step="1" value="0"><span id="avatarTextureRotationValue">0°</span></label>
+    <label>NAME LABEL <input type="checkbox" id="avatarLabelVisible" checked></label>
+    <label>NAME COLOR <input type="color" id="avatarLabelColor" value="#ffffff"></label>
     <button type="button" id="avatarClearImage">REMOVE IMAGE</button>
     <button type="button" id="avatarSaveButton">APPLY AVATAR</button>
   </div>
@@ -695,7 +710,7 @@ let localPosition = new pc.Vec3();
 let lastSend = 0;
 let moveSequence = 0;
 let latestMoveAck = 0;
-let lastSentMove = {x:NaN,y:NaN,z:NaN,rotationY:NaN};
+let lastSentMove = {x:NaN,y:NaN,z:NaN,rotationY:NaN,flying:false};
 let verticalVelocity=0;
 let flying=false;
 let mobileAscend=false;
@@ -710,11 +725,17 @@ function savedAvatarStyle() {
       color:typeof input.color==="string" && /^#[0-9a-fA-F]{6}$/.test(input.color)?input.color:"#f0f0f5",
       accent:typeof input.accent==="string" && /^#[0-9a-fA-F]{6}$/.test(input.accent)?input.accent:"#ff8c28",
       shape:["sphere","capsule","box"].includes(input.shape)?input.shape:"sphere",
+      size:Number.isFinite(Number(input.size))?pc.math.clamp(Number(input.size),.5,2):1,
+      labelVisible:input.labelVisible!==false,
+      labelColor:typeof input.labelColor==="string" && /^#[0-9a-fA-F]{6}$/.test(input.labelColor)?input.labelColor:"#ffffff",
+      textureRepeat:Number.isFinite(Number(input.textureRepeat))?pc.math.clamp(Number(input.textureRepeat),.25,8):1,
+      textureRotation:Number.isFinite(Number(input.textureRotation))?pc.math.clamp(Number(input.textureRotation),0,360):0,
       assetRef:typeof input.assetRef==="string" &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.assetRef)
         ?input.assetRef:""
     };
-  } catch {return {color:"#f0f0f5",accent:"#ff8c28",shape:"sphere",assetRef:""};}
+  } catch {return {color:"#f0f0f5",accent:"#ff8c28",shape:"sphere",size:1,
+    labelVisible:true,labelColor:"#ffffff",textureRepeat:1,textureRotation:0,assetRef:""};}
 }
 let selectedAvatarAssetRef=savedAvatarStyle().assetRef;
 async function uploadAvatarImage(blob:Blob) {
@@ -751,6 +772,21 @@ const initialAvatarStyle=savedAvatarStyle();
 avatarControls.querySelector<HTMLInputElement>("#avatarBodyColor")!.value=initialAvatarStyle.color;
 avatarControls.querySelector<HTMLInputElement>("#avatarAccentColor")!.value=initialAvatarStyle.accent;
 avatarControls.querySelector<HTMLSelectElement>("#avatarShape")!.value=initialAvatarStyle.shape;
+avatarControls.querySelector<HTMLInputElement>("#avatarSize")!.value=String(initialAvatarStyle.size);
+avatarControls.querySelector<HTMLInputElement>("#avatarLabelVisible")!.checked=initialAvatarStyle.labelVisible;
+avatarControls.querySelector<HTMLInputElement>("#avatarLabelColor")!.value=initialAvatarStyle.labelColor;
+avatarControls.querySelector<HTMLInputElement>("#avatarTextureRepeat")!.value=String(initialAvatarStyle.textureRepeat);
+avatarControls.querySelector<HTMLInputElement>("#avatarTextureRotation")!.value=String(initialAvatarStyle.textureRotation);
+for(const [inputId,valueId,suffix] of [
+  ["#avatarSize","#avatarSizeValue",""] as const,
+  ["#avatarTextureRepeat","#avatarTextureRepeatValue",""] as const,
+  ["#avatarTextureRotation","#avatarTextureRotationValue","°"] as const
+]) {
+  const input=avatarControls.querySelector<HTMLInputElement>(inputId)!;
+  const value=avatarControls.querySelector<HTMLElement>(valueId)!;
+  const refresh=()=>{value.textContent=`${input.value}${suffix}`;};
+  input.addEventListener("input",refresh);refresh();
+}
 const avatarImageInput=avatarControls.querySelector<HTMLInputElement>("#avatarImageFile")!;
 const avatarImageStatus=avatarControls.querySelector<HTMLElement>("#avatarImageStatus")!;
 const avatarSaveButton=avatarControls.querySelector<HTMLButtonElement>("#avatarSaveButton")!;
@@ -793,6 +829,11 @@ avatarSaveButton.addEventListener("click",()=>{
     color:avatarControls.querySelector<HTMLInputElement>("#avatarBodyColor")!.value,
     accent:avatarControls.querySelector<HTMLInputElement>("#avatarAccentColor")!.value,
     shape:avatarControls.querySelector<HTMLSelectElement>("#avatarShape")!.value,
+    size:Number(avatarControls.querySelector<HTMLInputElement>("#avatarSize")!.value),
+    labelVisible:avatarControls.querySelector<HTMLInputElement>("#avatarLabelVisible")!.checked,
+    labelColor:avatarControls.querySelector<HTMLInputElement>("#avatarLabelColor")!.value,
+    textureRepeat:Number(avatarControls.querySelector<HTMLInputElement>("#avatarTextureRepeat")!.value),
+    textureRotation:Number(avatarControls.querySelector<HTMLInputElement>("#avatarTextureRotation")!.value),
     assetRef:selectedAvatarAssetRef
   };
   try {localStorage.setItem(AVATAR_STYLE_KEY,JSON.stringify(appearance));} catch {}
@@ -806,6 +847,8 @@ function setFlightMode(enabled:boolean) {
   mobileAscend=false;mobileDescend=false;
   flyButton.textContent=flying?"FLY ON":"FLY OFF";
   flyButton.style.borderColor=flying?"#50caff":"#9fb3c6";
+  const avatar=currentSessionId?avatars.get(currentSessionId):undefined;
+  if(activeRoom && avatar) sendLocalMovement(avatar.entity.getEulerAngles().y);
 }
 flyButton.addEventListener("click",()=>{if(activeRoom) setFlightMode(!flying);});
 const jumpButton=flightControls.querySelector<HTMLButtonElement>("#jumpButton")!;
@@ -828,8 +871,9 @@ for(const type of ["pointerup","pointercancel","lostpointercapture"])
 function sendLocalMovement(rotationY:number) {
   if (!activeRoom) return;
   const seq=++moveSequence;
-  activeRoom.send("move",{x:localPosition.x,y:localPosition.y,z:localPosition.z,rotationY,seq});
-  lastSentMove={x:localPosition.x,y:localPosition.y,z:localPosition.z,rotationY};
+  activeRoom.send("move",{x:localPosition.x,y:localPosition.y,z:localPosition.z,
+    rotationY,flying,seq});
+  lastSentMove={x:localPosition.x,y:localPosition.y,z:localPosition.z,rotationY,flying};
   lastSend=performance.now();
 }
 
@@ -1007,9 +1051,9 @@ async function setAvatarTexture(avatar:Avatar,ref:string) {
   if(ref===avatar.textureRef) return;
   avatar.textureRef=ref;
   const request=++avatar.textureRequest;
-  if(avatar.entity.render?.material instanceof pc.StandardMaterial) {
-    avatar.entity.render.material.diffuseMap=null;
-    avatar.entity.render.material.update();
+  if(avatar.body.render?.material instanceof pc.StandardMaterial) {
+    avatar.body.render.material.diffuseMap=null;
+    avatar.body.render.material.update();
   }
   if(avatar.texture) {avatar.texture.destroy();avatar.texture=null;}
   if(avatar.textureURL) {URL.revokeObjectURL(avatar.textureURL);avatar.textureURL=null;}
@@ -1030,30 +1074,53 @@ async function setAvatarTexture(avatar:Avatar,ref:string) {
     const texture=new pc.Texture(app.graphicsDevice,{mipmaps:true});
     texture.setSource(image);
     avatar.texture=texture;avatar.textureURL=url;
-    const body=avatar.entity.render?.material;
-    if(body instanceof pc.StandardMaterial) {body.diffuseMap=texture;body.update();}
+    const body=avatar.body.render?.material;
+    if(body instanceof pc.StandardMaterial) {
+      body.diffuseMap=texture;
+      body.diffuseMapTiling=new pc.Vec2(avatar.textureRepeat,avatar.textureRepeat);
+      body.diffuseMapRotation=avatar.textureRotation;
+      body.update();
+    }
   } catch(error) {
     if(request===avatar.textureRequest) avatar.textureRef="";
     console.warn("[AVATAR IMAGE LOAD FAILED]",ref,error);
   }
 }
-function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,assetRef:string) {
+function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,assetRef:string,
+  size=1,labelVisible=true,labelColor="#ffffff",textureRepeat=1,textureRotation=0) {
   const safeColor=/^#[0-9a-fA-F]{6}$/.test(color)?color:"#f0f0f5";
   const safeAccent=/^#[0-9a-fA-F]{6}$/.test(accent)?accent:"#ff8c28";
   const safeShape=["sphere","capsule","box"].includes(shape)?shape:"sphere";
   const safeRef=typeof assetRef==="string" &&
     /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(assetRef)?assetRef:"";
-  const key=`${safeColor}/${safeAccent}/${safeShape}`;
+  const safeSize=pc.math.clamp(Number(size)||1,.5,2);
+  const safeLabelColor=/^#[0-9a-fA-F]{6}$/.test(labelColor)?labelColor:"#ffffff";
+  const safeRepeat=pc.math.clamp(Number(textureRepeat)||1,.25,8);
+  const safeRotation=pc.math.clamp(Number(textureRotation)||0,0,360);
+  const key=`${safeColor}/${safeAccent}/${safeShape}/${safeSize}/${safeLabelColor}/${safeRepeat}/${safeRotation}`;
   void setAvatarTexture(avatar,safeRef);
+  avatar.labelVisible=labelVisible!==false;
+  avatar.textureRepeat=safeRepeat;
+  avatar.textureRotation=safeRotation;
+  avatar.名前ラベル.style.color=safeLabelColor;
+  avatar.size=safeSize;
   if(key===avatar.styleKey) return;
-  const body=avatar.entity.render!;
+  const body=avatar.body.render!;
   const oldBody=body.material;
   const oldMarker=avatar.forwardMarker.render!.material;
   body.type=safeShape;
-  avatar.entity.setLocalScale(.65,safeShape==="capsule"?.85:.65,.65);
+  avatar.baseScale.set(.65*safeSize,(safeShape==="capsule"?.85:.65)*safeSize,.65*safeSize);
+  avatar.baseBodyY=avatar.baseScale.y-.65;
+  avatar.body.setLocalScale(avatar.baseScale);
+  avatar.body.setLocalPosition(0,avatar.baseBodyY,0);
   const bodyColor=colorFromHex(safeColor);
   const newBodyMaterial=material([bodyColor.r,bodyColor.g,bodyColor.b]);
-  if(avatar.texture) {newBodyMaterial.diffuseMap=avatar.texture;newBodyMaterial.update();}
+  if(avatar.texture) {
+    newBodyMaterial.diffuseMap=avatar.texture;
+    newBodyMaterial.diffuseMapTiling=new pc.Vec2(safeRepeat,safeRepeat);
+    newBodyMaterial.diffuseMapRotation=safeRotation;
+    newBodyMaterial.update();
+  }
   body.material=newBodyMaterial;
   const accentColor=colorFromHex(safeAccent);
   avatar.forwardMarker.render!.material=material([accentColor.r,accentColor.g,accentColor.b]);
@@ -1084,17 +1151,19 @@ function 名前ラベルを作成(名前: string) {
 
 function createAvatar(sessionId: string, player: any) {
   const entity = new pc.Entity(`Player-${sessionId}`);
-  entity.addComponent("render", { type: "sphere" });
-  entity.setLocalScale(0.65, 0.65, 0.65);
   entity.setPosition(player.x, player.y, player.z);
-  entity.render!.material = avatarMaterial(sessionId);
+  const body=new pc.Entity(`AvatarBody-${sessionId}`);
+  body.addComponent("render",{type:"sphere"});
+  body.setLocalScale(.65,.65,.65);
+  body.render!.material=avatarMaterial(sessionId);
+  entity.addChild(body);
 
   const forwardMarker = new pc.Entity(`Forward-${sessionId}`);
   forwardMarker.addComponent("render", { type: "box" });
   forwardMarker.setLocalScale(0.16, 0.16, 0.42);
   forwardMarker.setLocalPosition(0, 0, -0.42);
   forwardMarker.render!.material = material([1.0, 0.55, 0.15]);
-  entity.addChild(forwardMarker);
+  body.addChild(forwardMarker);
 
   const proximityHalo = new pc.Entity(`ProximityHalo-${sessionId}`);
   proximityHalo.addComponent("render", { type: "cylinder" });
@@ -1108,6 +1177,7 @@ function createAvatar(sessionId: string, player: any) {
   const 名前ラベル = 名前ラベルを作成(player.name);
   avatars.set(sessionId, {
     entity,
+    body,
     target: new pc.Vec3(player.x, player.y, player.z),
     name: player.name,
     名前ラベル,
@@ -1117,10 +1187,20 @@ function createAvatar(sessionId: string, player: any) {
     textureRef:"",
     textureRequest:0,
     texture:null,
-    textureURL:null
+    textureURL:null,
+    size:1,
+    labelVisible:true,
+    lastMotionPosition:new pc.Vec3(player.x,player.y,player.z),
+    motionPhase:Math.random()*Math.PI*2,
+    textureRepeat:1,
+    textureRotation:0,
+    baseScale:new pc.Vec3(.65,.65,.65),
+    flying:player.avatarFlying===true,
+    baseBodyY:0
   });
   applyAvatarStyle(avatars.get(sessionId)!,player.avatarColor,player.avatarAccent,
-    player.avatarShape,player.avatarAssetRef);
+    player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
+    player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation);
 
   if (sessionId === currentSessionId) {
     localPosition.set(player.x, player.y, player.z);
@@ -1132,7 +1212,7 @@ function removeAvatar(sessionId: string) {
   const avatar = avatars.get(sessionId);
   if (!avatar) return;
   avatar.名前ラベル.remove();
-  const bodyMaterial=avatar.entity.render?.material;
+  const bodyMaterial=avatar.body.render?.material;
   const markerMaterial=avatar.forwardMarker.render?.material;
   const haloMaterial=avatar.proximityHalo.render?.material;
   avatar.textureRequest++;
@@ -1292,7 +1372,9 @@ function reconcileWorldFromServerState() {
   playersMap?.forEach?.((player:any,sessionId:string)=>{
     const avatar=avatars.get(sessionId);
     if(avatar) applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
-      player.avatarShape,player.avatarAssetRef);
+      player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
+      player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation);
+    if(avatar) avatar.flying=player.avatarFlying===true;
   });
   const mediaMap: any = (activeRoom.state as any).mediaObjects;
   if (!mediaMap) return;
@@ -2362,7 +2444,7 @@ async function enterWorld() {
     activeRoom = room;
     currentSessionId = room.sessionId;
     latestMoveAck=0;
-    lastSentMove={x:NaN,y:NaN,z:NaN,rotationY:NaN};
+    lastSentMove={x:NaN,y:NaN,z:NaN,rotationY:NaN,flying:false};
     room.onMessage("move:ack",(ack:any) => {
       const seq=Number(ack?.seq);
       if (!Number.isSafeInteger(seq) || seq<=latestMoveAck) return;
@@ -2375,7 +2457,7 @@ async function enterWorld() {
       localPosition.z=z;
       verticalVelocity=0;
       avatars.get(currentSessionId)?.entity.setPosition(localPosition);
-      lastSentMove={x:NaN,y:NaN,z:NaN,rotationY:NaN};
+      lastSentMove={x:NaN,y:NaN,z:NaN,rotationY:NaN,flying:false};
       sharedStateDiagnostic.moveCorrections+=1;
       refreshSharedStateDiagnosticPanel();
       console.warn("[MOVE CORRECTED TO SERVER]",seq,x,z);
@@ -2385,7 +2467,8 @@ async function enterWorld() {
       const avatar=avatars.get(String(payload?.sessionId||""));
       if(!avatar) return;
       applyAvatarStyle(avatar,payload.color,payload.accent,
-        payload.shape,payload.assetRef);
+        payload.shape,payload.assetRef,payload.size,payload.labelVisible,
+        payload.labelColor,payload.textureRepeat,payload.textureRotation);
     });
     sharedStateDiagnostic.connection = "OPEN";
     sharedStateDiagnostic.lastError = "-";
@@ -2403,7 +2486,9 @@ async function enterWorld() {
         avatar.名前ラベル.textContent = player.name;
         avatar.entity.setEulerAngles(0, player.rotationY ?? 0, 0);
         applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
-          player.avatarShape,player.avatarAssetRef);
+          player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
+          player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation);
+        avatar.flying=player.avatarFlying===true;
       });
     });
 
@@ -5797,7 +5882,7 @@ app.on("update", (dt: number) => {
 
   if (selfAvatar) {
     selfAvatar.entity.enabled = !firstPersonMode;
-    selfAvatar.名前ラベル.style.display = firstPersonMode ? "none" : "";
+    selfAvatar.名前ラベル.style.display = firstPersonMode || !selfAvatar.labelVisible ? "none" : "";
   }
 
   const yawRad = cameraYaw * pc.math.DEG_TO_RAD;
@@ -5832,9 +5917,35 @@ app.on("update", (dt: number) => {
     );
   }
 
+  // Visual-only presence animation. The root position remains authoritative,
+  // so proximity and network coordinates are not changed by breathing or bobbing.
+  for(const [sessionId,avatar] of avatars) {
+    const position=avatar.entity.getPosition();
+    const dx=position.x-avatar.lastMotionPosition.x;
+    const dz=position.z-avatar.lastMotionPosition.z;
+    const speed=Math.hypot(dx,dz)/Math.max(dt,.001);
+    const moving=speed>.08;
+    const airborne=position.y>.72;
+    const avatarFlying=sessionId===currentSessionId?flying:avatar.flying;
+    avatar.motionPhase+=dt*(moving?9:2.2);
+    const breath=1+Math.sin(avatar.motionPhase)*.018;
+    const bob=moving&&!airborne?Math.abs(Math.sin(avatar.motionPhase))*.055:0;
+    avatar.body.setLocalPosition(0,avatar.baseBodyY+bob,0);
+    avatar.body.setLocalScale(
+      avatar.baseScale.x*breath,
+      avatar.baseScale.y*(1+Math.sin(avatar.motionPhase)*.025),
+      avatar.baseScale.z*breath
+    );
+    avatar.body.setLocalEulerAngles(avatarFlying?-18:(airborne?-8:0),0,
+      moving&&!airborne?Math.sin(avatar.motionPhase)*4:0);
+    avatar.lastMotionPosition.copy(position);
+    if(sessionId!==currentSessionId)
+      avatar.名前ラベル.style.display=avatar.labelVisible?"":"none";
+  }
+
   for (const avatar of avatars.values()) {
     const worldPos = avatar.entity.getPosition().clone();
-    worldPos.y += 0.65;
+    worldPos.y += 0.65*avatar.size;
     const screenPos = camera.camera!.worldToScreen(worldPos);
     avatar.名前ラベル.style.left = `${screenPos.x}px`;
     avatar.名前ラベル.style.top = `${screenPos.y}px`;
@@ -5959,7 +6070,8 @@ app.on("update", (dt: number) => {
     Math.abs(localPosition.x-lastSentMove.x)>0.001 ||
     Math.abs(localPosition.y-lastSentMove.y)>0.001 ||
     Math.abs(localPosition.z-lastSentMove.z)>0.001 ||
-    Math.abs(currentRotation-lastSentMove.rotationY)>0.1;
+    Math.abs(currentRotation-lastSentMove.rotationY)>0.1 ||
+    flying!==lastSentMove.flying;
   if ((unsent && (x===0 && z===0 || now-lastSend>=1000/SEND_HZ)) ||
       now-lastSend>=1000) sendLocalMovement(currentRotation);
 });

@@ -160,7 +160,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     // "media:add" are guaranteed to reach this Room on Colyseus 0.18.
     this.onMessage("move", (
       client: Client,
-      payload: { x?: number; y?: number; z?: number; rotationY?: number; seq?: number }
+      payload: { x?: number; y?: number; z?: number; rotationY?: number; flying?: boolean; seq?: number }
     ) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
@@ -189,6 +189,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       player.y = clampedY;
       player.z = clampedZ;
       player.rotationY = nextRotationY;
+      player.avatarFlying=payload?.flying===true;
       client.send("move:ack",{seq:payload?.seq,ok:true,x:player.x,y:player.y,z:player.z,rotationY:player.rotationY});
       this.evaluateProximity(client);
     });
@@ -204,10 +205,21 @@ export class SharedWorldRoom extends Room<WorldState> {
       player.avatarAssetRef=typeof payload.assetRef==="string" && payload.assetRef.length<=240 &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(payload.assetRef)
         ?payload.assetRef:"";
+      const bounded=(input:unknown,fallback:number,min:number,max:number)=>{
+        const value=Number(input);return Number.isFinite(value)?Math.max(min,Math.min(max,value)):fallback;
+      };
+      player.avatarSize=bounded(payload.size,player.avatarSize,.5,2);
+      player.avatarLabelVisible=payload.labelVisible!==false;
+      player.avatarLabelColor=color(payload.labelColor,player.avatarLabelColor);
+      player.avatarTextureRepeat=bounded(payload.textureRepeat,player.avatarTextureRepeat,.25,8);
+      player.avatarTextureRotation=bounded(payload.textureRotation,player.avatarTextureRotation,0,360);
       this.broadcast("avatar:style:applied",{
         sessionId:client.sessionId,
         color:player.avatarColor,accent:player.avatarAccent,
-        shape:player.avatarShape,assetRef:player.avatarAssetRef
+        shape:player.avatarShape,assetRef:player.avatarAssetRef,
+        size:player.avatarSize,labelVisible:player.avatarLabelVisible,
+        labelColor:player.avatarLabelColor,textureRepeat:player.avatarTextureRepeat,
+        textureRotation:player.avatarTextureRotation
       });
     });
 

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.6.2 HALO GRADIENT FIX LOADED]");
+console.log("[PROTOTYPE 0.19.6.3 CROSS-PLATFORM HALO GRADIENT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1297,6 +1297,12 @@ function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,
   // black (0 opacity) and the painted halo is white (full opacity), so the red
   // channel is a reliable mask on both desktop and iOS.
   haloMaterial.opacityMap=haloTexture;haloMaterial.opacityMapChannel="r";
+  // Apply the same luminance mask to visible color and glow as well as
+  // opacity. Chromium desktop and iOS WebGL can blend opacity maps slightly
+  // differently; modulating all three channels keeps the soft edge visible on
+  // both renderers while the plane itself remains fully hidden at the border.
+  haloMaterial.diffuseMap=haloTexture;
+  haloMaterial.emissiveMap=haloTexture;
   haloMaterial.emissive=new pc.Color(haloColorValue.r*safeHaloGlow,
     haloColorValue.g*safeHaloGlow,haloColorValue.b*safeHaloGlow);
   haloMaterial.opacity=safeHaloOpacity;

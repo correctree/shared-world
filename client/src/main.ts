@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.6 PROXIMITY SHAPES & GLOW LOADED]");
+console.log("[PROTOTYPE 0.19.6.1 HALO EDGE FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1278,8 +1278,12 @@ function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,
   const haloMaterial=material([haloColorValue.r,haloColorValue.g,haloColorValue.b]);
   const haloTexture=createHaloTexture(safeHaloShape,safeHaloRings);
   avatar.haloTexture?.destroy();avatar.haloTexture=haloTexture;
-  haloMaterial.diffuseMap=haloTexture;
-  haloMaterial.opacityMap=haloTexture;haloMaterial.opacityMapChannel="a";
+  // Use the canvas luminance as the opacity mask. Some mobile/WebGL paths do
+  // not preserve a canvas texture's alpha channel consistently, which made the
+  // square bounds of the halo plane faintly visible. The cleared canvas is
+  // black (0 opacity) and the painted halo is white (full opacity), so the red
+  // channel is a reliable mask on both desktop and iOS.
+  haloMaterial.opacityMap=haloTexture;haloMaterial.opacityMapChannel="r";
   haloMaterial.emissive=new pc.Color(haloColorValue.r*safeHaloGlow,
     haloColorValue.g*safeHaloGlow,haloColorValue.b*safeHaloGlow);
   haloMaterial.opacity=safeHaloOpacity;
@@ -1334,6 +1338,10 @@ function createAvatar(sessionId: string, player: any) {
 
   const proximityHalo = new pc.Entity(`ProximityHalo-${sessionId}`);
   proximityHalo.addComponent("render", { type: "plane" });
+  // A transparent VFX plane must neither cast nor receive world shadows. If it
+  // does, its rectangular mesh can become visible even outside the round mask.
+  proximityHalo.render!.castShadows=false;
+  proximityHalo.render!.receiveShadows=false;
   proximityHalo.setLocalScale(1.5, 1, 1.5);
   proximityHalo.setLocalPosition(0, -0.63, 0);
   const initialHaloMaterial=material([1.0, 0.45, 0.08]);

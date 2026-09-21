@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.6.1 HALO EDGE FIX LOADED]");
+console.log("[PROTOTYPE 0.19.6.2 HALO GRADIENT FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1210,6 +1210,19 @@ function createHaloTexture(shape:string,rings:number) {
     }
     context.globalAlpha=1;
   }
+  // Encode the finished alpha mask into RGB luminance. The material reads the
+  // red channel for consistent masking across desktop and iOS, so copying the
+  // alpha values preserves the soft disc gradient and anti-aliased ring edges
+  // without depending on canvas-texture alpha support.
+  const pixels=context.getImageData(0,0,256,256);
+  for(let offset=0;offset<pixels.data.length;offset+=4) {
+    const alpha=pixels.data[offset+3];
+    pixels.data[offset]=alpha;
+    pixels.data[offset+1]=alpha;
+    pixels.data[offset+2]=alpha;
+    pixels.data[offset+3]=255;
+  }
+  context.putImageData(pixels,0,0);
   const texture=new pc.Texture(app.graphicsDevice,{mipmaps:true,minFilter:pc.FILTER_LINEAR_MIPMAP_LINEAR,
     magFilter:pc.FILTER_LINEAR,addressU:pc.ADDRESS_CLAMP_TO_EDGE,addressV:pc.ADDRESS_CLAMP_TO_EDGE});
   texture.setSource(canvas);return texture;

@@ -274,6 +274,35 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.broadcast("avatar:message",{sessionId:client.sessionId,text,sentAt:now});
     });
 
+    // 0.20.0 / WebRTC signaling only. Audio never passes through Colyseus.
+    this.onMessage("voice:ready",(client:Client)=>{
+      if(this.state.players.has(client.sessionId))
+        this.broadcast("voice:ready",{sessionId:client.sessionId},{except:client});
+    });
+    this.onMessage("voice:leave",(client:Client)=>{
+      this.broadcast("voice:leave",{sessionId:client.sessionId},{except:client});
+    });
+    this.onMessage("voice:signal",(client:Client,payload:any)=>{
+      if(!this.state.players.has(client.sessionId))return;
+      const targetSessionId=String(payload?.targetSessionId||"");
+      if(!targetSessionId||targetSessionId===client.sessionId)return;
+      const target=this.clients.find(item=>item.sessionId===targetSessionId);if(!target)return;
+      const description=payload?.description&&typeof payload.description==="object"?payload.description:null;
+      const candidate=payload?.candidate&&typeof payload.candidate==="object"?payload.candidate:null;
+      if(description) {
+        const type=String(description.type||"");const sdp=String(description.sdp||"");
+        if(!["offer","answer"].includes(type)||!sdp||sdp.length>16000)return;
+        target.send("voice:signal",{fromSessionId:client.sessionId,description:{type,sdp}});
+      } else if(candidate) {
+        const candidateText=String(candidate.candidate||"");
+        if(candidateText.length>2500)return;
+        target.send("voice:signal",{fromSessionId:client.sessionId,candidate:{
+          candidate:candidateText,sdpMid:typeof candidate.sdpMid==="string"?candidate.sdpMid:null,
+          sdpMLineIndex:Number.isInteger(candidate.sdpMLineIndex)?candidate.sdpMLineIndex:null
+        }});
+      }
+    });
+
     this.onMessage("media:add", (client: Client, payload: AddMediaPayload) => {
       console.log("[media:add received]", client.sessionId, payload?.id);
 
@@ -638,6 +667,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
   onLeave(client: Client, consented: boolean) {
     this.leaveProximity(client.sessionId);
+    this.broadcast("voice:leave",{sessionId:client.sessionId},{except:client});
     this.avatarEmoteLastAt.delete(client.sessionId);
     this.avatarMessageLastAt.delete(client.sessionId);
     const player = this.state.players.get(client.sessionId);

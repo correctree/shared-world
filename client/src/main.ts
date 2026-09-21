@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.9.2 MOBILE SAFE LAYOUT LOADED]");
+console.log("[PROTOTYPE 0.20.0 VOICE PRESENCE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -133,6 +133,7 @@ const communicationControls=document.createElement("div");
 communicationControls.id="communicationControls";
 communicationControls.innerHTML=`<div id="messageComposer"><input id="avatarMessageInput" maxlength="48" placeholder="MESSAGE / EMOJI"><button type="button" id="sendAvatarMessage">SEND</button></div>
   <div id="quickMessages"><button type="button">👋</button><button type="button">❤️</button><button type="button">✨</button><button type="button">😊</button></div>
+  <div id="voiceControls"><button type="button" id="voiceToggle">MIC OFF</button><select id="voiceEffect" aria-label="Voice effect"><option value="normal">NORMAL</option><option value="deep">DEEP</option><option value="bright">BRIGHT</option><option value="echo">ECHO</option></select><span id="voiceStatus">VOICE: OFF</span></div>
   <div id="photoStudio"><button type="button" id="selfieMode">SELFIE</button><button type="button" id="groupPhotoMode">GROUP</button>
   <select id="photoTimer" aria-label="Photo timer"><option value="0">TIMER OFF</option><option value="3">3 SEC</option><option value="5">5 SEC</option><option value="10">10 SEC</option></select>
   <button type="button" id="takeWorldPhoto">PHOTO</button></div>`;
@@ -160,6 +161,7 @@ avatarStyleSheet.textContent=`
   #messageComposer {display:flex;gap:4px}
   #avatarMessageInput {width:180px;padding:9px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff}
   #quickMessages {display:flex;gap:3px} #quickMessages button {padding:8px}
+  #voiceControls {display:flex;gap:4px;align-items:center} #voiceControls select {padding:9px 6px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff;font-size:11px} #voiceStatus {font-size:9px;color:#9fb3c6;white-space:nowrap}
   #photoStudio {display:flex;gap:4px;align-items:center} #photoStudio select {padding:9px 6px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff;font-size:11px}
   #photoStudio button.active {border-color:#52d7ff;color:#52d7ff;box-shadow:0 0 12px rgba(82,215,255,.35)}
   #photoCountdown {position:fixed;inset:0;z-index:80;display:grid;place-items:center;pointer-events:none;color:#fff;font:900 clamp(72px,18vw,190px)/1 Arial,sans-serif;text-shadow:0 4px 28px rgba(0,0,0,.7)}
@@ -175,7 +177,7 @@ avatarStyleSheet.textContent=`
     body.mobile-compact.mobile-panel-emote #emoteControls.room-active {display:flex!important;right:10px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));gap:4px}
     body.mobile-compact.mobile-panel-chat #communicationControls.room-active,body.mobile-compact.mobile-panel-photo #communicationControls.room-active {display:flex!important;left:10px;right:10px;bottom:max(62px,calc(env(safe-area-inset-bottom) + 58px));transform:none;flex-wrap:wrap;width:auto;padding:6px;box-sizing:border-box;border:1px solid rgba(120,160,195,.55);border-radius:11px;background:rgba(7,13,21,.92);backdrop-filter:blur(12px)}
     body.mobile-compact.mobile-panel-chat #photoStudio {display:none!important}
-    body.mobile-compact.mobile-panel-photo #messageComposer,body.mobile-compact.mobile-panel-photo #quickMessages {display:none!important}
+    body.mobile-compact.mobile-panel-photo #messageComposer,body.mobile-compact.mobile-panel-photo #quickMessages,body.mobile-compact.mobile-panel-photo #voiceControls {display:none!important}
     body.mobile-compact #avatarControls,body.mobile-compact #addArtworkButton,body.mobile-compact #mediaManagerButton,body.mobile-compact #sharedStateDiagnosticPanel {display:none!important}
     body.mobile-compact.mobile-tools-open #avatarControls {display:block!important;left:10px;top:125px;width:165px}
     body.mobile-compact.mobile-tools-open #addArtworkButton {display:block!important}
@@ -186,6 +188,7 @@ avatarStyleSheet.textContent=`
     body.mobile-compact.mobile-panel-chat #joystick,body.mobile-compact.mobile-panel-photo #joystick {bottom:max(155px,calc(env(safe-area-inset-bottom) + 150px))!important}
     body.mobile-compact #flightControls button,body.mobile-compact #emoteControls button {font-size:10px;padding:9px 8px;min-height:40px}
     body.mobile-compact #avatarMessageInput {width:min(44vw,180px)}
+    body.mobile-compact #voiceControls {width:100%;justify-content:center} body.mobile-compact #voiceControls button,body.mobile-compact #voiceControls select {height:34px!important;min-height:34px!important;padding:0 7px!important;font-size:9px!important}
     body.mobile-compact #photoStudio {display:flex;width:100%;justify-content:center;flex-wrap:wrap}
     body.mobile-compact #photoStudio button,body.mobile-compact #photoStudio select {height:36px!important;min-height:36px!important;margin:0!important;font-size:9px!important;padding:0 7px!important;box-sizing:border-box}
   }
@@ -1156,6 +1159,138 @@ communicationControls.querySelector<HTMLElement>("#quickMessages")!.addEventList
   const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button");
   if(button)sendAvatarMessage(button.textContent||"");
 });
+const voiceToggleButton=communicationControls.querySelector<HTMLButtonElement>("#voiceToggle")!;
+const voiceEffectSelect=communicationControls.querySelector<HTMLSelectElement>("#voiceEffect")!;
+const voiceStatus=communicationControls.querySelector<HTMLElement>("#voiceStatus")!;
+const voicePeers=new Map<string,RTCPeerConnection>();
+const voiceAudioElements=new Map<string,HTMLAudioElement>();
+const voiceAnalysers=new Map<string,{analyser:AnalyserNode,data:Uint8Array}>();
+const voicePendingCandidates=new Map<string,RTCIceCandidateInit[]>();
+let voiceEnabled=false;
+let voiceRawStream:MediaStream|null=null;
+let voiceSendStream:MediaStream|null=null;
+let voiceAudioContext:AudioContext|null=null;
+let voiceSourceNode:MediaStreamAudioSourceNode|null=null;
+let voiceEffectNodes:AudioNode[]=[];
+let voiceDestination:MediaStreamAudioDestinationNode|null=null;
+function setVoiceStatus(text:string,error=false) {
+  voiceStatus.textContent=`VOICE: ${text}`;voiceStatus.style.color=error?"#ff7187":text==="LIVE"?"#58e6bb":"#9fb3c6";
+}
+function installVoiceAnalyser(sessionId:string,stream:MediaStream) {
+  const context=voiceAudioContext;if(!context)return;
+  const old=voiceAnalysers.get(sessionId);if(old)voiceAnalysers.delete(sessionId);
+  const source=context.createMediaStreamSource(stream);const analyser=context.createAnalyser();analyser.fftSize=256;
+  source.connect(analyser);voiceAnalysers.set(sessionId,{analyser,data:new Uint8Array(analyser.fftSize)});
+}
+async function rebuildVoiceSendStream() {
+  if(!voiceRawStream)return;
+  if(!voiceAudioContext) {
+    const Context=window.AudioContext||(window as any).webkitAudioContext;voiceAudioContext=new Context();
+  }
+  await voiceAudioContext.resume();
+  try {voiceSourceNode?.disconnect();} catch {}
+  for(const node of voiceEffectNodes)try {node.disconnect();} catch {}
+  voiceEffectNodes=[];voiceSourceNode=voiceAudioContext.createMediaStreamSource(voiceRawStream);
+  voiceDestination=voiceAudioContext.createMediaStreamDestination();
+  const effect=voiceEffectSelect.value;
+  if(effect==="deep") {
+    const low=voiceAudioContext.createBiquadFilter();low.type="lowpass";low.frequency.value=1500;
+    const shelf=voiceAudioContext.createBiquadFilter();shelf.type="lowshelf";shelf.frequency.value=280;shelf.gain.value=7;
+    voiceSourceNode.connect(low);low.connect(shelf);shelf.connect(voiceDestination);voiceEffectNodes=[low,shelf];
+  } else if(effect==="bright") {
+    const high=voiceAudioContext.createBiquadFilter();high.type="highpass";high.frequency.value=150;
+    const shelf=voiceAudioContext.createBiquadFilter();shelf.type="highshelf";shelf.frequency.value=1700;shelf.gain.value=6;
+    voiceSourceNode.connect(high);high.connect(shelf);shelf.connect(voiceDestination);voiceEffectNodes=[high,shelf];
+  } else if(effect==="echo") {
+    const delay=voiceAudioContext.createDelay(.8);delay.delayTime.value=.2;
+    const feedback=voiceAudioContext.createGain();feedback.gain.value=.26;
+    voiceSourceNode.connect(voiceDestination);voiceSourceNode.connect(delay);delay.connect(feedback);feedback.connect(delay);delay.connect(voiceDestination);
+    voiceEffectNodes=[delay,feedback];
+  } else voiceSourceNode.connect(voiceDestination);
+  voiceSendStream=voiceDestination.stream;
+  installVoiceAnalyser(currentSessionId,voiceSendStream);
+  const track=voiceSendStream.getAudioTracks()[0];
+  for(const peer of voicePeers.values()) {
+    const sender=peer.getSenders().find(item=>item.track?.kind==="audio");
+    if(sender&&track)await sender.replaceTrack(track);
+  }
+}
+function closeVoicePeer(sessionId:string) {
+  const peer=voicePeers.get(sessionId);if(peer){peer.ontrack=null;peer.onicecandidate=null;peer.close();voicePeers.delete(sessionId);}
+  const audio=voiceAudioElements.get(sessionId);if(audio){audio.pause();audio.srcObject=null;audio.remove();voiceAudioElements.delete(sessionId);}
+  voiceAnalysers.delete(sessionId);voicePendingCandidates.delete(sessionId);
+  if(voiceEnabled&&voicePeers.size===0)setVoiceStatus(avatars.size>1?"CONNECTING":"READY");
+}
+async function ensureVoicePeer(sessionId:string,makeOffer=false) {
+  if(!voiceEnabled||!activeRoom||sessionId===currentSessionId)return null;
+  let peer=voicePeers.get(sessionId);
+  if(!peer) {
+    peer=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});voicePeers.set(sessionId,peer);
+    for(const track of voiceSendStream?.getTracks()||[])peer.addTrack(track,voiceSendStream!);
+    peer.onicecandidate=event=>{if(event.candidate&&activeRoom)activeRoom.send("voice:signal",{targetSessionId:sessionId,candidate:event.candidate.toJSON()});};
+    peer.ontrack=event=>{
+      const stream=event.streams[0]||new MediaStream([event.track]);
+      let audio=voiceAudioElements.get(sessionId);if(!audio){audio=document.createElement("audio");audio.autoplay=true;audio.playsInline=true;audio.hidden=true;document.body.appendChild(audio);voiceAudioElements.set(sessionId,audio);}
+      audio.srcObject=stream;void audio.play().catch(()=>{});installVoiceAnalyser(sessionId,stream);setVoiceStatus("LIVE");
+    };
+    peer.onconnectionstatechange=()=>{
+      if(peer?.connectionState==="connected")setVoiceStatus("LIVE");
+      else if(["failed","closed","disconnected"].includes(peer?.connectionState||"")) {
+        if(peer?.connectionState==="failed")setVoiceStatus("ERROR",true);
+      }
+    };
+  }
+  if(makeOffer&&peer.signalingState==="stable") {
+    try {
+      const offer=await peer.createOffer();await peer.setLocalDescription(offer);
+      activeRoom.send("voice:signal",{targetSessionId:sessionId,description:peer.localDescription});
+    } catch(error) {console.warn("[VOICE OFFER ERROR]",sessionId,error);setVoiceStatus("ERROR",true);}
+  }
+  return peer;
+}
+async function handleVoiceSignal(payload:any) {
+  if(!voiceEnabled||!activeRoom)return;
+  const from=String(payload?.fromSessionId||"");if(!from)return;
+  const peer=await ensureVoicePeer(from,false);if(!peer)return;
+  try {
+    if(payload.description) {
+      await peer.setRemoteDescription(payload.description);
+      for(const candidate of voicePendingCandidates.get(from)||[])await peer.addIceCandidate(candidate);
+      voicePendingCandidates.delete(from);
+      if(payload.description.type==="offer") {
+        const answer=await peer.createAnswer();await peer.setLocalDescription(answer);
+        activeRoom.send("voice:signal",{targetSessionId:from,description:peer.localDescription});
+      }
+    } else if(payload.candidate) {
+      if(peer.remoteDescription)await peer.addIceCandidate(payload.candidate);
+      else {const pending=voicePendingCandidates.get(from)||[];pending.push(payload.candidate);voicePendingCandidates.set(from,pending);}
+    }
+  } catch(error) {console.warn("[VOICE SIGNAL ERROR]",from,error);setVoiceStatus("ERROR",true);}
+}
+async function enableVoice() {
+  if(voiceEnabled)return;
+  if(!navigator.mediaDevices?.getUserMedia){setVoiceStatus("UNSUPPORTED",true);return;}
+  setVoiceStatus("CONNECTING");voiceToggleButton.disabled=true;
+  try {
+    voiceRawStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+    voiceEnabled=true;await rebuildVoiceSendStream();voiceToggleButton.textContent="MIC ON";voiceToggleButton.classList.add("active");
+    activeRoom?.send("voice:ready",{});setVoiceStatus(avatars.size>1?"CONNECTING":"READY");
+  } catch(error) {voiceEnabled=false;setVoiceStatus("DENIED",true);console.warn("[VOICE MIC ERROR]",error);}
+  finally {voiceToggleButton.disabled=false;}
+}
+function disableVoice(notify=true) {
+  if(notify)activeRoom?.send("voice:leave",{});voiceEnabled=false;
+  for(const sessionId of Array.from(voicePeers.keys()))closeVoicePeer(sessionId);
+  voiceRawStream?.getTracks().forEach(track=>track.stop());voiceRawStream=null;voiceSendStream=null;
+  try {voiceSourceNode?.disconnect();} catch {}
+  for(const node of voiceEffectNodes)try {node.disconnect();} catch {}
+  try {voiceDestination?.disconnect();} catch {}
+  voiceSourceNode=null;voiceEffectNodes=[];voiceDestination=null;
+  voiceAnalysers.clear();voiceToggleButton.textContent="MIC OFF";voiceToggleButton.classList.remove("active");setVoiceStatus("OFF");
+}
+voiceToggleButton.addEventListener("click",()=>{if(voiceEnabled)disableVoice();else void enableVoice();});
+voiceEffectSelect.addEventListener("change",()=>{if(voiceEnabled)void rebuildVoiceSendStream();});
+window.addEventListener("beforeunload",()=>disableVoice(false));
 const takeWorldPhotoButton=communicationControls.querySelector<HTMLButtonElement>("#takeWorldPhoto")!;
 const selfieModeButton=communicationControls.querySelector<HTMLButtonElement>("#selfieMode")!;
 const groupPhotoModeButton=communicationControls.querySelector<HTMLButtonElement>("#groupPhotoMode")!;
@@ -2923,6 +3058,7 @@ function resetClientWorldForReentry() {
 // =========================================================
 
 async function enterWorld() {
+  if(voiceEnabled)disableVoice(false);
   unlockResonanceAudio();
   enterButton.disabled = true;
   status.textContent = "接続しています…";
@@ -3001,6 +3137,12 @@ async function enterWorld() {
       const text=String(payload?.text||"").slice(0,48);
       if(text)showAvatarMessage(String(payload?.sessionId||""),text);
     });
+    room.onMessage("voice:ready",(payload:any)=>{
+      if(room!==activeRoom||!voiceEnabled)return;
+      const sessionId=String(payload?.sessionId||"");if(sessionId)void ensureVoicePeer(sessionId,true);
+    });
+    room.onMessage("voice:signal",(payload:any)=>{if(room===activeRoom)void handleVoiceSignal(payload);});
+    room.onMessage("voice:leave",(payload:any)=>{if(room===activeRoom)closeVoicePeer(String(payload?.sessionId||""));});
     sharedStateDiagnostic.connection = "OPEN";
     sharedStateDiagnostic.lastError = "-";
     refreshSharedStateDiagnosticPanel();
@@ -3029,6 +3171,7 @@ async function enterWorld() {
     });
 
     $(room.state).players.onRemove((_player: any, sessionId: string) => {
+      closeVoicePeer(sessionId);
       removeAvatar(sessionId);
     });
 
@@ -6536,6 +6679,20 @@ app.on("update", (dt: number) => {
         avatar.messageBubble.style.top=`${screenPos.y-36}px`;
       }
     }
+  }
+
+  // Local analysis of each received WebRTC stream drives presence feedback;
+  // no audio levels are transmitted through the room server.
+  for(const [sessionId,avatar] of avatars) {
+    const runtime=voiceAnalysers.get(sessionId);let level=0;
+    if(runtime) {
+      runtime.analyser.getByteTimeDomainData(runtime.data as any);
+      let sum=0;for(const sample of runtime.data){const value=(sample-128)/128;sum+=value*value;}
+      level=Math.min(1,Math.sqrt(sum/runtime.data.length)*4.5);
+    }
+    const speaking=level>.075;
+    avatar.名前ラベル.style.boxShadow=speaking?`0 0 ${12+level*22}px rgba(82,215,255,.95)`:"none";
+    avatar.名前ラベル.style.border=speaking?"1px solid rgba(82,215,255,.95)":"1px solid transparent";
   }
 
   const PROXIMITY_DISTANCE = 2.5;

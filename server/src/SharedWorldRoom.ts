@@ -228,6 +228,12 @@ export class SharedWorldRoom extends Room<WorldState> {
         ?payload.haloShape:player.avatarHaloShape;
       player.avatarHaloGlow=bounded(payload.haloGlow,player.avatarHaloGlow,0,2);
       player.avatarHaloRings=Math.round(bounded(payload.haloRings,player.avatarHaloRings,1,3));
+      player.avatarHeartColor=color(payload.heartColor,player.avatarHeartColor);
+      player.avatarHeartSize=bounded(payload.heartSize,player.avatarHeartSize,.3,2.5);
+      player.avatarHeartCount=Math.round(bounded(payload.heartCount,player.avatarHeartCount,1,8));
+      player.avatarHeartMotion=["float","orbit","burst"].includes(payload.heartMotion)
+        ?payload.heartMotion:player.avatarHeartMotion;
+      player.avatarHeartSpeed=bounded(payload.heartSpeed,player.avatarHeartSpeed,.2,3);
       this.broadcast("avatar:style:applied",{
         sessionId:client.sessionId,
         color:player.avatarColor,accent:player.avatarAccent,
@@ -239,7 +245,10 @@ export class SharedWorldRoom extends Room<WorldState> {
         haloColor:player.avatarHaloColor,haloOpacity:player.avatarHaloOpacity,
         haloSize:player.avatarHaloSize,haloMotion:player.avatarHaloMotion,
         haloSpeed:player.avatarHaloSpeed,haloShape:player.avatarHaloShape,
-        haloGlow:player.avatarHaloGlow,haloRings:player.avatarHaloRings
+        haloGlow:player.avatarHaloGlow,haloRings:player.avatarHaloRings,
+        heartColor:player.avatarHeartColor,heartSize:player.avatarHeartSize,
+        heartCount:player.avatarHeartCount,heartMotion:player.avatarHeartMotion,
+        heartSpeed:player.avatarHeartSpeed
       });
     });
 

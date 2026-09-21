@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.7 AVATAR RESONANCE LOADED]");
+console.log("[PROTOTYPE 0.19.7.1 CUSTOM HEARTS & RANDOM SOUND LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -57,6 +57,11 @@ type Avatar = {
   haloGlow:number;
   haloRings:number;
   haloTexture:pc.Texture|null;
+  heartColor:string;
+  heartSize:number;
+  heartCount:number;
+  heartMotion:string;
+  heartSpeed:number;
 };
 
 // =========================================================
@@ -101,6 +106,12 @@ avatarControls.innerHTML=`<button type="button" id="avatarSettingsButton">AVATAR
     <label>SHAPE <select id="avatarHaloShape"><option value="ring">RING</option><option value="disc">DISC</option><option value="ripple">RIPPLE</option></select></label>
     <label>GLOW <input type="range" id="avatarHaloGlow" min="0" max="2" step="0.1" value="0.6"><span id="avatarHaloGlowValue">0.6</span></label>
     <label>RINGS <input type="range" id="avatarHaloRings" min="1" max="3" step="1" value="1"><span id="avatarHaloRingsValue">1</span></label>
+    <div style="margin-top:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,.18)"><strong>RESONANCE HEARTS</strong></div>
+    <label>COLOR <input type="color" id="avatarHeartColor" value="#ff5f91"></label>
+    <label>SIZE <input type="range" id="avatarHeartSize" min="0.3" max="2.5" step="0.1" value="1"><span id="avatarHeartSizeValue">1</span></label>
+    <label>COUNT <input type="range" id="avatarHeartCount" min="1" max="8" step="1" value="3"><span id="avatarHeartCountValue">3</span></label>
+    <label>MOTION <select id="avatarHeartMotion"><option value="float">FLOAT</option><option value="orbit">ORBIT</option><option value="burst">BURST</option></select></label>
+    <label>SPEED <input type="range" id="avatarHeartSpeed" min="0.2" max="3" step="0.1" value="1"><span id="avatarHeartSpeedValue">1</span></label>
     <button type="button" id="avatarClearImage">REMOVE IMAGE</button>
     <button type="button" id="avatarSaveButton">APPLY AVATAR</button>
   </div>
@@ -726,12 +737,15 @@ type ResonancePairEffect = {
   b:string;
   root:pc.Entity;
   link:pc.Entity;
-  heart:pc.Entity;
+  hearts:pc.Entity[];
   flightRing:pc.Entity;
   material:pc.StandardMaterial;
   ringMaterial:pc.StandardMaterial;
   ringTexture:pc.Texture;
   enteredAt:number;
+  heartMotion:string;
+  heartSpeed:number;
+  heartSize:number;
 };
 const resonancePairs=new Map<string,ResonancePairEffect>();
 let resonanceAudioContext:AudioContext|null=null;
@@ -746,16 +760,19 @@ function playResonanceTone(colorA:string,colorB:string) {
   if(!context || context.state!=="running") return;
   const colorNumber=(Number.parseInt(colorA.slice(1),16)^Number.parseInt(colorB.slice(1),16))>>>0;
   const base=220+(colorNumber%180);
+  const variant=Math.floor(Math.random()*3);
   const now=context.currentTime;
   const gain=context.createGain();
   gain.gain.setValueAtTime(.0001,now);
-  gain.gain.exponentialRampToValueAtTime(.075,now+.025);
-  gain.gain.exponentialRampToValueAtTime(.0001,now+.62);
+  gain.gain.exponentialRampToValueAtTime(variant===1?.055:.075,now+.025);
+  gain.gain.exponentialRampToValueAtTime(.0001,now+(variant===1?.9:.62));
   gain.connect(context.destination);
-  for(const [ratio,offset] of [[1,0],[1.5,.08]] as const) {
+  const patterns=[[[1,0],[1.5,.08]],[[1,0],[2,.06],[3,.12]],[[1,0],[1.25,.12],[1.75,.24]]];
+  for(const [ratio,offset] of patterns[variant]) {
     const oscillator=context.createOscillator();
-    oscillator.type="sine";oscillator.frequency.value=base*ratio;
-    oscillator.connect(gain);oscillator.start(now+offset);oscillator.stop(now+.65);
+    oscillator.type=variant===0?"sine":variant===1?"triangle":"sine";
+    oscillator.frequency.value=base*ratio;
+    oscillator.connect(gain);oscillator.start(now+offset);oscillator.stop(now+(variant===1?.92:.68));
   }
 }
 function blendedHaloColor(a:Avatar,b:Avatar) {
@@ -774,18 +791,28 @@ function createResonancePair(a:string,b:string) {
   const root=new pc.Entity(`Resonance-${key}`);
   const link=new pc.Entity(`ResonanceLink-${key}`);link.addComponent("render",{type:"box"});
   link.render!.material=effectMaterial;link.render!.castShadows=false;link.render!.receiveShadows=false;root.addChild(link);
-  const heart=new pc.Entity(`ResonanceHeart-${key}`);
-  const addHeartPart=(name:string,type:"sphere"|"box",position:number[],scale:number[],rotation:number[])=>{
+  // The connection beam is intentionally disabled in 0.19.7.1. Resonance is
+  // communicated by hearts, sound, and the cooperative-flight ring instead.
+  link.enabled=false;
+  const heartColorA=colorFromHex(avatarA.heartColor),heartColorB=colorFromHex(avatarB.heartColor);
+  const heartColor=new pc.Color((heartColorA.r+heartColorB.r)*.5,(heartColorA.g+heartColorB.g)*.5,(heartColorA.b+heartColorB.b)*.5);
+  effectMaterial.diffuse.copy(heartColor);effectMaterial.emissive.set(heartColor.r,heartColor.g,heartColor.b);effectMaterial.update();
+  const hearts:pc.Entity[]=[];
+  const heartCount=Math.max(avatarA.heartCount,avatarB.heartCount);
+  const addHeartPart=(heart:pc.Entity,name:string,type:"sphere"|"box",position:number[],scale:number[],rotation:number[])=>{
     const part=new pc.Entity(name);part.addComponent("render",{type});
     part.setLocalPosition(position[0],position[1],position[2]);
     part.setLocalScale(scale[0],scale[1],scale[2]);
     part.setLocalEulerAngles(rotation[0],rotation[1],rotation[2]);
     part.render!.material=effectMaterial;part.render!.castShadows=false;part.render!.receiveShadows=false;heart.addChild(part);
   };
-  addHeartPart("HeartLeft","sphere",[-.14,.1,0],[.24,.24,.12],[0,0,0]);
-  addHeartPart("HeartRight","sphere",[.14,.1,0],[.24,.24,.12],[0,0,0]);
-  addHeartPart("HeartPoint","box",[0,-.08,0],[.32,.32,.12],[0,0,45]);
-  root.addChild(heart);
+  for(let index=0;index<heartCount;index++) {
+    const heart=new pc.Entity(`ResonanceHeart-${key}-${index}`);
+    addHeartPart(heart,"HeartLeft","sphere",[-.14,.1,0],[.24,.24,.12],[0,0,0]);
+    addHeartPart(heart,"HeartRight","sphere",[.14,.1,0],[.24,.24,.12],[0,0,0]);
+    addHeartPart(heart,"HeartPoint","box",[0,-.08,0],[.32,.32,.12],[0,0,45]);
+    root.addChild(heart);hearts.push(heart);
+  }
   const flightRing=new pc.Entity(`CoFlightRing-${key}`);flightRing.addComponent("render",{type:"plane"});
   const ringTexture=createHaloTexture("ring",2);const ringMaterial=material([color.r,color.g,color.b]);
   ringMaterial.opacityMap=ringTexture;ringMaterial.opacityMapChannel="r";ringMaterial.diffuseMap=ringTexture;
@@ -793,7 +820,10 @@ function createResonancePair(a:string,b:string) {
   ringMaterial.opacity=.72;ringMaterial.blendType=pc.BLEND_ADDITIVE;ringMaterial.depthWrite=false;ringMaterial.update();
   flightRing.render!.material=ringMaterial;flightRing.render!.castShadows=false;flightRing.render!.receiveShadows=false;
   flightRing.enabled=false;root.addChild(flightRing);app.root.addChild(root);
-  const effect:ResonancePairEffect={key,a,b,root,link,heart,flightRing,material:effectMaterial,ringMaterial,ringTexture,enteredAt:performance.now()};
+  const motionChoices=[avatarA.heartMotion,avatarB.heartMotion];
+  const effect:ResonancePairEffect={key,a,b,root,link,hearts,flightRing,material:effectMaterial,ringMaterial,ringTexture,
+    enteredAt:performance.now(),heartMotion:motionChoices[Math.floor(Math.random()*motionChoices.length)],
+    heartSpeed:(avatarA.heartSpeed+avatarB.heartSpeed)*.5,heartSize:(avatarA.heartSize+avatarB.heartSize)*.5};
   resonancePairs.set(key,effect);
   if(a===currentSessionId||b===currentSessionId) playResonanceTone(avatarA.haloColor,avatarB.haloColor);
   return effect;
@@ -854,6 +884,11 @@ function savedAvatarStyle() {
       haloShape:["ring","disc","ripple"].includes(input.haloShape)?input.haloShape:"ring",
       haloGlow:Number.isFinite(Number(input.haloGlow))?pc.math.clamp(Number(input.haloGlow),0,2):.6,
       haloRings:Number.isFinite(Number(input.haloRings))?Math.round(pc.math.clamp(Number(input.haloRings),1,3)):1,
+      heartColor:typeof input.heartColor==="string" && /^#[0-9a-fA-F]{6}$/.test(input.heartColor)?input.heartColor:"#ff5f91",
+      heartSize:Number.isFinite(Number(input.heartSize))?pc.math.clamp(Number(input.heartSize),.3,2.5):1,
+      heartCount:Number.isFinite(Number(input.heartCount))?Math.round(pc.math.clamp(Number(input.heartCount),1,8)):3,
+      heartMotion:["float","orbit","burst"].includes(input.heartMotion)?input.heartMotion:"float",
+      heartSpeed:Number.isFinite(Number(input.heartSpeed))?pc.math.clamp(Number(input.heartSpeed),.2,3):1,
       assetRef:typeof input.assetRef==="string" &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.assetRef)
         ?input.assetRef:""
@@ -861,7 +896,8 @@ function savedAvatarStyle() {
   } catch {return {color:"#f0f0f5",accent:"#ff8c28",shape:"sphere",size:1,
     labelVisible:true,labelColor:"#ffffff",textureRepeat:1,textureRotation:0,part:"none",partColor:"#7fd8ff",
     haloColor:"#ff7828",haloOpacity:.55,haloSize:1.5,haloMotion:"pulse",haloSpeed:1,
-    haloShape:"ring",haloGlow:.6,haloRings:1,assetRef:""};}
+    haloShape:"ring",haloGlow:.6,haloRings:1,heartColor:"#ff5f91",heartSize:1,
+    heartCount:3,heartMotion:"float",heartSpeed:1,assetRef:""};}
 }
 let selectedAvatarAssetRef=savedAvatarStyle().assetRef;
 async function uploadAvatarImage(blob:Blob) {
@@ -913,6 +949,11 @@ avatarControls.querySelector<HTMLInputElement>("#avatarHaloSpeed")!.value=String
 avatarControls.querySelector<HTMLSelectElement>("#avatarHaloShape")!.value=initialAvatarStyle.haloShape;
 avatarControls.querySelector<HTMLInputElement>("#avatarHaloGlow")!.value=String(initialAvatarStyle.haloGlow);
 avatarControls.querySelector<HTMLInputElement>("#avatarHaloRings")!.value=String(initialAvatarStyle.haloRings);
+avatarControls.querySelector<HTMLInputElement>("#avatarHeartColor")!.value=initialAvatarStyle.heartColor;
+avatarControls.querySelector<HTMLInputElement>("#avatarHeartSize")!.value=String(initialAvatarStyle.heartSize);
+avatarControls.querySelector<HTMLInputElement>("#avatarHeartCount")!.value=String(initialAvatarStyle.heartCount);
+avatarControls.querySelector<HTMLSelectElement>("#avatarHeartMotion")!.value=initialAvatarStyle.heartMotion;
+avatarControls.querySelector<HTMLInputElement>("#avatarHeartSpeed")!.value=String(initialAvatarStyle.heartSpeed);
 for(const [inputId,valueId,suffix] of [
   ["#avatarSize","#avatarSizeValue",""] as const,
   ["#avatarTextureRepeat","#avatarTextureRepeatValue",""] as const,
@@ -921,7 +962,10 @@ for(const [inputId,valueId,suffix] of [
   ["#avatarHaloSize","#avatarHaloSizeValue",""] as const,
   ["#avatarHaloSpeed","#avatarHaloSpeedValue",""] as const,
   ["#avatarHaloGlow","#avatarHaloGlowValue",""] as const,
-  ["#avatarHaloRings","#avatarHaloRingsValue",""] as const
+  ["#avatarHaloRings","#avatarHaloRingsValue",""] as const,
+  ["#avatarHeartSize","#avatarHeartSizeValue",""] as const,
+  ["#avatarHeartCount","#avatarHeartCountValue",""] as const,
+  ["#avatarHeartSpeed","#avatarHeartSpeedValue",""] as const
 ]) {
   const input=avatarControls.querySelector<HTMLInputElement>(inputId)!;
   const value=avatarControls.querySelector<HTMLElement>(valueId)!;
@@ -985,6 +1029,11 @@ avatarSaveButton.addEventListener("click",()=>{
     haloShape:avatarControls.querySelector<HTMLSelectElement>("#avatarHaloShape")!.value,
     haloGlow:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHaloGlow")!.value),
     haloRings:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHaloRings")!.value),
+    heartColor:avatarControls.querySelector<HTMLInputElement>("#avatarHeartColor")!.value,
+    heartSize:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHeartSize")!.value),
+    heartCount:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHeartCount")!.value),
+    heartMotion:avatarControls.querySelector<HTMLSelectElement>("#avatarHeartMotion")!.value,
+    heartSpeed:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHeartSpeed")!.value),
     assetRef:selectedAvatarAssetRef
   };
   try {localStorage.setItem(AVATAR_STYLE_KEY,JSON.stringify(appearance));} catch {}
@@ -1396,6 +1445,20 @@ function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,
   avatar.styleKey=key;
   oldBody?.destroy();oldMarker?.destroy();oldHalo?.destroy();
 }
+function applyHeartStyle(avatar:Avatar,color:string,size=1,count=3,motion="float",speed=1) {
+  const safeColor=/^#[0-9a-fA-F]{6}$/.test(color)?color:"#ff5f91";
+  const safeSize=pc.math.clamp(Number(size)||1,.3,2.5);
+  const safeCount=Math.round(pc.math.clamp(Number(count)||3,1,8));
+  const safeMotion=["float","orbit","burst"].includes(motion)?motion:"float";
+  const safeSpeed=pc.math.clamp(Number(speed)||1,.2,3);
+  const changed=avatar.heartColor!==safeColor||avatar.heartSize!==safeSize||avatar.heartCount!==safeCount||
+    avatar.heartMotion!==safeMotion||avatar.heartSpeed!==safeSpeed;
+  avatar.heartColor=safeColor;avatar.heartSize=safeSize;avatar.heartCount=safeCount;
+  avatar.heartMotion=safeMotion;avatar.heartSpeed=safeSpeed;
+  if(!changed)return;
+  for(const [key,effect] of Array.from(resonancePairs.entries()))
+    if(effect.a===avatar.entity.name.slice(7)||effect.b===avatar.entity.name.slice(7)) destroyResonancePair(key);
+}
 
 function 名前ラベルを作成(名前: string) {
   const ラベル = document.createElement("div");
@@ -1490,7 +1553,12 @@ function createAvatar(sessionId: string, player: any) {
     haloShape:"ring",
     haloGlow:.6,
     haloRings:1,
-    haloTexture:null
+    haloTexture:null,
+    heartColor:"#ff5f91",
+    heartSize:1,
+    heartCount:3,
+    heartMotion:"float",
+    heartSpeed:1
   });
   applyAvatarStyle(avatars.get(sessionId)!,player.avatarColor,player.avatarAccent,
     player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
@@ -1498,6 +1566,8 @@ function createAvatar(sessionId: string, player: any) {
     player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
     player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed,
     player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
+  applyHeartStyle(avatars.get(sessionId)!,player.avatarHeartColor,player.avatarHeartSize,
+    player.avatarHeartCount,player.avatarHeartMotion,player.avatarHeartSpeed);
 
   if (sessionId === currentSessionId) {
     localPosition.set(player.x, player.y, player.z);
@@ -1678,6 +1748,8 @@ function reconcileWorldFromServerState() {
       player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
       player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed,
       player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
+    if(avatar) applyHeartStyle(avatar,player.avatarHeartColor,player.avatarHeartSize,
+      player.avatarHeartCount,player.avatarHeartMotion,player.avatarHeartSpeed);
     if(avatar) avatar.flying=player.avatarFlying===true;
   });
   const mediaMap: any = (activeRoom.state as any).mediaObjects;
@@ -2777,6 +2849,8 @@ async function enterWorld() {
         payload.part,payload.partColor,payload.haloColor,payload.haloOpacity,
         payload.haloSize,payload.haloMotion,payload.haloSpeed,
         payload.haloShape,payload.haloGlow,payload.haloRings);
+      applyHeartStyle(avatar,payload.heartColor,payload.heartSize,payload.heartCount,
+        payload.heartMotion,payload.heartSpeed);
     });
     room.onMessage("avatar:emote",(payload:any)=>{
       if(room!==activeRoom) return;
@@ -2806,6 +2880,8 @@ async function enterWorld() {
           player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
           player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed,
           player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
+        applyHeartStyle(avatar,player.avatarHeartColor,player.avatarHeartSize,
+          player.avatarHeartCount,player.avatarHeartMotion,player.avatarHeartSpeed);
         avatar.flying=player.avatarFlying===true;
       });
     });
@@ -6367,23 +6443,30 @@ app.on("update", (dt: number) => {
       effect.link.lookAt(secondPosition);
       effect.link.setLocalScale(.025,.025,distance);
       const mixed=blendedHaloColor(firstAvatar,secondAvatar);
-      effect.material.diffuse.copy(mixed);
-      effect.material.emissive.set(mixed.r*.9,mixed.g*.9,mixed.b*.9);
-      effect.material.update();
       effect.ringMaterial.diffuse.copy(mixed);
       effect.ringMaterial.emissive.set(mixed.r*1.25,mixed.g*1.25,mixed.b*1.25);
       effect.ringMaterial.update();
       const age=(performance.now()-effect.enteredAt)*.001;
-      effect.heart.enabled=age<2.4;
-      if(effect.heart.enabled) {
-        const heartScale=(.65+Math.sin(Math.min(1,age)*Math.PI)*.28)*(1+Math.sin(age*8)*.06);
-        effect.heart.setLocalPosition(0,.55+age*.2,0);
-        effect.heart.setLocalScale(heartScale,heartScale,heartScale);
-        effect.heart.lookAt(camera.getPosition());
+      for(let index=0;index<effect.hearts.length;index++) {
+        const heart=effect.hearts[index];
+        const phase=age*effect.heartSpeed+index/effect.hearts.length;
+        const angle=phase*Math.PI*2;
+        if(effect.heartMotion==="orbit")
+          heart.setLocalPosition(Math.cos(angle)*(.42+index*.04),.55+Math.sin(angle*2)*.16,Math.sin(angle)*(.42+index*.04));
+        else if(effect.heartMotion==="burst") {
+          const progress=phase%1;
+          heart.setLocalPosition(Math.cos(index*2.399)*progress*.85,.42+progress*.9,Math.sin(index*2.399)*progress*.85);
+        } else {
+          const progress=phase%1;
+          heart.setLocalPosition(Math.sin(index*1.7+phase*2)*.42,.35+progress*1.15,Math.cos(index*1.3)*.18);
+        }
+        const heartScale=effect.heartSize*(.48+Math.sin(Math.min(1,age)*Math.PI)*.12)*(1+Math.sin(angle*2)*.08);
+        heart.setLocalScale(heartScale,heartScale,heartScale);
+        heart.lookAt(camera.getPosition());
       }
       const cooperativeFlight=firstAvatar.flying&&secondAvatar.flying;
       effect.flightRing.enabled=cooperativeFlight;
-      effect.link.enabled=!cooperativeFlight;
+      effect.link.enabled=false;
       if(cooperativeFlight) {
         const flightPulse=1.5+Math.sin(performance.now()*.004)*.16;
         effect.flightRing.setLocalPosition(0,-.5,0);

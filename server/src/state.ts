@@ -26,6 +26,11 @@ export const Player = schema({
   avatarHaloShape: t.string().default("ring"),
   avatarHaloGlow: t.number().default(0.6),
   avatarHaloRings: t.number().default(1),
+  avatarHeartColor: t.string().default("#ff5f91"),
+  avatarHeartSize: t.number().default(1),
+  avatarHeartCount: t.number().default(3),
+  avatarHeartMotion: t.string().default("float"),
+  avatarHeartSpeed: t.number().default(1),
   avatarFlying: t.boolean().default(false)
 }, "Player");
 export type Player = SchemaType<typeof Player>;

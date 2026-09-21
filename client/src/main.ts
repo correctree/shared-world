@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.1 VOICE QUALITY & STABILITY LOADED]");
+console.log("[PROTOTYPE 0.20.1.1 VOICE CLEAN AUDIO LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1165,7 +1165,7 @@ const voiceVolumeSelect=communicationControls.querySelector<HTMLSelectElement>("
 const voiceStatus=communicationControls.querySelector<HTMLElement>("#voiceStatus")!;
 const voicePeers=new Map<string,RTCPeerConnection>();
 const voiceAudioElements=new Map<string,HTMLAudioElement>();
-const voiceAnalysers=new Map<string,{analyser:AnalyserNode,data:Uint8Array}>();
+const voiceAnalysers=new Map<string,{source:MediaStreamAudioSourceNode,analyser:AnalyserNode,data:Uint8Array}>();
 const voicePendingCandidates=new Map<string,RTCIceCandidateInit[]>();
 const voiceReconnectTimers=new Map<string,number>();
 let voiceEnabled=false;
@@ -1181,14 +1181,14 @@ function setVoiceStatus(text:string,error=false) {
 }
 function installVoiceAnalyser(sessionId:string,stream:MediaStream) {
   const context=voiceAudioContext;if(!context)return;
-  const old=voiceAnalysers.get(sessionId);if(old)voiceAnalysers.delete(sessionId);
+  const old=voiceAnalysers.get(sessionId);if(old){try {old.source.disconnect();old.analyser.disconnect();} catch {} voiceAnalysers.delete(sessionId);}
   const source=context.createMediaStreamSource(stream);const analyser=context.createAnalyser();analyser.fftSize=256;
-  source.connect(analyser);voiceAnalysers.set(sessionId,{analyser,data:new Uint8Array(analyser.fftSize)});
+  source.connect(analyser);voiceAnalysers.set(sessionId,{source,analyser,data:new Uint8Array(analyser.fftSize)});
 }
 function tuneVoiceDescription(description:RTCSessionDescriptionInit) {
   if(!description.sdp)return description;
   const match=description.sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/i);if(!match)return description;
-  const payload=match[1];const option=`minptime=10;useinbandfec=1;usedtx=1;maxaveragebitrate=48000`;
+  const payload=match[1];const option=`minptime=10;useinbandfec=1;maxaveragebitrate=96000`;
   if(description.sdp.includes(`a=fmtp:${payload}`)&&description.sdp.includes("useinbandfec=1"))return description;
   const expression=new RegExp(`a=fmtp:${payload} ([^\\r\\n]*)`,`i`);
   const sdp=expression.test(description.sdp)
@@ -1200,7 +1200,7 @@ async function optimizeVoiceSender(peer:RTCPeerConnection) {
   const sender=peer.getSenders().find(item=>item.track?.kind==="audio");if(!sender)return;
   try {
     const parameters=sender.getParameters();parameters.encodings=parameters.encodings?.length?parameters.encodings:[{}];
-    parameters.encodings[0].maxBitrate=64000;await sender.setParameters(parameters);
+    parameters.encodings[0].maxBitrate=128000;await sender.setParameters(parameters);
   } catch(error) {console.debug("[VOICE SENDER SETTINGS]",error);}
 }
 async function rebuildVoiceSendStream() {
@@ -1209,12 +1209,17 @@ async function rebuildVoiceSendStream() {
     const Context=window.AudioContext||(window as any).webkitAudioContext;voiceAudioContext=new Context();
   }
   await voiceAudioContext.resume();
-  try {voiceSourceNode?.disconnect();} catch {}
+  try {voiceSourceNode?.disconnect();voiceInputGain?.disconnect();} catch {}
   for(const node of voiceEffectNodes)try {node.disconnect();} catch {}
-  voiceEffectNodes=[];voiceSourceNode=voiceAudioContext.createMediaStreamSource(voiceRawStream);
+  try {voiceDestination?.disconnect();} catch {}
+  voiceEffectNodes=[];voiceSourceNode=null;voiceInputGain=null;voiceDestination=null;
+  const effect=voiceEffectSelect.value;
+  if(effect==="normal") {
+    voiceSendStream=voiceRawStream;installVoiceAnalyser(currentSessionId,voiceSendStream);
+  } else {
+  voiceSourceNode=voiceAudioContext.createMediaStreamSource(voiceRawStream);
   voiceInputGain=voiceAudioContext.createGain();voiceInputGain.gain.value=.92;voiceSourceNode.connect(voiceInputGain);
   voiceDestination=voiceAudioContext.createMediaStreamDestination();
-  const effect=voiceEffectSelect.value;
   if(effect==="deep") {
     const low=voiceAudioContext.createBiquadFilter();low.type="lowpass";low.frequency.value=1500;
     const shelf=voiceAudioContext.createBiquadFilter();shelf.type="lowshelf";shelf.frequency.value=280;shelf.gain.value=7;
@@ -1228,9 +1233,9 @@ async function rebuildVoiceSendStream() {
     const feedback=voiceAudioContext.createGain();feedback.gain.value=.26;
     voiceInputGain.connect(voiceDestination);voiceInputGain.connect(delay);delay.connect(feedback);feedback.connect(delay);delay.connect(voiceDestination);
     voiceEffectNodes=[delay,feedback];
-  } else voiceInputGain.connect(voiceDestination);
-  voiceSendStream=voiceDestination.stream;
-  installVoiceAnalyser(currentSessionId,voiceSendStream);
+  }
+  voiceSendStream=voiceDestination.stream;installVoiceAnalyser(currentSessionId,voiceSendStream);
+  }
   const track=voiceSendStream.getAudioTracks()[0];
   for(const peer of voicePeers.values()) {
     const sender=peer.getSenders().find(item=>item.track?.kind==="audio");
@@ -1241,6 +1246,7 @@ function closeVoicePeer(sessionId:string) {
   const timer=voiceReconnectTimers.get(sessionId);if(timer!==undefined)window.clearTimeout(timer);voiceReconnectTimers.delete(sessionId);
   const peer=voicePeers.get(sessionId);if(peer){peer.ontrack=null;peer.onicecandidate=null;peer.onconnectionstatechange=null;peer.oniceconnectionstatechange=null;peer.close();voicePeers.delete(sessionId);}
   const audio=voiceAudioElements.get(sessionId);if(audio){audio.pause();audio.srcObject=null;audio.remove();voiceAudioElements.delete(sessionId);}
+  const analyser=voiceAnalysers.get(sessionId);if(analyser)try {analyser.source.disconnect();analyser.analyser.disconnect();} catch {}
   voiceAnalysers.delete(sessionId);voicePendingCandidates.delete(sessionId);
   if(voiceEnabled&&voicePeers.size===0)setVoiceStatus(avatars.size>1?"CONNECTING":"READY");
 }
@@ -1315,7 +1321,7 @@ async function enableVoice() {
   if(!navigator.mediaDevices?.getUserMedia){setVoiceStatus("UNSUPPORTED",true);return;}
   setVoiceStatus("CONNECTING");voiceToggleButton.disabled=true;
   try {
-    voiceRawStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:{ideal:true},noiseSuppression:{ideal:true},autoGainControl:{ideal:true},channelCount:{ideal:1},sampleRate:{ideal:48000},sampleSize:{ideal:16},latency:{ideal:.02}},video:false});
+    voiceRawStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:{ideal:true},noiseSuppression:{ideal:true},autoGainControl:{ideal:false},channelCount:{ideal:1}},video:false});
     voiceEnabled=true;await rebuildVoiceSendStream();voiceToggleButton.textContent="MIC ON";voiceToggleButton.classList.add("active");
     activeRoom?.send("voice:ready",{});setVoiceStatus(avatars.size>1?"CONNECTING":"READY");
   } catch(error) {voiceEnabled=false;setVoiceStatus("DENIED",true);console.warn("[VOICE MIC ERROR]",error);}
@@ -1329,6 +1335,7 @@ function disableVoice(notify=true) {
   for(const node of voiceEffectNodes)try {node.disconnect();} catch {}
   try {voiceDestination?.disconnect();} catch {}
   voiceSourceNode=null;voiceInputGain=null;voiceEffectNodes=[];voiceDestination=null;
+  for(const analyser of voiceAnalysers.values())try {analyser.source.disconnect();analyser.analyser.disconnect();} catch {}
   voiceAnalysers.clear();voiceToggleButton.textContent="MIC OFF";voiceToggleButton.classList.remove("active");setVoiceStatus("OFF");
 }
 voiceToggleButton.addEventListener("click",()=>{if(voiceEnabled)disableVoice();else void enableVoice();});

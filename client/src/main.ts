@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.0 VOICE PRESENCE LOADED]");
+console.log("[PROTOTYPE 0.20.1 VOICE QUALITY & STABILITY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -133,7 +133,7 @@ const communicationControls=document.createElement("div");
 communicationControls.id="communicationControls";
 communicationControls.innerHTML=`<div id="messageComposer"><input id="avatarMessageInput" maxlength="48" placeholder="MESSAGE / EMOJI"><button type="button" id="sendAvatarMessage">SEND</button></div>
   <div id="quickMessages"><button type="button">👋</button><button type="button">❤️</button><button type="button">✨</button><button type="button">😊</button></div>
-  <div id="voiceControls"><button type="button" id="voiceToggle">MIC OFF</button><select id="voiceEffect" aria-label="Voice effect"><option value="normal">NORMAL</option><option value="deep">DEEP</option><option value="bright">BRIGHT</option><option value="echo">ECHO</option></select><span id="voiceStatus">VOICE: OFF</span></div>
+  <div id="voiceControls"><button type="button" id="voiceToggle">MIC OFF</button><select id="voiceEffect" aria-label="Voice effect"><option value="normal">NORMAL</option><option value="deep">DEEP</option><option value="bright">BRIGHT</option><option value="echo">ECHO</option></select><select id="voiceVolume" aria-label="Voice volume"><option value="0.5">VOL 50</option><option value="0.75">VOL 75</option><option value="1" selected>VOL 100</option></select><span id="voiceStatus">VOICE: OFF</span></div>
   <div id="photoStudio"><button type="button" id="selfieMode">SELFIE</button><button type="button" id="groupPhotoMode">GROUP</button>
   <select id="photoTimer" aria-label="Photo timer"><option value="0">TIMER OFF</option><option value="3">3 SEC</option><option value="5">5 SEC</option><option value="10">10 SEC</option></select>
   <button type="button" id="takeWorldPhoto">PHOTO</button></div>`;
@@ -1161,16 +1161,19 @@ communicationControls.querySelector<HTMLElement>("#quickMessages")!.addEventList
 });
 const voiceToggleButton=communicationControls.querySelector<HTMLButtonElement>("#voiceToggle")!;
 const voiceEffectSelect=communicationControls.querySelector<HTMLSelectElement>("#voiceEffect")!;
+const voiceVolumeSelect=communicationControls.querySelector<HTMLSelectElement>("#voiceVolume")!;
 const voiceStatus=communicationControls.querySelector<HTMLElement>("#voiceStatus")!;
 const voicePeers=new Map<string,RTCPeerConnection>();
 const voiceAudioElements=new Map<string,HTMLAudioElement>();
 const voiceAnalysers=new Map<string,{analyser:AnalyserNode,data:Uint8Array}>();
 const voicePendingCandidates=new Map<string,RTCIceCandidateInit[]>();
+const voiceReconnectTimers=new Map<string,number>();
 let voiceEnabled=false;
 let voiceRawStream:MediaStream|null=null;
 let voiceSendStream:MediaStream|null=null;
 let voiceAudioContext:AudioContext|null=null;
 let voiceSourceNode:MediaStreamAudioSourceNode|null=null;
+let voiceInputGain:GainNode|null=null;
 let voiceEffectNodes:AudioNode[]=[];
 let voiceDestination:MediaStreamAudioDestinationNode|null=null;
 function setVoiceStatus(text:string,error=false) {
@@ -1182,6 +1185,24 @@ function installVoiceAnalyser(sessionId:string,stream:MediaStream) {
   const source=context.createMediaStreamSource(stream);const analyser=context.createAnalyser();analyser.fftSize=256;
   source.connect(analyser);voiceAnalysers.set(sessionId,{analyser,data:new Uint8Array(analyser.fftSize)});
 }
+function tuneVoiceDescription(description:RTCSessionDescriptionInit) {
+  if(!description.sdp)return description;
+  const match=description.sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/i);if(!match)return description;
+  const payload=match[1];const option=`minptime=10;useinbandfec=1;usedtx=1;maxaveragebitrate=48000`;
+  if(description.sdp.includes(`a=fmtp:${payload}`)&&description.sdp.includes("useinbandfec=1"))return description;
+  const expression=new RegExp(`a=fmtp:${payload} ([^\\r\\n]*)`,`i`);
+  const sdp=expression.test(description.sdp)
+    ?description.sdp.replace(expression,(_line,settings)=>`a=fmtp:${payload} ${settings};${option}`)
+    :description.sdp.replace(match[0],`${match[0]}\r\na=fmtp:${payload} ${option}`);
+  return {type:description.type,sdp};
+}
+async function optimizeVoiceSender(peer:RTCPeerConnection) {
+  const sender=peer.getSenders().find(item=>item.track?.kind==="audio");if(!sender)return;
+  try {
+    const parameters=sender.getParameters();parameters.encodings=parameters.encodings?.length?parameters.encodings:[{}];
+    parameters.encodings[0].maxBitrate=64000;await sender.setParameters(parameters);
+  } catch(error) {console.debug("[VOICE SENDER SETTINGS]",error);}
+}
 async function rebuildVoiceSendStream() {
   if(!voiceRawStream)return;
   if(!voiceAudioContext) {
@@ -1191,58 +1212,80 @@ async function rebuildVoiceSendStream() {
   try {voiceSourceNode?.disconnect();} catch {}
   for(const node of voiceEffectNodes)try {node.disconnect();} catch {}
   voiceEffectNodes=[];voiceSourceNode=voiceAudioContext.createMediaStreamSource(voiceRawStream);
+  voiceInputGain=voiceAudioContext.createGain();voiceInputGain.gain.value=.92;voiceSourceNode.connect(voiceInputGain);
   voiceDestination=voiceAudioContext.createMediaStreamDestination();
   const effect=voiceEffectSelect.value;
   if(effect==="deep") {
     const low=voiceAudioContext.createBiquadFilter();low.type="lowpass";low.frequency.value=1500;
     const shelf=voiceAudioContext.createBiquadFilter();shelf.type="lowshelf";shelf.frequency.value=280;shelf.gain.value=7;
-    voiceSourceNode.connect(low);low.connect(shelf);shelf.connect(voiceDestination);voiceEffectNodes=[low,shelf];
+    voiceInputGain.connect(low);low.connect(shelf);shelf.connect(voiceDestination);voiceEffectNodes=[low,shelf];
   } else if(effect==="bright") {
     const high=voiceAudioContext.createBiquadFilter();high.type="highpass";high.frequency.value=150;
     const shelf=voiceAudioContext.createBiquadFilter();shelf.type="highshelf";shelf.frequency.value=1700;shelf.gain.value=6;
-    voiceSourceNode.connect(high);high.connect(shelf);shelf.connect(voiceDestination);voiceEffectNodes=[high,shelf];
+    voiceInputGain.connect(high);high.connect(shelf);shelf.connect(voiceDestination);voiceEffectNodes=[high,shelf];
   } else if(effect==="echo") {
     const delay=voiceAudioContext.createDelay(.8);delay.delayTime.value=.2;
     const feedback=voiceAudioContext.createGain();feedback.gain.value=.26;
-    voiceSourceNode.connect(voiceDestination);voiceSourceNode.connect(delay);delay.connect(feedback);feedback.connect(delay);delay.connect(voiceDestination);
+    voiceInputGain.connect(voiceDestination);voiceInputGain.connect(delay);delay.connect(feedback);feedback.connect(delay);delay.connect(voiceDestination);
     voiceEffectNodes=[delay,feedback];
-  } else voiceSourceNode.connect(voiceDestination);
+  } else voiceInputGain.connect(voiceDestination);
   voiceSendStream=voiceDestination.stream;
   installVoiceAnalyser(currentSessionId,voiceSendStream);
   const track=voiceSendStream.getAudioTracks()[0];
   for(const peer of voicePeers.values()) {
     const sender=peer.getSenders().find(item=>item.track?.kind==="audio");
-    if(sender&&track)await sender.replaceTrack(track);
+    if(sender&&track){await sender.replaceTrack(track);await optimizeVoiceSender(peer);}
   }
 }
 function closeVoicePeer(sessionId:string) {
-  const peer=voicePeers.get(sessionId);if(peer){peer.ontrack=null;peer.onicecandidate=null;peer.close();voicePeers.delete(sessionId);}
+  const timer=voiceReconnectTimers.get(sessionId);if(timer!==undefined)window.clearTimeout(timer);voiceReconnectTimers.delete(sessionId);
+  const peer=voicePeers.get(sessionId);if(peer){peer.ontrack=null;peer.onicecandidate=null;peer.onconnectionstatechange=null;peer.oniceconnectionstatechange=null;peer.close();voicePeers.delete(sessionId);}
   const audio=voiceAudioElements.get(sessionId);if(audio){audio.pause();audio.srcObject=null;audio.remove();voiceAudioElements.delete(sessionId);}
   voiceAnalysers.delete(sessionId);voicePendingCandidates.delete(sessionId);
   if(voiceEnabled&&voicePeers.size===0)setVoiceStatus(avatars.size>1?"CONNECTING":"READY");
+}
+function scheduleVoiceReconnect(sessionId:string,delay=1800) {
+  if(!voiceEnabled||voiceReconnectTimers.has(sessionId))return;
+  setVoiceStatus("RECONNECTING");
+  if(currentSessionId.localeCompare(sessionId)>0)return;
+  voiceReconnectTimers.set(sessionId,window.setTimeout(async()=>{
+    voiceReconnectTimers.delete(sessionId);if(!voiceEnabled)return;
+    const peer=voicePeers.get(sessionId);if(!peer)return;
+    try {
+      if(peer.signalingState!=="stable")return;
+      peer.restartIce();const offer=await peer.createOffer({iceRestart:true});
+      const tuned=tuneVoiceDescription(offer);await peer.setLocalDescription(tuned);
+      activeRoom?.send("voice:signal",{targetSessionId:sessionId,description:peer.localDescription});
+    } catch(error) {console.warn("[VOICE RECONNECT ERROR]",sessionId,error);setVoiceStatus("ERROR",true);}
+  },delay));
 }
 async function ensureVoicePeer(sessionId:string,makeOffer=false) {
   if(!voiceEnabled||!activeRoom||sessionId===currentSessionId)return null;
   let peer=voicePeers.get(sessionId);
   if(!peer) {
-    peer=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});voicePeers.set(sessionId,peer);
+    peer=new RTCPeerConnection({iceServers:[{urls:["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]}],iceCandidatePoolSize:4});voicePeers.set(sessionId,peer);
     for(const track of voiceSendStream?.getTracks()||[])peer.addTrack(track,voiceSendStream!);
+    void optimizeVoiceSender(peer);
     peer.onicecandidate=event=>{if(event.candidate&&activeRoom)activeRoom.send("voice:signal",{targetSessionId:sessionId,candidate:event.candidate.toJSON()});};
     peer.ontrack=event=>{
       const stream=event.streams[0]||new MediaStream([event.track]);
       let audio=voiceAudioElements.get(sessionId);if(!audio){audio=document.createElement("audio");audio.autoplay=true;audio.playsInline=true;audio.hidden=true;document.body.appendChild(audio);voiceAudioElements.set(sessionId,audio);}
-      audio.srcObject=stream;void audio.play().catch(()=>{});installVoiceAnalyser(sessionId,stream);setVoiceStatus("LIVE");
+      audio.srcObject=stream;audio.volume=Number(voiceVolumeSelect.value)||1;void audio.play().catch(()=>{});installVoiceAnalyser(sessionId,stream);setVoiceStatus("LIVE");
     };
     peer.onconnectionstatechange=()=>{
-      if(peer?.connectionState==="connected")setVoiceStatus("LIVE");
-      else if(["failed","closed","disconnected"].includes(peer?.connectionState||"")) {
-        if(peer?.connectionState==="failed")setVoiceStatus("ERROR",true);
-      }
+      if(peer?.connectionState==="connected") {const timer=voiceReconnectTimers.get(sessionId);if(timer!==undefined)window.clearTimeout(timer);voiceReconnectTimers.delete(sessionId);setVoiceStatus("LIVE");}
+      else if(peer?.connectionState==="disconnected")scheduleVoiceReconnect(sessionId,2500);
+      else if(peer?.connectionState==="failed")scheduleVoiceReconnect(sessionId,300);
+    };
+    peer.oniceconnectionstatechange=()=>{
+      if(peer?.iceConnectionState==="connected"||peer?.iceConnectionState==="completed")setVoiceStatus("LIVE");
+      else if(peer?.iceConnectionState==="disconnected")scheduleVoiceReconnect(sessionId,2500);
+      else if(peer?.iceConnectionState==="failed")scheduleVoiceReconnect(sessionId,300);
     };
   }
   if(makeOffer&&peer.signalingState==="stable") {
     try {
-      const offer=await peer.createOffer();await peer.setLocalDescription(offer);
+      const offer=tuneVoiceDescription(await peer.createOffer());await peer.setLocalDescription(offer);
       activeRoom.send("voice:signal",{targetSessionId:sessionId,description:peer.localDescription});
     } catch(error) {console.warn("[VOICE OFFER ERROR]",sessionId,error);setVoiceStatus("ERROR",true);}
   }
@@ -1254,11 +1297,11 @@ async function handleVoiceSignal(payload:any) {
   const peer=await ensureVoicePeer(from,false);if(!peer)return;
   try {
     if(payload.description) {
-      await peer.setRemoteDescription(payload.description);
+      await peer.setRemoteDescription(tuneVoiceDescription(payload.description));
       for(const candidate of voicePendingCandidates.get(from)||[])await peer.addIceCandidate(candidate);
       voicePendingCandidates.delete(from);
       if(payload.description.type==="offer") {
-        const answer=await peer.createAnswer();await peer.setLocalDescription(answer);
+        const answer=tuneVoiceDescription(await peer.createAnswer());await peer.setLocalDescription(answer);
         activeRoom.send("voice:signal",{targetSessionId:from,description:peer.localDescription});
       }
     } else if(payload.candidate) {
@@ -1272,7 +1315,7 @@ async function enableVoice() {
   if(!navigator.mediaDevices?.getUserMedia){setVoiceStatus("UNSUPPORTED",true);return;}
   setVoiceStatus("CONNECTING");voiceToggleButton.disabled=true;
   try {
-    voiceRawStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+    voiceRawStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:{ideal:true},noiseSuppression:{ideal:true},autoGainControl:{ideal:true},channelCount:{ideal:1},sampleRate:{ideal:48000},sampleSize:{ideal:16},latency:{ideal:.02}},video:false});
     voiceEnabled=true;await rebuildVoiceSendStream();voiceToggleButton.textContent="MIC ON";voiceToggleButton.classList.add("active");
     activeRoom?.send("voice:ready",{});setVoiceStatus(avatars.size>1?"CONNECTING":"READY");
   } catch(error) {voiceEnabled=false;setVoiceStatus("DENIED",true);console.warn("[VOICE MIC ERROR]",error);}
@@ -1282,14 +1325,15 @@ function disableVoice(notify=true) {
   if(notify)activeRoom?.send("voice:leave",{});voiceEnabled=false;
   for(const sessionId of Array.from(voicePeers.keys()))closeVoicePeer(sessionId);
   voiceRawStream?.getTracks().forEach(track=>track.stop());voiceRawStream=null;voiceSendStream=null;
-  try {voiceSourceNode?.disconnect();} catch {}
+  try {voiceSourceNode?.disconnect();voiceInputGain?.disconnect();} catch {}
   for(const node of voiceEffectNodes)try {node.disconnect();} catch {}
   try {voiceDestination?.disconnect();} catch {}
-  voiceSourceNode=null;voiceEffectNodes=[];voiceDestination=null;
+  voiceSourceNode=null;voiceInputGain=null;voiceEffectNodes=[];voiceDestination=null;
   voiceAnalysers.clear();voiceToggleButton.textContent="MIC OFF";voiceToggleButton.classList.remove("active");setVoiceStatus("OFF");
 }
 voiceToggleButton.addEventListener("click",()=>{if(voiceEnabled)disableVoice();else void enableVoice();});
 voiceEffectSelect.addEventListener("change",()=>{if(voiceEnabled)void rebuildVoiceSendStream();});
+voiceVolumeSelect.addEventListener("change",()=>{const volume=Number(voiceVolumeSelect.value)||1;for(const audio of voiceAudioElements.values())audio.volume=volume;});
 window.addEventListener("beforeunload",()=>disableVoice(false));
 const takeWorldPhotoButton=communicationControls.querySelector<HTMLButtonElement>("#takeWorldPhoto")!;
 const selfieModeButton=communicationControls.querySelector<HTMLButtonElement>("#selfieMode")!;

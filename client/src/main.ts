@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.6.3 CROSS-PLATFORM HALO GRADIENT LOADED]");
+console.log("[PROTOTYPE 0.19.7 AVATAR RESONANCE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -720,6 +720,88 @@ function toggleViewMode() {
 }
 
 const avatars = new Map<string, Avatar>();
+type ResonancePairEffect = {
+  key:string;
+  a:string;
+  b:string;
+  root:pc.Entity;
+  link:pc.Entity;
+  heart:pc.Entity;
+  flightRing:pc.Entity;
+  material:pc.StandardMaterial;
+  ringMaterial:pc.StandardMaterial;
+  ringTexture:pc.Texture;
+  enteredAt:number;
+};
+const resonancePairs=new Map<string,ResonancePairEffect>();
+let resonanceAudioContext:AudioContext|null=null;
+function unlockResonanceAudio() {
+  const AudioContextClass=window.AudioContext || (window as any).webkitAudioContext;
+  if(!AudioContextClass) return;
+  if(!resonanceAudioContext) resonanceAudioContext=new AudioContextClass();
+  void resonanceAudioContext.resume().catch(()=>{});
+}
+function playResonanceTone(colorA:string,colorB:string) {
+  const context=resonanceAudioContext;
+  if(!context || context.state!=="running") return;
+  const colorNumber=(Number.parseInt(colorA.slice(1),16)^Number.parseInt(colorB.slice(1),16))>>>0;
+  const base=220+(colorNumber%180);
+  const now=context.currentTime;
+  const gain=context.createGain();
+  gain.gain.setValueAtTime(.0001,now);
+  gain.gain.exponentialRampToValueAtTime(.075,now+.025);
+  gain.gain.exponentialRampToValueAtTime(.0001,now+.62);
+  gain.connect(context.destination);
+  for(const [ratio,offset] of [[1,0],[1.5,.08]] as const) {
+    const oscillator=context.createOscillator();
+    oscillator.type="sine";oscillator.frequency.value=base*ratio;
+    oscillator.connect(gain);oscillator.start(now+offset);oscillator.stop(now+.65);
+  }
+}
+function blendedHaloColor(a:Avatar,b:Avatar) {
+  const first=colorFromHex(a.haloColor),second=colorFromHex(b.haloColor);
+  return new pc.Color((first.r+second.r)*.5,(first.g+second.g)*.5,(first.b+second.b)*.5);
+}
+function createResonancePair(a:string,b:string) {
+  const key=[a,b].sort().join("::");
+  const avatarA=avatars.get(a),avatarB=avatars.get(b);
+  if(!avatarA||!avatarB) return null;
+  const color=blendedHaloColor(avatarA,avatarB);
+  const effectMaterial=material([color.r,color.g,color.b]);
+  effectMaterial.emissive=new pc.Color(color.r*.9,color.g*.9,color.b*.9);
+  effectMaterial.opacity=.78;effectMaterial.blendType=pc.BLEND_ADDITIVE;
+  effectMaterial.depthWrite=false;effectMaterial.update();
+  const root=new pc.Entity(`Resonance-${key}`);
+  const link=new pc.Entity(`ResonanceLink-${key}`);link.addComponent("render",{type:"box"});
+  link.render!.material=effectMaterial;link.render!.castShadows=false;link.render!.receiveShadows=false;root.addChild(link);
+  const heart=new pc.Entity(`ResonanceHeart-${key}`);
+  const addHeartPart=(name:string,type:"sphere"|"box",position:number[],scale:number[],rotation:number[])=>{
+    const part=new pc.Entity(name);part.addComponent("render",{type});
+    part.setLocalPosition(position[0],position[1],position[2]);
+    part.setLocalScale(scale[0],scale[1],scale[2]);
+    part.setLocalEulerAngles(rotation[0],rotation[1],rotation[2]);
+    part.render!.material=effectMaterial;part.render!.castShadows=false;part.render!.receiveShadows=false;heart.addChild(part);
+  };
+  addHeartPart("HeartLeft","sphere",[-.14,.1,0],[.24,.24,.12],[0,0,0]);
+  addHeartPart("HeartRight","sphere",[.14,.1,0],[.24,.24,.12],[0,0,0]);
+  addHeartPart("HeartPoint","box",[0,-.08,0],[.32,.32,.12],[0,0,45]);
+  root.addChild(heart);
+  const flightRing=new pc.Entity(`CoFlightRing-${key}`);flightRing.addComponent("render",{type:"plane"});
+  const ringTexture=createHaloTexture("ring",2);const ringMaterial=material([color.r,color.g,color.b]);
+  ringMaterial.opacityMap=ringTexture;ringMaterial.opacityMapChannel="r";ringMaterial.diffuseMap=ringTexture;
+  ringMaterial.emissiveMap=ringTexture;ringMaterial.emissive=new pc.Color(color.r*1.25,color.g*1.25,color.b*1.25);
+  ringMaterial.opacity=.72;ringMaterial.blendType=pc.BLEND_ADDITIVE;ringMaterial.depthWrite=false;ringMaterial.update();
+  flightRing.render!.material=ringMaterial;flightRing.render!.castShadows=false;flightRing.render!.receiveShadows=false;
+  flightRing.enabled=false;root.addChild(flightRing);app.root.addChild(root);
+  const effect:ResonancePairEffect={key,a,b,root,link,heart,flightRing,material:effectMaterial,ringMaterial,ringTexture,enteredAt:performance.now()};
+  resonancePairs.set(key,effect);
+  if(a===currentSessionId||b===currentSessionId) playResonanceTone(avatarA.haloColor,avatarB.haloColor);
+  return effect;
+}
+function destroyResonancePair(key:string) {
+  const effect=resonancePairs.get(key);if(!effect)return;
+  effect.root.destroy();effect.material.destroy();effect.ringMaterial.destroy();effect.ringTexture.destroy();resonancePairs.delete(key);
+}
 const keys = new Set<string>();
 let currentSessionId = "";
 let activeRoom: Room | null = null;
@@ -1438,6 +1520,8 @@ function removeAvatar(sessionId: string) {
   avatar.haloTexture?.destroy();
   if(avatar.textureURL) URL.revokeObjectURL(avatar.textureURL);
   avatars.delete(sessionId);
+  for(const [key,effect] of Array.from(resonancePairs.entries()))
+    if(effect.a===sessionId||effect.b===sessionId) destroyResonancePair(key);
   updatePlayerCount();
 }
 
@@ -2630,6 +2714,7 @@ function resetClientWorldForReentry() {
 // =========================================================
 
 async function enterWorld() {
+  unlockResonanceAudio();
   enterButton.disabled = true;
   status.textContent = "接続しています…";
 
@@ -6253,6 +6338,71 @@ app.on("update", (dt: number) => {
       else avatar.proximityHalo.setLocalPosition(0,-.63,0);
     }
   }
+
+  // 0.19.7 / AVATAR RESONANCE
+  // Pair state is derived from already synchronized avatar state, so every
+  // client reconstructs the same interaction without adding per-frame network
+  // traffic or changing the proven media-proximity path.
+  const activeResonanceKeys=new Set<string>();
+  const avatarEntries=Array.from(avatars.entries()).sort(([a],[b])=>a.localeCompare(b));
+  for(let first=0;first<avatarEntries.length;first++) {
+    for(let second=first+1;second<avatarEntries.length;second++) {
+      const [firstId,firstAvatar]=avatarEntries[first];
+      const [secondId,secondAvatar]=avatarEntries[second];
+      const firstPosition=firstAvatar.entity.getPosition();
+      const secondPosition=secondAvatar.entity.getPosition();
+      const horizontalDistance=Math.hypot(firstPosition.x-secondPosition.x,firstPosition.z-secondPosition.z);
+      if(horizontalDistance>PROXIMITY_DISTANCE) continue;
+      const key=`${firstId}::${secondId}`;activeResonanceKeys.add(key);
+      const effect=resonancePairs.get(key)||createResonancePair(firstId,secondId);
+      if(!effect)continue;
+      const midpoint=new pc.Vec3(
+        (firstPosition.x+secondPosition.x)*.5,
+        (firstPosition.y+secondPosition.y)*.5+.12,
+        (firstPosition.z+secondPosition.z)*.5
+      );
+      effect.root.setPosition(midpoint);
+      const distance=Math.max(.05,firstPosition.distance(secondPosition));
+      effect.link.setPosition(midpoint);
+      effect.link.lookAt(secondPosition);
+      effect.link.setLocalScale(.025,.025,distance);
+      const mixed=blendedHaloColor(firstAvatar,secondAvatar);
+      effect.material.diffuse.copy(mixed);
+      effect.material.emissive.set(mixed.r*.9,mixed.g*.9,mixed.b*.9);
+      effect.material.update();
+      effect.ringMaterial.diffuse.copy(mixed);
+      effect.ringMaterial.emissive.set(mixed.r*1.25,mixed.g*1.25,mixed.b*1.25);
+      effect.ringMaterial.update();
+      const age=(performance.now()-effect.enteredAt)*.001;
+      effect.heart.enabled=age<2.4;
+      if(effect.heart.enabled) {
+        const heartScale=(.65+Math.sin(Math.min(1,age)*Math.PI)*.28)*(1+Math.sin(age*8)*.06);
+        effect.heart.setLocalPosition(0,.55+age*.2,0);
+        effect.heart.setLocalScale(heartScale,heartScale,heartScale);
+        effect.heart.lookAt(camera.getPosition());
+      }
+      const cooperativeFlight=firstAvatar.flying&&secondAvatar.flying;
+      effect.flightRing.enabled=cooperativeFlight;
+      effect.link.enabled=!cooperativeFlight;
+      if(cooperativeFlight) {
+        const flightPulse=1.5+Math.sin(performance.now()*.004)*.16;
+        effect.flightRing.setLocalPosition(0,-.5,0);
+        effect.flightRing.setLocalScale(flightPulse,1,flightPulse);
+        effect.flightRing.rotateLocal(0,dt*42,0);
+        // Shared lift and tilt are visual only: authoritative player positions
+        // remain unchanged while both users see the same cooperative rhythm.
+        const sharedPhase=performance.now()*.004;
+        for(const avatar of [firstAvatar,secondAvatar]) {
+          const bodyPosition=avatar.body.getLocalPosition();
+          avatar.body.setLocalPosition(bodyPosition.x,bodyPosition.y+Math.sin(sharedPhase)*.035,bodyPosition.z);
+          const bodyAngles=avatar.body.getLocalEulerAngles();
+          avatar.body.setLocalEulerAngles(bodyAngles.x,bodyAngles.y,bodyAngles.z+Math.sin(sharedPhase)*3);
+        }
+      }
+    }
+  }
+  for(const key of Array.from(resonancePairs.keys()))
+    if(!activeResonanceKeys.has(key)) destroyResonancePair(key);
 
   // Prototype 0.15.3 / TRANSFORM ANIMATION CORE
   updateTransformAnimations(dt);

@@ -103,6 +103,8 @@ export class SharedWorldRoom extends Room<WorldState> {
   private mediaBehaviors = new Map<string, Record<string, unknown>>();
   private proximityActors = new Map<string, Set<string>>();
   private mediaActionSequence = 0;
+  private avatarEmoteSequence = 0;
+  private avatarEmoteLastAt = new Map<string,number>();
   private evaluateProximity(client:Client) {
     const player=this.state.players.get(client.sessionId);
     if (!player) return;
@@ -213,14 +215,29 @@ export class SharedWorldRoom extends Room<WorldState> {
       player.avatarLabelColor=color(payload.labelColor,player.avatarLabelColor);
       player.avatarTextureRepeat=bounded(payload.textureRepeat,player.avatarTextureRepeat,.25,8);
       player.avatarTextureRotation=bounded(payload.textureRotation,player.avatarTextureRotation,0,360);
+      player.avatarPart=["none","arms","wings","antenna"].includes(payload.part)
+        ?payload.part:player.avatarPart;
+      player.avatarPartColor=color(payload.partColor,player.avatarPartColor);
       this.broadcast("avatar:style:applied",{
         sessionId:client.sessionId,
         color:player.avatarColor,accent:player.avatarAccent,
         shape:player.avatarShape,assetRef:player.avatarAssetRef,
         size:player.avatarSize,labelVisible:player.avatarLabelVisible,
         labelColor:player.avatarLabelColor,textureRepeat:player.avatarTextureRepeat,
-        textureRotation:player.avatarTextureRotation
+        textureRotation:player.avatarTextureRotation,
+        part:player.avatarPart,partColor:player.avatarPartColor
       });
+    });
+
+    this.onMessage("avatar:emote",(client:Client,payload:any)=>{
+      if(!this.state.players.has(client.sessionId)) return;
+      const type=String(payload?.type||"").toLowerCase();
+      if(!["wave","joy","spin"].includes(type)) return;
+      const now=Date.now();
+      if(now-(this.avatarEmoteLastAt.get(client.sessionId)||0)<450) return;
+      this.avatarEmoteLastAt.set(client.sessionId,now);
+      this.broadcast("avatar:emote",{sessionId:client.sessionId,type,
+        eventId:++this.avatarEmoteSequence});
     });
 
     this.onMessage("media:add", (client: Client, payload: AddMediaPayload) => {
@@ -587,6 +604,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
   onLeave(client: Client, consented: boolean) {
     this.leaveProximity(client.sessionId);
+    this.avatarEmoteLastAt.delete(client.sessionId);
     const player = this.state.players.get(client.sessionId);
     const name = player?.name || "Guest";
 

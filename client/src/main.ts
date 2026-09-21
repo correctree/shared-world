@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.16.1.1 AUDIO DELETE LIFECYCLE FIX LOADED]");
+console.log("[PROTOTYPE 0.19.4 AVATAR PARTS & EMOTES LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -42,6 +42,12 @@ type Avatar = {
   baseScale:pc.Vec3;
   flying:boolean;
   baseBodyY:number;
+  partsRoot:pc.Entity;
+  partEntities:pc.Entity[];
+  partMaterial:pc.StandardMaterial|null;
+  partType:string;
+  emoteType:"none"|"wave"|"joy"|"spin";
+  emoteStartedAt:number;
 };
 
 // =========================================================
@@ -75,6 +81,8 @@ avatarControls.innerHTML=`<button type="button" id="avatarSettingsButton">AVATAR
     <label>IMAGE ROTATION <input type="range" id="avatarTextureRotation" min="0" max="360" step="1" value="0"><span id="avatarTextureRotationValue">0°</span></label>
     <label>NAME LABEL <input type="checkbox" id="avatarLabelVisible" checked></label>
     <label>NAME COLOR <input type="color" id="avatarLabelColor" value="#ffffff"></label>
+    <label>PARTS <select id="avatarPart"><option value="none">NONE</option><option value="arms">ARMS</option><option value="wings">WINGS</option><option value="antenna">ANTENNA</option></select></label>
+    <label>PART COLOR <input type="color" id="avatarPartColor" value="#7fd8ff"></label>
     <button type="button" id="avatarClearImage">REMOVE IMAGE</button>
     <button type="button" id="avatarSaveButton">APPLY AVATAR</button>
   </div>
@@ -86,10 +94,14 @@ flightControls.innerHTML=`<button type="button" id="jumpButton">JUMP / UP</butto
   <button type="button" id="flyButton">FLY OFF</button>
   <button type="button" id="descendButton">DOWN</button>`;
 document.body.appendChild(flightControls);
+const emoteControls=document.createElement("div");
+emoteControls.id="emoteControls";
+emoteControls.innerHTML=`<button type="button" data-emote="wave">WAVE</button><button type="button" data-emote="joy">JOY</button><button type="button" data-emote="spin">SPIN</button>`;
+document.body.appendChild(emoteControls);
 const avatarStyleSheet=document.createElement("style");
 avatarStyleSheet.textContent=`
   #avatarControls {position:fixed;top:125px;left:22px;z-index:35;display:none;width:190px}
-  #avatarControls button,#flightControls button {margin:0;padding:10px 12px;width:auto;border:1px solid #9fb3c6;background:rgba(9,15,24,.9);color:#fff;border-radius:10px;font-size:11px}
+  #avatarControls button,#flightControls button,#emoteControls button {margin:0;padding:10px 12px;width:auto;border:1px solid #9fb3c6;background:rgba(9,15,24,.9);color:#fff;border-radius:10px;font-size:11px}
   #avatarSettingsPanel {margin-top:8px;padding:12px;max-height:60vh;overflow:auto;background:rgba(9,15,24,.96);border:1px solid #7191ae;border-radius:12px}
   #avatarSettingsPanel[hidden] {display:none}
   #avatarSettingsPanel label {font-size:11px;margin:10px 0}
@@ -98,8 +110,10 @@ avatarStyleSheet.textContent=`
   #avatarSettingsPanel button {width:100%;margin-top:8px}
   #flightControls {position:fixed;right:106px;bottom:35px;z-index:35;display:none;gap:5px;align-items:center}
   #flightControls button {touch-action:none;white-space:nowrap;min-height:45px}
+  #emoteControls {position:fixed;right:22px;bottom:92px;z-index:35;display:none;gap:5px}
+  #emoteControls.room-active {display:flex}
   @media (pointer:coarse) {#flightControls.room-active {display:flex} #avatarControls {top:140px}}
-  @media (max-width:640px) {#flightControls {right:12px;bottom:155px;gap:3px} #flightControls button {font-size:10px;padding:8px 5px} #avatarControls {left:12px;top:135px;width:165px}}
+  @media (max-width:640px) {#flightControls {right:12px;bottom:155px;gap:3px} #flightControls button,#emoteControls button {font-size:10px;padding:8px 7px} #emoteControls {right:12px;bottom:210px;gap:3px} #avatarControls {left:12px;top:135px;width:165px}}
 `;
 document.head.appendChild(avatarStyleSheet);
 
@@ -730,12 +744,14 @@ function savedAvatarStyle() {
       labelColor:typeof input.labelColor==="string" && /^#[0-9a-fA-F]{6}$/.test(input.labelColor)?input.labelColor:"#ffffff",
       textureRepeat:Number.isFinite(Number(input.textureRepeat))?pc.math.clamp(Number(input.textureRepeat),.25,8):1,
       textureRotation:Number.isFinite(Number(input.textureRotation))?pc.math.clamp(Number(input.textureRotation),0,360):0,
+      part:["none","arms","wings","antenna"].includes(input.part)?input.part:"none",
+      partColor:typeof input.partColor==="string" && /^#[0-9a-fA-F]{6}$/.test(input.partColor)?input.partColor:"#7fd8ff",
       assetRef:typeof input.assetRef==="string" &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.assetRef)
         ?input.assetRef:""
     };
   } catch {return {color:"#f0f0f5",accent:"#ff8c28",shape:"sphere",size:1,
-    labelVisible:true,labelColor:"#ffffff",textureRepeat:1,textureRotation:0,assetRef:""};}
+    labelVisible:true,labelColor:"#ffffff",textureRepeat:1,textureRotation:0,part:"none",partColor:"#7fd8ff",assetRef:""};}
 }
 let selectedAvatarAssetRef=savedAvatarStyle().assetRef;
 async function uploadAvatarImage(blob:Blob) {
@@ -777,6 +793,8 @@ avatarControls.querySelector<HTMLInputElement>("#avatarLabelVisible")!.checked=i
 avatarControls.querySelector<HTMLInputElement>("#avatarLabelColor")!.value=initialAvatarStyle.labelColor;
 avatarControls.querySelector<HTMLInputElement>("#avatarTextureRepeat")!.value=String(initialAvatarStyle.textureRepeat);
 avatarControls.querySelector<HTMLInputElement>("#avatarTextureRotation")!.value=String(initialAvatarStyle.textureRotation);
+avatarControls.querySelector<HTMLSelectElement>("#avatarPart")!.value=initialAvatarStyle.part;
+avatarControls.querySelector<HTMLInputElement>("#avatarPartColor")!.value=initialAvatarStyle.partColor;
 for(const [inputId,valueId,suffix] of [
   ["#avatarSize","#avatarSizeValue",""] as const,
   ["#avatarTextureRepeat","#avatarTextureRepeatValue",""] as const,
@@ -834,6 +852,8 @@ avatarSaveButton.addEventListener("click",()=>{
     labelColor:avatarControls.querySelector<HTMLInputElement>("#avatarLabelColor")!.value,
     textureRepeat:Number(avatarControls.querySelector<HTMLInputElement>("#avatarTextureRepeat")!.value),
     textureRotation:Number(avatarControls.querySelector<HTMLInputElement>("#avatarTextureRotation")!.value),
+    part:avatarControls.querySelector<HTMLSelectElement>("#avatarPart")!.value,
+    partColor:avatarControls.querySelector<HTMLInputElement>("#avatarPartColor")!.value,
     assetRef:selectedAvatarAssetRef
   };
   try {localStorage.setItem(AVATAR_STYLE_KEY,JSON.stringify(appearance));} catch {}
@@ -868,6 +888,10 @@ descendButton.addEventListener("pointerdown",(event)=>{
 });
 for(const type of ["pointerup","pointercancel","lostpointercapture"])
   descendButton.addEventListener(type,()=>{mobileDescend=false;});
+emoteControls.addEventListener("click",event=>{
+  const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button[data-emote]");
+  if(activeRoom && button?.dataset.emote) activeRoom.send("avatar:emote",{type:button.dataset.emote});
+});
 function sendLocalMovement(rotationY:number) {
   if (!activeRoom) return;
   const seq=++moveSequence;
@@ -1086,8 +1110,38 @@ async function setAvatarTexture(avatar:Avatar,ref:string) {
     console.warn("[AVATAR IMAGE LOAD FAILED]",ref,error);
   }
 }
+function rebuildAvatarParts(avatar:Avatar,part:string,partColor:string) {
+  for(const child of [...avatar.partsRoot.children]) child.destroy();
+  avatar.partMaterial?.destroy();
+  avatar.partEntities=[];
+  avatar.partType=part;
+  if(part==="none") {avatar.partMaterial=null;return;}
+  const color=colorFromHex(partColor);
+  const sharedMaterial=material([color.r,color.g,color.b]);
+  avatar.partMaterial=sharedMaterial;
+  const add=(name:string,type:"box"|"sphere"|"cylinder",position:number[],scale:number[],rotation:number[]=[0,0,0])=>{
+    const entity=new pc.Entity(name);
+    entity.addComponent("render",{type});
+    entity.render!.material=sharedMaterial;
+    entity.setLocalPosition(position[0],position[1],position[2]);
+    entity.setLocalScale(scale[0],scale[1],scale[2]);
+    entity.setLocalEulerAngles(rotation[0],rotation[1],rotation[2]);
+    avatar.partsRoot.addChild(entity);avatar.partEntities.push(entity);
+  };
+  if(part==="arms") {
+    add("AvatarArmLeft","capsule",[-.9,0,0],[.18,.72,.18],[0,0,-12]);
+    add("AvatarArmRight","capsule",[.9,0,0],[.18,.72,.18],[0,0,12]);
+  } else if(part==="wings") {
+    add("AvatarWingLeft","box",[-.75,.05,.42],[.72,.52,.08],[0,-18,-25]);
+    add("AvatarWingRight","box",[.75,.05,.42],[.72,.52,.08],[0,18,25]);
+  } else if(part==="antenna") {
+    add("AvatarAntennaStem","cylinder",[0,.95,0],[.08,.55,.08]);
+    add("AvatarAntennaTip","sphere",[0,1.5,0],[.2,.2,.2]);
+  }
+}
 function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,assetRef:string,
-  size=1,labelVisible=true,labelColor="#ffffff",textureRepeat=1,textureRotation=0) {
+  size=1,labelVisible=true,labelColor="#ffffff",textureRepeat=1,textureRotation=0,
+  part="none",partColor="#7fd8ff") {
   const safeColor=/^#[0-9a-fA-F]{6}$/.test(color)?color:"#f0f0f5";
   const safeAccent=/^#[0-9a-fA-F]{6}$/.test(accent)?accent:"#ff8c28";
   const safeShape=["sphere","capsule","box"].includes(shape)?shape:"sphere";
@@ -1097,7 +1151,9 @@ function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,
   const safeLabelColor=/^#[0-9a-fA-F]{6}$/.test(labelColor)?labelColor:"#ffffff";
   const safeRepeat=pc.math.clamp(Number(textureRepeat)||1,.25,8);
   const safeRotation=pc.math.clamp(Number(textureRotation)||0,0,360);
-  const key=`${safeColor}/${safeAccent}/${safeShape}/${safeSize}/${safeLabelColor}/${safeRepeat}/${safeRotation}`;
+  const safePart=["none","arms","wings","antenna"].includes(part)?part:"none";
+  const safePartColor=/^#[0-9a-fA-F]{6}$/.test(partColor)?partColor:"#7fd8ff";
+  const key=`${safeColor}/${safeAccent}/${safeShape}/${safeSize}/${safeLabelColor}/${safeRepeat}/${safeRotation}/${safePart}/${safePartColor}`;
   void setAvatarTexture(avatar,safeRef);
   avatar.labelVisible=labelVisible!==false;
   avatar.textureRepeat=safeRepeat;
@@ -1124,6 +1180,7 @@ function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,
   body.material=newBodyMaterial;
   const accentColor=colorFromHex(safeAccent);
   avatar.forwardMarker.render!.material=material([accentColor.r,accentColor.g,accentColor.b]);
+  rebuildAvatarParts(avatar,safePart,safePartColor);
   avatar.styleKey=key;
   oldBody?.destroy();oldMarker?.destroy();
 }
@@ -1157,6 +1214,9 @@ function createAvatar(sessionId: string, player: any) {
   body.setLocalScale(.65,.65,.65);
   body.render!.material=avatarMaterial(sessionId);
   entity.addChild(body);
+
+  const partsRoot=new pc.Entity(`AvatarParts-${sessionId}`);
+  body.addChild(partsRoot);
 
   const forwardMarker = new pc.Entity(`Forward-${sessionId}`);
   forwardMarker.addComponent("render", { type: "box" });
@@ -1196,11 +1256,18 @@ function createAvatar(sessionId: string, player: any) {
     textureRotation:0,
     baseScale:new pc.Vec3(.65,.65,.65),
     flying:player.avatarFlying===true,
-    baseBodyY:0
+    baseBodyY:0,
+    partsRoot,
+    partEntities:[],
+    partMaterial:null,
+    partType:"none",
+    emoteType:"none",
+    emoteStartedAt:0
   });
   applyAvatarStyle(avatars.get(sessionId)!,player.avatarColor,player.avatarAccent,
     player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
-    player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation);
+    player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
+    player.avatarPart,player.avatarPartColor);
 
   if (sessionId === currentSessionId) {
     localPosition.set(player.x, player.y, player.z);
@@ -1218,6 +1285,7 @@ function removeAvatar(sessionId: string) {
   avatar.textureRequest++;
   avatar.entity.destroy();
   bodyMaterial?.destroy();markerMaterial?.destroy();haloMaterial?.destroy();
+  avatar.partMaterial?.destroy();
   avatar.texture?.destroy();
   if(avatar.textureURL) URL.revokeObjectURL(avatar.textureURL);
   avatars.delete(sessionId);
@@ -1271,7 +1339,7 @@ function refreshSharedStateDiagnosticPanel() {
   }
   sharedStateDiagnostic.localMedia = sharedRemoteMediaIds.size;
   if (sharedStateDiagnosticBody) sharedStateDiagnosticBody.textContent =
-    `SHARED STATE DIAGNOSTIC / 0.16.2.0\n` +
+    `SHARED STATE DIAGNOSTIC / 0.19.4\n` +
     `CONNECTION     ${sharedStateDiagnostic.connection}\n` +
     `SERVER MEDIA   ${sharedStateDiagnostic.serverMedia}\n` +
     `LOCAL MEDIA    ${sharedStateDiagnostic.localMedia}\n` +
@@ -1373,7 +1441,8 @@ function reconcileWorldFromServerState() {
     const avatar=avatars.get(sessionId);
     if(avatar) applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
       player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
-      player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation);
+      player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
+      player.avatarPart,player.avatarPartColor);
     if(avatar) avatar.flying=player.avatarFlying===true;
   });
   const mediaMap: any = (activeRoom.state as any).mediaObjects;
@@ -2468,7 +2537,15 @@ async function enterWorld() {
       if(!avatar) return;
       applyAvatarStyle(avatar,payload.color,payload.accent,
         payload.shape,payload.assetRef,payload.size,payload.labelVisible,
-        payload.labelColor,payload.textureRepeat,payload.textureRotation);
+        payload.labelColor,payload.textureRepeat,payload.textureRotation,
+        payload.part,payload.partColor);
+    });
+    room.onMessage("avatar:emote",(payload:any)=>{
+      if(room!==activeRoom) return;
+      const avatar=avatars.get(String(payload?.sessionId||""));
+      const type=String(payload?.type||"") as Avatar["emoteType"];
+      if(!avatar || !["wave","joy","spin"].includes(type)) return;
+      avatar.emoteType=type;avatar.emoteStartedAt=performance.now();
     });
     sharedStateDiagnostic.connection = "OPEN";
     sharedStateDiagnostic.lastError = "-";
@@ -2487,7 +2564,8 @@ async function enterWorld() {
         avatar.entity.setEulerAngles(0, player.rotationY ?? 0, 0);
         applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
           player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
-          player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation);
+          player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
+          player.avatarPart,player.avatarPartColor);
         avatar.flying=player.avatarFlying===true;
       });
     });
@@ -2699,6 +2777,7 @@ async function enterWorld() {
     hud.classList.remove("hidden");
     avatarControls.style.display="block";
     flightControls.classList.add("room-active");
+    emoteControls.classList.add("room-active");
     hud.querySelector<HTMLElement>(".controls")!.textContent=
       "WASD：移動 / SPACE：ジャンプ・上昇 / F：飛行 / SHIFT：下降";
   } catch (error) {
@@ -5930,14 +6009,37 @@ app.on("update", (dt: number) => {
     avatar.motionPhase+=dt*(moving?9:2.2);
     const breath=1+Math.sin(avatar.motionPhase)*.018;
     const bob=moving&&!airborne?Math.abs(Math.sin(avatar.motionPhase))*.055:0;
-    avatar.body.setLocalPosition(0,avatar.baseBodyY+bob,0);
+    const emoteDuration=avatar.emoteType==="wave"?1.4:avatar.emoteType==="joy"?1.05:1.15;
+    let emoteProgress=(performance.now()-avatar.emoteStartedAt)/(emoteDuration*1000);
+    if(avatar.emoteType!=="none" && emoteProgress>=1) {
+      avatar.emoteType="none";emoteProgress=0;
+    }
+    const emote=avatar.emoteType;
+    const joyLift=emote==="joy"?Math.sin(emoteProgress*Math.PI)*.32:0;
+    const joyScale=emote==="joy"?1+Math.sin(emoteProgress*Math.PI)*.18:1;
+    avatar.body.setLocalPosition(0,avatar.baseBodyY+bob+joyLift,0);
     avatar.body.setLocalScale(
-      avatar.baseScale.x*breath,
-      avatar.baseScale.y*(1+Math.sin(avatar.motionPhase)*.025),
-      avatar.baseScale.z*breath
+      avatar.baseScale.x*breath*joyScale,
+      avatar.baseScale.y*(1+Math.sin(avatar.motionPhase)*.025)*joyScale,
+      avatar.baseScale.z*breath*joyScale
     );
-    avatar.body.setLocalEulerAngles(avatarFlying?-18:(airborne?-8:0),0,
-      moving&&!airborne?Math.sin(avatar.motionPhase)*4:0);
+    const spinY=emote==="spin"?emoteProgress*360:0;
+    const waveLean=emote==="wave"?Math.sin(emoteProgress*Math.PI*6)*5:0;
+    avatar.body.setLocalEulerAngles(avatarFlying?-18:(airborne?-8:0),spinY,
+      (moving&&!airborne?Math.sin(avatar.motionPhase)*4:0)+waveLean);
+    for(const part of avatar.partEntities) {
+      if(part.name==="AvatarArmLeft") part.setLocalEulerAngles(0,0,-12);
+      else if(part.name==="AvatarArmRight") part.setLocalEulerAngles(0,0,
+        emote==="wave"?25+Math.sin(emoteProgress*Math.PI*8)*45:12);
+      else if(part.name==="AvatarWingLeft") part.setLocalEulerAngles(0,-18,
+        -25-(avatarFlying||emote==="joy"?Math.sin(avatar.motionPhase*1.8)*18:0));
+      else if(part.name==="AvatarWingRight") part.setLocalEulerAngles(0,18,
+        25+(avatarFlying||emote==="joy"?Math.sin(avatar.motionPhase*1.8)*18:0));
+      else if(part.name==="AvatarAntennaStem") part.setLocalEulerAngles(0,0,
+        Math.sin(avatar.motionPhase)*4);
+      else if(part.name==="AvatarAntennaTip") part.setLocalPosition(
+        Math.sin(avatar.motionPhase)*.07,1.5,0);
+    }
     avatar.lastMotionPosition.copy(position);
     if(sessionId!==currentSessionId)
       avatar.名前ラベル.style.display=avatar.labelVisible?"":"none";

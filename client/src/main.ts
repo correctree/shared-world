@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.19.4 AVATAR PARTS & EMOTES LOADED]");
+console.log("[PROTOTYPE 0.19.5 PROXIMITY CIRCLE CUSTOMIZER LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -48,6 +48,11 @@ type Avatar = {
   partType:string;
   emoteType:"none"|"wave"|"joy"|"spin";
   emoteStartedAt:number;
+  haloColor:string;
+  haloOpacity:number;
+  haloSize:number;
+  haloMotion:string;
+  haloSpeed:number;
 };
 
 // =========================================================
@@ -83,6 +88,12 @@ avatarControls.innerHTML=`<button type="button" id="avatarSettingsButton">AVATAR
     <label>NAME COLOR <input type="color" id="avatarLabelColor" value="#ffffff"></label>
     <label>PARTS <select id="avatarPart"><option value="none">NONE</option><option value="arms">ARMS</option><option value="wings">WINGS</option><option value="antenna">ANTENNA</option></select></label>
     <label>PART COLOR <input type="color" id="avatarPartColor" value="#7fd8ff"></label>
+    <div style="margin-top:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,.18)"><strong>PROXIMITY CIRCLE</strong></div>
+    <label>COLOR <input type="color" id="avatarHaloColor" value="#ff7828"></label>
+    <label>OPACITY <input type="range" id="avatarHaloOpacity" min="0.05" max="1" step="0.05" value="0.55"><span id="avatarHaloOpacityValue">0.55</span></label>
+    <label>SIZE <input type="range" id="avatarHaloSize" min="0.5" max="4" step="0.1" value="1.5"><span id="avatarHaloSizeValue">1.5</span></label>
+    <label>MOTION <select id="avatarHaloMotion"><option value="static">STATIC</option><option value="pulse" selected>PULSE</option><option value="orbit">ORBIT</option><option value="float">FLOAT</option></select></label>
+    <label>SPEED <input type="range" id="avatarHaloSpeed" min="0.1" max="4" step="0.1" value="1"><span id="avatarHaloSpeedValue">1</span></label>
     <button type="button" id="avatarClearImage">REMOVE IMAGE</button>
     <button type="button" id="avatarSaveButton">APPLY AVATAR</button>
   </div>
@@ -746,12 +757,18 @@ function savedAvatarStyle() {
       textureRotation:Number.isFinite(Number(input.textureRotation))?pc.math.clamp(Number(input.textureRotation),0,360):0,
       part:["none","arms","wings","antenna"].includes(input.part)?input.part:"none",
       partColor:typeof input.partColor==="string" && /^#[0-9a-fA-F]{6}$/.test(input.partColor)?input.partColor:"#7fd8ff",
+      haloColor:typeof input.haloColor==="string" && /^#[0-9a-fA-F]{6}$/.test(input.haloColor)?input.haloColor:"#ff7828",
+      haloOpacity:Number.isFinite(Number(input.haloOpacity))?pc.math.clamp(Number(input.haloOpacity),.05,1):.55,
+      haloSize:Number.isFinite(Number(input.haloSize))?pc.math.clamp(Number(input.haloSize),.5,4):1.5,
+      haloMotion:["static","pulse","orbit","float"].includes(input.haloMotion)?input.haloMotion:"pulse",
+      haloSpeed:Number.isFinite(Number(input.haloSpeed))?pc.math.clamp(Number(input.haloSpeed),.1,4):1,
       assetRef:typeof input.assetRef==="string" &&
         /^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.zip$/.test(input.assetRef)
         ?input.assetRef:""
     };
   } catch {return {color:"#f0f0f5",accent:"#ff8c28",shape:"sphere",size:1,
-    labelVisible:true,labelColor:"#ffffff",textureRepeat:1,textureRotation:0,part:"none",partColor:"#7fd8ff",assetRef:""};}
+    labelVisible:true,labelColor:"#ffffff",textureRepeat:1,textureRotation:0,part:"none",partColor:"#7fd8ff",
+    haloColor:"#ff7828",haloOpacity:.55,haloSize:1.5,haloMotion:"pulse",haloSpeed:1,assetRef:""};}
 }
 let selectedAvatarAssetRef=savedAvatarStyle().assetRef;
 async function uploadAvatarImage(blob:Blob) {
@@ -795,10 +812,18 @@ avatarControls.querySelector<HTMLInputElement>("#avatarTextureRepeat")!.value=St
 avatarControls.querySelector<HTMLInputElement>("#avatarTextureRotation")!.value=String(initialAvatarStyle.textureRotation);
 avatarControls.querySelector<HTMLSelectElement>("#avatarPart")!.value=initialAvatarStyle.part;
 avatarControls.querySelector<HTMLInputElement>("#avatarPartColor")!.value=initialAvatarStyle.partColor;
+avatarControls.querySelector<HTMLInputElement>("#avatarHaloColor")!.value=initialAvatarStyle.haloColor;
+avatarControls.querySelector<HTMLInputElement>("#avatarHaloOpacity")!.value=String(initialAvatarStyle.haloOpacity);
+avatarControls.querySelector<HTMLInputElement>("#avatarHaloSize")!.value=String(initialAvatarStyle.haloSize);
+avatarControls.querySelector<HTMLSelectElement>("#avatarHaloMotion")!.value=initialAvatarStyle.haloMotion;
+avatarControls.querySelector<HTMLInputElement>("#avatarHaloSpeed")!.value=String(initialAvatarStyle.haloSpeed);
 for(const [inputId,valueId,suffix] of [
   ["#avatarSize","#avatarSizeValue",""] as const,
   ["#avatarTextureRepeat","#avatarTextureRepeatValue",""] as const,
-  ["#avatarTextureRotation","#avatarTextureRotationValue","°"] as const
+  ["#avatarTextureRotation","#avatarTextureRotationValue","°"] as const,
+  ["#avatarHaloOpacity","#avatarHaloOpacityValue",""] as const,
+  ["#avatarHaloSize","#avatarHaloSizeValue",""] as const,
+  ["#avatarHaloSpeed","#avatarHaloSpeedValue",""] as const
 ]) {
   const input=avatarControls.querySelector<HTMLInputElement>(inputId)!;
   const value=avatarControls.querySelector<HTMLElement>(valueId)!;
@@ -854,6 +879,11 @@ avatarSaveButton.addEventListener("click",()=>{
     textureRotation:Number(avatarControls.querySelector<HTMLInputElement>("#avatarTextureRotation")!.value),
     part:avatarControls.querySelector<HTMLSelectElement>("#avatarPart")!.value,
     partColor:avatarControls.querySelector<HTMLInputElement>("#avatarPartColor")!.value,
+    haloColor:avatarControls.querySelector<HTMLInputElement>("#avatarHaloColor")!.value,
+    haloOpacity:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHaloOpacity")!.value),
+    haloSize:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHaloSize")!.value),
+    haloMotion:avatarControls.querySelector<HTMLSelectElement>("#avatarHaloMotion")!.value,
+    haloSpeed:Number(avatarControls.querySelector<HTMLInputElement>("#avatarHaloSpeed")!.value),
     assetRef:selectedAvatarAssetRef
   };
   try {localStorage.setItem(AVATAR_STYLE_KEY,JSON.stringify(appearance));} catch {}
@@ -1141,7 +1171,8 @@ function rebuildAvatarParts(avatar:Avatar,part:string,partColor:string) {
 }
 function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,assetRef:string,
   size=1,labelVisible=true,labelColor="#ffffff",textureRepeat=1,textureRotation=0,
-  part="none",partColor="#7fd8ff") {
+  part="none",partColor="#7fd8ff",haloColor="#ff7828",haloOpacity=.55,
+  haloSize=1.5,haloMotion="pulse",haloSpeed=1) {
   const safeColor=/^#[0-9a-fA-F]{6}$/.test(color)?color:"#f0f0f5";
   const safeAccent=/^#[0-9a-fA-F]{6}$/.test(accent)?accent:"#ff8c28";
   const safeShape=["sphere","capsule","box"].includes(shape)?shape:"sphere";
@@ -1153,17 +1184,28 @@ function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,
   const safeRotation=pc.math.clamp(Number(textureRotation)||0,0,360);
   const safePart=["none","arms","wings","antenna"].includes(part)?part:"none";
   const safePartColor=/^#[0-9a-fA-F]{6}$/.test(partColor)?partColor:"#7fd8ff";
-  const key=`${safeColor}/${safeAccent}/${safeShape}/${safeSize}/${safeLabelColor}/${safeRepeat}/${safeRotation}/${safePart}/${safePartColor}`;
+  const safeHaloColor=/^#[0-9a-fA-F]{6}$/.test(haloColor)?haloColor:"#ff7828";
+  const safeHaloOpacity=pc.math.clamp(Number(haloOpacity)||.55,.05,1);
+  const safeHaloSize=pc.math.clamp(Number(haloSize)||1.5,.5,4);
+  const safeHaloMotion=["static","pulse","orbit","float"].includes(haloMotion)?haloMotion:"pulse";
+  const safeHaloSpeed=pc.math.clamp(Number(haloSpeed)||1,.1,4);
+  const key=`${safeColor}/${safeAccent}/${safeShape}/${safeSize}/${safeLabelColor}/${safeRepeat}/${safeRotation}/${safePart}/${safePartColor}/${safeHaloColor}/${safeHaloOpacity}/${safeHaloSize}/${safeHaloMotion}/${safeHaloSpeed}`;
   void setAvatarTexture(avatar,safeRef);
   avatar.labelVisible=labelVisible!==false;
   avatar.textureRepeat=safeRepeat;
   avatar.textureRotation=safeRotation;
   avatar.名前ラベル.style.color=safeLabelColor;
   avatar.size=safeSize;
+  avatar.haloColor=safeHaloColor;
+  avatar.haloOpacity=safeHaloOpacity;
+  avatar.haloSize=safeHaloSize;
+  avatar.haloMotion=safeHaloMotion;
+  avatar.haloSpeed=safeHaloSpeed;
   if(key===avatar.styleKey) return;
   const body=avatar.body.render!;
   const oldBody=body.material;
   const oldMarker=avatar.forwardMarker.render!.material;
+  const oldHalo=avatar.proximityHalo.render!.material;
   body.type=safeShape;
   avatar.baseScale.set(.65*safeSize,(safeShape==="capsule"?.85:.65)*safeSize,.65*safeSize);
   avatar.baseBodyY=avatar.baseScale.y-.65;
@@ -1180,9 +1222,16 @@ function applyAvatarStyle(avatar:Avatar,color:string,accent:string,shape:string,
   body.material=newBodyMaterial;
   const accentColor=colorFromHex(safeAccent);
   avatar.forwardMarker.render!.material=material([accentColor.r,accentColor.g,accentColor.b]);
+  const haloColorValue=colorFromHex(safeHaloColor);
+  const haloMaterial=material([haloColorValue.r,haloColorValue.g,haloColorValue.b]);
+  haloMaterial.opacity=safeHaloOpacity;
+  haloMaterial.blendType=pc.BLEND_NORMAL;
+  haloMaterial.depthWrite=false;
+  haloMaterial.update();
+  avatar.proximityHalo.render!.material=haloMaterial;
   rebuildAvatarParts(avatar,safePart,safePartColor);
   avatar.styleKey=key;
-  oldBody?.destroy();oldMarker?.destroy();
+  oldBody?.destroy();oldMarker?.destroy();oldHalo?.destroy();
 }
 
 function 名前ラベルを作成(名前: string) {
@@ -1229,7 +1278,10 @@ function createAvatar(sessionId: string, player: any) {
   proximityHalo.addComponent("render", { type: "cylinder" });
   proximityHalo.setLocalScale(1.5, 0.025, 1.5);
   proximityHalo.setLocalPosition(0, -0.48, 0);
-  proximityHalo.render!.material = material([1.0, 0.45, 0.08]);
+  const initialHaloMaterial=material([1.0, 0.45, 0.08]);
+  initialHaloMaterial.opacity=.55;initialHaloMaterial.blendType=pc.BLEND_NORMAL;
+  initialHaloMaterial.depthWrite=false;initialHaloMaterial.update();
+  proximityHalo.render!.material = initialHaloMaterial;
   proximityHalo.enabled = false;
   entity.addChild(proximityHalo);
 
@@ -1262,12 +1314,18 @@ function createAvatar(sessionId: string, player: any) {
     partMaterial:null,
     partType:"none",
     emoteType:"none",
-    emoteStartedAt:0
+    emoteStartedAt:0,
+    haloColor:"#ff7828",
+    haloOpacity:.55,
+    haloSize:1.5,
+    haloMotion:"pulse",
+    haloSpeed:1
   });
   applyAvatarStyle(avatars.get(sessionId)!,player.avatarColor,player.avatarAccent,
     player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
     player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
-    player.avatarPart,player.avatarPartColor);
+    player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
+    player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed);
 
   if (sessionId === currentSessionId) {
     localPosition.set(player.x, player.y, player.z);
@@ -1339,7 +1397,7 @@ function refreshSharedStateDiagnosticPanel() {
   }
   sharedStateDiagnostic.localMedia = sharedRemoteMediaIds.size;
   if (sharedStateDiagnosticBody) sharedStateDiagnosticBody.textContent =
-    `SHARED STATE DIAGNOSTIC / 0.19.4\n` +
+    `SHARED STATE DIAGNOSTIC / 0.19.5\n` +
     `CONNECTION     ${sharedStateDiagnostic.connection}\n` +
     `SERVER MEDIA   ${sharedStateDiagnostic.serverMedia}\n` +
     `LOCAL MEDIA    ${sharedStateDiagnostic.localMedia}\n` +
@@ -1442,7 +1500,8 @@ function reconcileWorldFromServerState() {
     if(avatar) applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
       player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
       player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
-      player.avatarPart,player.avatarPartColor);
+      player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
+      player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed);
     if(avatar) avatar.flying=player.avatarFlying===true;
   });
   const mediaMap: any = (activeRoom.state as any).mediaObjects;
@@ -2538,7 +2597,8 @@ async function enterWorld() {
       applyAvatarStyle(avatar,payload.color,payload.accent,
         payload.shape,payload.assetRef,payload.size,payload.labelVisible,
         payload.labelColor,payload.textureRepeat,payload.textureRotation,
-        payload.part,payload.partColor);
+        payload.part,payload.partColor,payload.haloColor,payload.haloOpacity,
+        payload.haloSize,payload.haloMotion,payload.haloSpeed);
     });
     room.onMessage("avatar:emote",(payload:any)=>{
       if(room!==activeRoom) return;
@@ -2565,7 +2625,8 @@ async function enterWorld() {
         applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
           player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
           player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
-          player.avatarPart,player.avatarPartColor);
+          player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
+          player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed);
         avatar.flying=player.avatarFlying===true;
       });
     });
@@ -6085,10 +6146,16 @@ app.on("update", (dt: number) => {
 
     if (isNearSomeone) {
       const proximity = 1 - nearestDistance / PROXIMITY_DISTANCE;
-      const haloScale = 1.5 + proximity * 1.2;
-      const pulse = 1 + Math.sin(performance.now() * 0.006) * 0.08;
+      const elapsed=performance.now()*.001*avatar.haloSpeed;
+      const haloScale = avatar.haloSize + proximity * avatar.haloSize * .35;
+      const pulse = avatar.haloMotion==="pulse"?1+Math.sin(elapsed*6)*.1:1;
       const pulsedScale = haloScale * pulse;
       avatar.proximityHalo.setLocalScale(pulsedScale, 0.025, pulsedScale);
+      if(avatar.haloMotion==="orbit")
+        avatar.proximityHalo.setLocalPosition(Math.cos(elapsed*2)*.32,-.48,Math.sin(elapsed*2)*.32);
+      else if(avatar.haloMotion==="float")
+        avatar.proximityHalo.setLocalPosition(0,-.48+Math.sin(elapsed*3)*.18,0);
+      else avatar.proximityHalo.setLocalPosition(0,-.48,0);
     }
   }
 

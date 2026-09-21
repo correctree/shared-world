@@ -18,6 +18,11 @@ export const Player = schema({
   avatarTextureRotation: t.number().default(0),
   avatarPart: t.string().default("none"),
   avatarPartColor: t.string().default("#7fd8ff"),
+  avatarHaloColor: t.string().default("#ff7828"),
+  avatarHaloOpacity: t.number().default(0.55),
+  avatarHaloSize: t.number().default(1.5),
+  avatarHaloMotion: t.string().default("pulse"),
+  avatarHaloSpeed: t.number().default(1),
   avatarFlying: t.boolean().default(false)
 }, "Player");
 export type Player = SchemaType<typeof Player>;

@@ -218,6 +218,12 @@ export class SharedWorldRoom extends Room<WorldState> {
       player.avatarPart=["none","arms","wings","antenna"].includes(payload.part)
         ?payload.part:player.avatarPart;
       player.avatarPartColor=color(payload.partColor,player.avatarPartColor);
+      player.avatarHaloColor=color(payload.haloColor,player.avatarHaloColor);
+      player.avatarHaloOpacity=bounded(payload.haloOpacity,player.avatarHaloOpacity,.05,1);
+      player.avatarHaloSize=bounded(payload.haloSize,player.avatarHaloSize,.5,4);
+      player.avatarHaloMotion=["static","pulse","orbit","float"].includes(payload.haloMotion)
+        ?payload.haloMotion:player.avatarHaloMotion;
+      player.avatarHaloSpeed=bounded(payload.haloSpeed,player.avatarHaloSpeed,.1,4);
       this.broadcast("avatar:style:applied",{
         sessionId:client.sessionId,
         color:player.avatarColor,accent:player.avatarAccent,
@@ -225,7 +231,10 @@ export class SharedWorldRoom extends Room<WorldState> {
         size:player.avatarSize,labelVisible:player.avatarLabelVisible,
         labelColor:player.avatarLabelColor,textureRepeat:player.avatarTextureRepeat,
         textureRotation:player.avatarTextureRotation,
-        part:player.avatarPart,partColor:player.avatarPartColor
+        part:player.avatarPart,partColor:player.avatarPartColor,
+        haloColor:player.avatarHaloColor,haloOpacity:player.avatarHaloOpacity,
+        haloSize:player.avatarHaloSize,haloMotion:player.avatarHaloMotion,
+        haloSpeed:player.avatarHaloSpeed
       });
     });
 

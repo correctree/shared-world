@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.5 WALKABLE ARCHITECTURE CORE LOADED]");
+console.log("[PROTOTYPE 0.20.5.1 MOBILE SLOPE STABILITY FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4164,7 +4164,7 @@ const managedPlacedMedia = new Map<string, ManagedPlacedMedia>();
 // walkable inclined surface instead of acting as a full-height obstacle.
 const AVATAR_RADIUS=.38;
 const AVATAR_FOOT_OFFSET=.65;
-const MAX_WALK_STEP=.42;
+const MAX_WALK_STEP=.58;
 function glbWorldBounds(item:ManagedPlacedMedia) {
   if(item.kind!=="glb"||!item.entity.enabled)return null;
   let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity,found=false;
@@ -4190,7 +4190,8 @@ function architectureGroundHeight(x:number,z:number,currentFoot:number) {
   let ground=0;
   for(const item of managedPlacedMedia.values()) {
     const b=glbWorldBounds(item);if(!b)continue;
-    if(x<b.minX+AVATAR_RADIUS||x>b.maxX-AVATAR_RADIUS||z<b.minZ+AVATAR_RADIUS||z>b.maxZ-AVATAR_RADIUS)continue;
+    const supportMargin=AVATAR_RADIUS*.6;
+    if(x<b.minX-supportMargin||x>b.maxX+supportMargin||z<b.minZ-supportMargin||z>b.maxZ+supportMargin)continue;
     const top=isWalkableRamp(item)?rampSurfaceHeight(item,b,x,z):b.maxY;
     if(top<=currentFoot+MAX_WALK_STEP&&top>=currentFoot-1.2)ground=Math.max(ground,top);
   }
@@ -7158,24 +7159,23 @@ app.on("update", (dt: number) => {
 
     me.entity.setEulerAngles(0, moveAngle, 0);
 
-    const nextX = pc.math.clamp(
-      localPosition.x + moveX * MOVE_SPEED * Math.min(dt,0.1),
-      -Math.max(6.5,currentWorldEnvironment.groundSize/2-1),
-      Math.max(6.5,currentWorldEnvironment.groundSize/2-1)
-    );
-    if(!architectureBlocked(nextX,localPosition.z,localPosition.y))localPosition.x=nextX;
-
-    const nextZ = pc.math.clamp(
-      localPosition.z + moveZ * MOVE_SPEED * Math.min(dt,0.1),
-      -Math.max(6.5,currentWorldEnvironment.groundSize/2-1),
-      Math.max(6.5,currentWorldEnvironment.groundSize/2-1)
-    );
-    if(!architectureBlocked(localPosition.x,nextZ,localPosition.y))localPosition.z=nextZ;
-
-    if(!flying&&verticalVelocity<=0) {
-      const nextGround=architectureGroundHeight(
-        localPosition.x,localPosition.z,localPosition.y-AVATAR_FOOT_OFFSET);
-      localPosition.y=Math.max(localPosition.y,nextGround+AVATAR_FOOT_OFFSET);
+    const distance=MOVE_SPEED*Math.min(dt,.1);
+    const substeps=Math.max(1,Math.ceil(distance/.1));
+    const subX=moveX*distance/substeps,subZ=moveZ*distance/substeps;
+    const limit=Math.max(6.5,currentWorldEnvironment.groundSize/2-1);
+    for(let moveStep=0;moveStep<substeps;moveStep++) {
+      const nextX=pc.math.clamp(localPosition.x+subX,-limit,limit);
+      if(!architectureBlocked(nextX,localPosition.z,localPosition.y))localPosition.x=nextX;
+      const nextZ=pc.math.clamp(localPosition.z+subZ,-limit,limit);
+      if(!architectureBlocked(localPosition.x,nextZ,localPosition.y))localPosition.z=nextZ;
+      if(!flying&&verticalVelocity<=0) {
+        const currentFoot=localPosition.y-AVATAR_FOOT_OFFSET;
+        const nextGround=architectureGroundHeight(localPosition.x,localPosition.z,currentFoot);
+        // Follow a supported slope in both directions. Do not teleport to the
+        // world floor when stepping off a high platform; gravity handles that.
+        if(nextGround>0||currentFoot<=MAX_WALK_STEP+.05)
+          localPosition.y=nextGround+AVATAR_FOOT_OFFSET;
+      }
     }
 
     me.entity.setPosition(localPosition);

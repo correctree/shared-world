@@ -31,6 +31,7 @@ export const Player = schema({
   avatarHeartCount: t.number().default(3),
   avatarHeartMotion: t.string().default("float"),
   avatarHeartSpeed: t.number().default(1),
+  avatarFlashlightOn: t.boolean().default(false),
   avatarFlying: t.boolean().default(false)
 }, "Player");
 export type Player = SchemaType<typeof Player>;

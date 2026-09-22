@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.3 ROOM ENVIRONMENT OWNERSHIP LOADED]");
+console.log("[PROTOTYPE 0.20.4 AVATAR FLASHLIGHT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -64,6 +64,10 @@ type Avatar = {
   heartSpeed:number;
   messageBubble:HTMLDivElement|null;
   messageExpiresAt:number;
+  flashlightRoot:pc.Entity;
+  flashlightBeam:pc.Entity;
+  flashlightMaterial:pc.StandardMaterial;
+  flashlightOn:boolean;
 };
 
 // =========================================================
@@ -85,6 +89,7 @@ const viewToggle = document.querySelector<HTMLButtonElement>("#viewToggle")!;
 const avatarControls=document.createElement("div");
 avatarControls.id="avatarControls";
 avatarControls.innerHTML=`<button type="button" id="avatarSettingsButton">AVATAR</button>
+  <button type="button" id="flashlightButton" aria-pressed="false">FLASHLIGHT OFF</button>
   <div id="avatarSettingsPanel" hidden>
     <strong>AVATAR DESIGN</strong>
     <label>BODY COLOR <input type="color" id="avatarBodyColor" value="#f0f0f5"></label>
@@ -152,6 +157,7 @@ avatarStyleSheet.textContent=`
   #avatarSettingsPanel input,#avatarSettingsPanel select {width:100%;margin:4px 0;padding:5px;background:#172433;color:white;border:1px solid #7191ae;border-radius:6px}
   #avatarSettingsPanel input[type=color] {height:38px;padding:3px}
   #avatarSettingsPanel button {width:100%;margin-top:8px}
+  #flashlightButton.active {border-color:#ffe08a!important;color:#ffe08a!important;box-shadow:0 0 14px rgba(255,224,138,.35)}
   #flightControls {position:fixed;right:106px;bottom:35px;z-index:35;display:none;gap:5px;align-items:center}
   #flightControls button {touch-action:none;white-space:nowrap;min-height:45px}
   #emoteControls {position:fixed;right:22px;bottom:92px;z-index:35;display:none;gap:5px}
@@ -1001,6 +1007,23 @@ async function sendSavedAvatarStyle(restoreImage=false,override?:ReturnType<type
 const avatarSettingsPanel=avatarControls.querySelector<HTMLElement>("#avatarSettingsPanel")!;
 avatarControls.querySelector<HTMLButtonElement>("#avatarSettingsButton")!.addEventListener("click",()=>{
   avatarSettingsPanel.hidden=!avatarSettingsPanel.hidden;
+});
+const flashlightButton=avatarControls.querySelector<HTMLButtonElement>("#flashlightButton")!;
+function applyFlashlightState(avatar:Avatar,enabled:boolean) {
+  avatar.flashlightOn=enabled===true;
+  avatar.flashlightRoot.enabled=avatar.flashlightOn;
+  if(avatar.entity.name===`Player-${currentSessionId}`) {
+    flashlightButton.textContent=avatar.flashlightOn?"FLASHLIGHT ON":"FLASHLIGHT OFF";
+    flashlightButton.classList.toggle("active",avatar.flashlightOn);
+    flashlightButton.setAttribute("aria-pressed",String(avatar.flashlightOn));
+  }
+}
+flashlightButton.addEventListener("click",()=>{
+  if(!activeRoom||!currentSessionId)return;
+  const avatar=avatars.get(currentSessionId);if(!avatar)return;
+  const enabled=!avatar.flashlightOn;
+  applyFlashlightState(avatar,enabled);
+  activeRoom.send("avatar:flashlight",{enabled});
 });
 const initialAvatarStyle=savedAvatarStyle();
 avatarControls.querySelector<HTMLInputElement>("#avatarBodyColor")!.value=initialAvatarStyle.color;
@@ -1869,6 +1892,29 @@ function createAvatar(sessionId: string, player: any) {
   forwardMarker.render!.material = material([1.0, 0.55, 0.15]);
   body.addChild(forwardMarker);
 
+  // The PlayCanvas spotlight points along local -Y. Rotating it 90 degrees
+  // around X aligns it with the avatar's forward direction (local -Z).
+  const flashlightRoot=new pc.Entity(`Flashlight-${sessionId}`);
+  flashlightRoot.setLocalPosition(.32,.05,-.48);
+  const flashlightBeam=new pc.Entity(`FlashlightBeam-${sessionId}`);
+  flashlightBeam.addComponent("light",{type:"spot",color:new pc.Color(1,.91,.68),
+    intensity:3.2,range:12,innerConeAngle:18,outerConeAngle:32,
+    castShadows:false,shadowBias:.2});
+  flashlightBeam.setLocalEulerAngles(90,0,0);
+  flashlightRoot.addChild(flashlightBeam);
+  const flashlightBody=new pc.Entity(`FlashlightBody-${sessionId}`);
+  flashlightBody.addComponent("render",{type:"cylinder"});
+  flashlightBody.setLocalPosition(0,0,-.02);
+  flashlightBody.setLocalScale(.09,.22,.09);
+  flashlightBody.setLocalEulerAngles(90,0,0);
+  const flashlightMaterial=material([.12,.14,.17]);
+  flashlightMaterial.emissive=new pc.Color(.3,.24,.12);
+  flashlightMaterial.emissiveIntensity=.35;flashlightMaterial.update();
+  flashlightBody.render!.material=flashlightMaterial;
+  flashlightRoot.addChild(flashlightBody);
+  flashlightRoot.enabled=false;
+  body.addChild(flashlightRoot);
+
   const proximityHalo = new pc.Entity(`ProximityHalo-${sessionId}`);
   proximityHalo.addComponent("render", { type: "plane" });
   // A transparent VFX plane must neither cast nor receive world shadows. If it
@@ -1929,7 +1975,11 @@ function createAvatar(sessionId: string, player: any) {
     heartMotion:"float",
     heartSpeed:1,
     messageBubble:null,
-    messageExpiresAt:0
+    messageExpiresAt:0,
+    flashlightRoot,
+    flashlightBeam,
+    flashlightMaterial,
+    flashlightOn:false
   });
   applyAvatarStyle(avatars.get(sessionId)!,player.avatarColor,player.avatarAccent,
     player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
@@ -1939,6 +1989,7 @@ function createAvatar(sessionId: string, player: any) {
     player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
   applyHeartStyle(avatars.get(sessionId)!,player.avatarHeartColor,player.avatarHeartSize,
     player.avatarHeartCount,player.avatarHeartMotion,player.avatarHeartSpeed);
+  applyFlashlightState(avatars.get(sessionId)!,player.avatarFlashlightOn===true);
 
   if (sessionId === currentSessionId) {
     localPosition.set(player.x, player.y, player.z);
@@ -1958,6 +2009,7 @@ function removeAvatar(sessionId: string) {
   avatar.entity.destroy();
   bodyMaterial?.destroy();markerMaterial?.destroy();haloMaterial?.destroy();
   avatar.partMaterial?.destroy();
+  avatar.flashlightMaterial.destroy();
   avatar.texture?.destroy();
   avatar.haloTexture?.destroy();
   if(avatar.textureURL) URL.revokeObjectURL(avatar.textureURL);
@@ -3270,6 +3322,7 @@ async function enterWorld() {
           player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
         applyHeartStyle(avatar,player.avatarHeartColor,player.avatarHeartSize,
           player.avatarHeartCount,player.avatarHeartMotion,player.avatarHeartSpeed);
+        applyFlashlightState(avatar,player.avatarFlashlightOn===true);
         avatar.flying=player.avatarFlying===true;
       });
     });

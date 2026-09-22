@@ -294,6 +294,13 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.broadcast("avatar:message",{sessionId:client.sessionId,text,sentAt:now});
     });
 
+    // 0.20.4 / Flashlight item. Keep the switch in authoritative player
+    // state so late joiners and reconnecting phones see the same light.
+    this.onMessage("avatar:flashlight",(client:Client,payload:any)=>{
+      const player=this.state.players.get(client.sessionId);if(!player)return;
+      player.avatarFlashlightOn=payload?.enabled===true;
+    });
+
     // 0.20.0 / WebRTC signaling only. Audio never passes through Colyseus.
     this.onMessage("voice:ready",(client:Client)=>{
       if(this.state.players.has(client.sessionId))

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.4.2 CAMERA-ALIGNED FLASHLIGHT LOADED]");
+console.log("[PROTOTYPE 0.20.4.3 LIGHT-REACTIVE WEBM AND SPRITE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -2399,14 +2399,15 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     const spriteMaterial = new pc.StandardMaterial();
     spriteMaterial.diffuseMap = texture;
     spriteMaterial.emissiveMap = texture;
-    spriteMaterial.emissive = new pc.Color(1, 1, 1);
+    spriteMaterial.emissive = new pc.Color(.12, .12, .12);
     spriteMaterial.opacityMap = texture;
     spriteMaterial.opacityMapChannel = "a";
     spriteMaterial.blendType = pc.BLEND_NORMAL;
     spriteMaterial.depthWrite = false;
     spriteMaterial.alphaTest = 0.05;
-    spriteMaterial.useLighting = false;
+    spriteMaterial.useLighting = true;
     spriteMaterial.cull = pc.CULLFACE_NONE;
+    spriteMaterial.twoSidedLighting = true;
     spriteMaterial.update();
 
     const plane = new pc.Entity(`SharedSprite_${mediaId}`);
@@ -2748,14 +2749,15 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
     const material = new pc.StandardMaterial();
     material.diffuseMap = texture;
     material.emissiveMap = texture;
-    material.emissive = new pc.Color(1, 1, 1);
+    material.emissive = new pc.Color(.12, .12, .12);
     material.opacityMap = texture;
     material.opacityMapChannel = "a";
     material.blendType = pc.BLEND_NORMAL;
     material.depthWrite = false;
     material.alphaTest = 0.12;
-    material.useLighting = false;
+    material.useLighting = true;
     material.cull = pc.CULLFACE_NONE;
+    material.twoSidedLighting = true;
     material.update();
 
     const plane = new pc.Entity(`SharedWebM_${mediaId}`);
@@ -5664,14 +5666,15 @@ function addSpriteArtworkToWorld() {
   const spriteMaterial = new pc.StandardMaterial();
   spriteMaterial.diffuseMap = texture;
   spriteMaterial.emissiveMap = texture;
-  spriteMaterial.emissive = new pc.Color(1, 1, 1);
+  spriteMaterial.emissive = new pc.Color(.12, .12, .12);
   spriteMaterial.opacityMap = texture;
   spriteMaterial.opacityMapChannel = "a";
   spriteMaterial.blendType = pc.BLEND_NORMAL;
   spriteMaterial.depthWrite = false;
   spriteMaterial.alphaTest = 0.12;
-  spriteMaterial.useLighting = false;
+  spriteMaterial.useLighting = true;
   spriteMaterial.cull = pc.CULLFACE_NONE;
+  spriteMaterial.twoSidedLighting = true;
   spriteMaterial.update();
 
   const plane = new pc.Entity("ImportedSpriteArtwork");
@@ -5750,14 +5753,15 @@ async function addWebMArtworkToWorld(file: File) {
   const importedMaterial = new pc.StandardMaterial();
   importedMaterial.diffuseMap = texture;
   importedMaterial.emissiveMap = texture;
-  importedMaterial.emissive = new pc.Color(1, 1, 1);
+  importedMaterial.emissive = new pc.Color(.12, .12, .12);
   importedMaterial.opacityMap = texture;
   importedMaterial.opacityMapChannel = "a";
   importedMaterial.blendType = pc.BLEND_NORMAL;
   importedMaterial.depthWrite = false;
   importedMaterial.alphaTest = 0.12;
-  importedMaterial.useLighting = false;
+  importedMaterial.useLighting = true;
   importedMaterial.cull = pc.CULLFACE_NONE;
+  importedMaterial.twoSidedLighting = true;
   importedMaterial.update();
 
   const plane = new pc.Entity("ImportedArtwork");

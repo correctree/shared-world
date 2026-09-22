@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.5.5 SAFE LEDGE EXIT LOADED]");
+console.log("[PROTOTYPE 0.20.5.6 UPWARD SURFACE FILTER LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4159,7 +4159,7 @@ worldPackageInput.addEventListener("change",async()=>{
 
 const managedPlacedMedia = new Map<string, ManagedPlacedMedia>();
 
-// 0.20.5.5 / Shared architecture collision. Every placed GLB is solid.
+// 0.20.5.6 / Shared architecture collision. Every placed GLB is solid.
 // Named stairs/ramps use their real rendered triangles as the walking surface;
 // this supports a slope and a flat landing even when both are one GLB mesh.
 const AVATAR_RADIUS=.38;
@@ -4222,7 +4222,14 @@ function buildExactSurfaceCache(item:ManagedPlacedMedia):SurfaceCache {
         const triangle={ax:a.x,ay:a.y,az:a.z,bx:b.x,by:b.y,bz:b.z,cx:c.x,cy:c.y,cz:c.z};
         const minX=Math.min(a.x,b.x,c.x),maxX=Math.max(a.x,b.x,c.x);
         const minZ=Math.min(a.z,b.z,c.z),maxZ=Math.max(a.z,b.z,c.z);
-        const walkable=Math.abs(ny)/length>=.36;
+        const upward=ny/length;
+        // Only outward, upward-facing triangles can support the avatar. Using
+        // abs(ny) also admitted the underside of thick one-mesh ramps; when the
+        // real top briefly exceeded step height, that lower face was selected
+        // and the avatar appeared half buried inside the GLB.
+        const walkable=upward>=.36;
+        const wall=Math.abs(upward)<.36;
+        if(!walkable&&!wall)continue;
         const target=walkable?triangles:walls,targetCells=walkable?cells:wallCells;
         const triangleIndex=target.push(triangle)-1;
         for(let gx=Math.floor(minX/COLLISION_GRID_SIZE);gx<=Math.floor(maxX/COLLISION_GRID_SIZE);gx++)
@@ -4232,10 +4239,10 @@ function buildExactSurfaceCache(item:ManagedPlacedMedia):SurfaceCache {
           }
       }
     }
-  } catch(error) { console.warn("[0.20.5.5 SURFACE CACHE FALLBACK]",item.id,error); }
+  } catch(error) { console.warn("[0.20.5.6 SURFACE CACHE FALLBACK]",item.id,error); }
   const cache={signature,triangles,cells,walls,wallCells,failed:triangles.length===0};
   exactSurfaceCaches.set(item.id,cache);
-  console.log("[0.20.5.5 RAMP COLLISION READY]",item.id,{surfaces:triangles.length,walls:walls.length});
+  console.log("[0.20.5.6 RAMP COLLISION READY]",item.id,{surfaces:triangles.length,walls:walls.length});
   return cache;
 }
 function exactSurfaceHeight(item:ManagedPlacedMedia,x:number,z:number,currentFoot:number):number|null {

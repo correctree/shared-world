@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.4.4 DOUBLE-SIDED MOBILE LIGHTING FIX LOADED]");
+console.log("[PROTOTYPE 0.20.5 WALKABLE ARCHITECTURE CORE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4158,6 +4158,60 @@ worldPackageInput.addEventListener("change",async()=>{
 });
 
 const managedPlacedMedia = new Map<string, ManagedPlacedMedia>();
+
+// 0.20.5 / Lightweight shared architecture collision. Every placed GLB is
+// solid. GLBs named stair/ramp/slope (including Japanese names) expose a
+// walkable inclined surface instead of acting as a full-height obstacle.
+const AVATAR_RADIUS=.38;
+const AVATAR_FOOT_OFFSET=.65;
+const MAX_WALK_STEP=.42;
+function glbWorldBounds(item:ManagedPlacedMedia) {
+  if(item.kind!=="glb"||!item.entity.enabled)return null;
+  let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity,found=false;
+  for(const render of item.entity.findComponents("render") as any[])for(const mesh of render.meshInstances||[]) {
+    const box=mesh.aabb;if(!box)continue;const c=box.center,h=box.halfExtents;found=true;
+    minX=Math.min(minX,c.x-h.x);minY=Math.min(minY,c.y-h.y);minZ=Math.min(minZ,c.z-h.z);
+    maxX=Math.max(maxX,c.x+h.x);maxY=Math.max(maxY,c.y+h.y);maxZ=Math.max(maxZ,c.z+h.z);
+  }
+  return found?{minX,minY,minZ,maxX,maxY,maxZ}:null;
+}
+function isWalkableRamp(item:ManagedPlacedMedia) {
+  return /(stair|stairs|staircase|ramp|slope|階段|スロープ)/i.test(item.title);
+}
+function rampSurfaceHeight(item:ManagedPlacedMedia,b:NonNullable<ReturnType<typeof glbWorldBounds>>,x:number,z:number) {
+  const angle=item.entity.getEulerAngles().y*pc.math.DEG_TO_RAD;
+  const forwardX=-Math.sin(angle),forwardZ=-Math.cos(angle);
+  const cx=(b.minX+b.maxX)*.5,cz=(b.minZ+b.maxZ)*.5;
+  const half=Math.max(.001,(Math.abs(forwardX)*(b.maxX-b.minX)+Math.abs(forwardZ)*(b.maxZ-b.minZ))*.5);
+  const t=pc.math.clamp(((x-cx)*forwardX+(z-cz)*forwardZ)/(half*2)+.5,0,1);
+  return b.minY+(b.maxY-b.minY)*t;
+}
+function architectureGroundHeight(x:number,z:number,currentFoot:number) {
+  let ground=0;
+  for(const item of managedPlacedMedia.values()) {
+    const b=glbWorldBounds(item);if(!b)continue;
+    if(x<b.minX+AVATAR_RADIUS||x>b.maxX-AVATAR_RADIUS||z<b.minZ+AVATAR_RADIUS||z>b.maxZ-AVATAR_RADIUS)continue;
+    const top=isWalkableRamp(item)?rampSurfaceHeight(item,b,x,z):b.maxY;
+    if(top<=currentFoot+MAX_WALK_STEP&&top>=currentFoot-1.2)ground=Math.max(ground,top);
+  }
+  return ground;
+}
+function architectureBlocked(x:number,z:number,centerY:number) {
+  const foot=centerY-AVATAR_FOOT_OFFSET,head=centerY+AVATAR_FOOT_OFFSET;
+  for(const item of managedPlacedMedia.values()) {
+    const b=glbWorldBounds(item);if(!b)continue;
+    if(isWalkableRamp(item)) {
+      const inside=x+AVATAR_RADIUS>b.minX&&x-AVATAR_RADIUS<b.maxX&&z+AVATAR_RADIUS>b.minZ&&z-AVATAR_RADIUS<b.maxZ;
+      if(inside&&rampSurfaceHeight(item,b,x,z)>foot+MAX_WALK_STEP)return true;
+      continue;
+    }
+    if(b.maxY<=foot+MAX_WALK_STEP)continue;
+    const overlapsXZ=x+AVATAR_RADIUS>b.minX&&x-AVATAR_RADIUS<b.maxX&&z+AVATAR_RADIUS>b.minZ&&z-AVATAR_RADIUS<b.maxZ;
+    const overlapsY=foot<b.maxY-.04&&head>b.minY+.04;
+    if(overlapsXZ&&overlapsY)return true;
+  }
+  return false;
+}
 let selectedManagedMediaId: string | null = null;
 let editingManagedMediaId: string | null = null;
 
@@ -7050,9 +7104,11 @@ app.on("update", (dt: number) => {
   const me = avatars.get(currentSessionId);
   if (!me) return;
 
-  // Ground level is the existing sphere's center (0.65 m). Keep the vertical
-  // motion bounded before sending it through the authoritative move handler.
+  // Ground level follows walkable GLB tops and named stair/ramp surfaces.
   const step=Math.min(dt,.1);
+  const architectureGround=architectureGroundHeight(
+    localPosition.x,localPosition.z,localPosition.y-AVATAR_FOOT_OFFSET);
+  const standingY=architectureGround+AVATAR_FOOT_OFFSET;
   if(flying) {
     const ascend=(keys.has("space")||mobileAscend)?1:0;
     const descend=(keys.has("shift")||mobileDescend)?1:0;
@@ -7060,13 +7116,13 @@ app.on("update", (dt: number) => {
     verticalVelocity=0;
     jumpRequested=false;
   } else {
-    if(jumpRequested && localPosition.y<=.651) verticalVelocity=5.4;
+    if(jumpRequested && localPosition.y<=standingY+.01) verticalVelocity=5.4;
     jumpRequested=false;
-    if(localPosition.y>.65 || verticalVelocity>0) {
+    if(localPosition.y>standingY || verticalVelocity>0) {
       verticalVelocity=Math.max(-6,verticalVelocity-11*step);
-      localPosition.y=Math.max(.65,localPosition.y+verticalVelocity*step);
-      if(localPosition.y<=.65) verticalVelocity=0;
-    }
+      localPosition.y=Math.max(standingY,localPosition.y+verticalVelocity*step);
+      if(localPosition.y<=standingY) verticalVelocity=0;
+    } else localPosition.y=standingY;
   }
   me.entity.setPosition(localPosition);
 
@@ -7102,17 +7158,25 @@ app.on("update", (dt: number) => {
 
     me.entity.setEulerAngles(0, moveAngle, 0);
 
-    localPosition.x = pc.math.clamp(
+    const nextX = pc.math.clamp(
       localPosition.x + moveX * MOVE_SPEED * Math.min(dt,0.1),
       -Math.max(6.5,currentWorldEnvironment.groundSize/2-1),
       Math.max(6.5,currentWorldEnvironment.groundSize/2-1)
     );
+    if(!architectureBlocked(nextX,localPosition.z,localPosition.y))localPosition.x=nextX;
 
-    localPosition.z = pc.math.clamp(
+    const nextZ = pc.math.clamp(
       localPosition.z + moveZ * MOVE_SPEED * Math.min(dt,0.1),
       -Math.max(6.5,currentWorldEnvironment.groundSize/2-1),
       Math.max(6.5,currentWorldEnvironment.groundSize/2-1)
     );
+    if(!architectureBlocked(localPosition.x,nextZ,localPosition.y))localPosition.z=nextZ;
+
+    if(!flying&&verticalVelocity<=0) {
+      const nextGround=architectureGroundHeight(
+        localPosition.x,localPosition.z,localPosition.y-AVATAR_FOOT_OFFSET);
+      localPosition.y=Math.max(localPosition.y,nextGround+AVATAR_FOOT_OFFSET);
+    }
 
     me.entity.setPosition(localPosition);
 

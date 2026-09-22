@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.5.1 MOBILE SLOPE STABILITY FIX LOADED]");
+console.log("[PROTOTYPE 0.20.5.2 EXPLICIT SLOPE DIRECTION FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4178,9 +4178,24 @@ function glbWorldBounds(item:ManagedPlacedMedia) {
 function isWalkableRamp(item:ManagedPlacedMedia) {
   return /(stair|stairs|staircase|ramp|slope|階段|スロープ)/i.test(item.title);
 }
-function rampSurfaceHeight(item:ManagedPlacedMedia,b:NonNullable<ReturnType<typeof glbWorldBounds>>,x:number,z:number) {
+function rampAxis(item:ManagedPlacedMedia,b:NonNullable<ReturnType<typeof glbWorldBounds>>) {
+  const title=item.title.toLowerCase();
   const angle=item.entity.getEulerAngles().y*pc.math.DEG_TO_RAD;
-  const forwardX=-Math.sin(angle),forwardZ=-Math.cos(angle);
+  const forward={x:-Math.sin(angle),z:-Math.cos(angle)};
+  const right={x:Math.cos(angle),z:-Math.sin(angle)};
+  if(/(?:_|-|\s)(back|backward)(?:_|-|\s|\.|$)/.test(title))return{x:-forward.x,z:-forward.z};
+  if(/(?:_|-|\s)(right)(?:_|-|\s|\.|$)/.test(title))return right;
+  if(/(?:_|-|\s)(left)(?:_|-|\s|\.|$)/.test(title))return{x:-right.x,z:-right.z};
+  if(/(?:_|-|\s)(forward|front)(?:_|-|\s|\.|$)/.test(title))return forward;
+  // AUTO: choose the local horizontal axis with the longest projection of
+  // the GLB bounds. Lateral motion is then excluded from height calculation.
+  const width=b.maxX-b.minX,depth=b.maxZ-b.minZ;
+  const forwardSpan=Math.abs(forward.x)*width+Math.abs(forward.z)*depth;
+  const rightSpan=Math.abs(right.x)*width+Math.abs(right.z)*depth;
+  return rightSpan>forwardSpan?right:forward;
+}
+function rampSurfaceHeight(item:ManagedPlacedMedia,b:NonNullable<ReturnType<typeof glbWorldBounds>>,x:number,z:number) {
+  const axis=rampAxis(item,b),forwardX=axis.x,forwardZ=axis.z;
   const cx=(b.minX+b.maxX)*.5,cz=(b.minZ+b.maxZ)*.5;
   const half=Math.max(.001,(Math.abs(forwardX)*(b.maxX-b.minX)+Math.abs(forwardZ)*(b.maxZ-b.minZ))*.5);
   const t=pc.math.clamp(((x-cx)*forwardX+(z-cz)*forwardZ)/(half*2)+.5,0,1);

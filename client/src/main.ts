@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.5.3 EXACT MESH SURFACE COLLISION LOADED]");
+console.log("[PROTOTYPE 0.20.5.4 RAMP CAPSULE COLLISION LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4159,7 +4159,7 @@ worldPackageInput.addEventListener("change",async()=>{
 
 const managedPlacedMedia = new Map<string, ManagedPlacedMedia>();
 
-// 0.20.5.3 / Shared architecture collision. Every placed GLB is solid.
+// 0.20.5.4 / Shared architecture collision. Every placed GLB is solid.
 // Named stairs/ramps use their real rendered triangles as the walking surface;
 // this supports a slope and a flat landing even when both are one GLB mesh.
 const AVATAR_RADIUS=.38;
@@ -4167,7 +4167,7 @@ const AVATAR_FOOT_OFFSET=.65;
 const MAX_WALK_STEP=.58;
 const COLLISION_GRID_SIZE=1;
 type SurfaceTriangle={ax:number;ay:number;az:number;bx:number;by:number;bz:number;cx:number;cy:number;cz:number};
-type SurfaceCache={signature:string;triangles:SurfaceTriangle[];cells:Map<string,number[]>;failed:boolean};
+type SurfaceCache={signature:string;triangles:SurfaceTriangle[];cells:Map<string,number[]>;walls:SurfaceTriangle[];wallCells:Map<string,number[]>;failed:boolean};
 const exactSurfaceCaches=new Map<string,SurfaceCache>();
 function glbWorldBounds(item:ManagedPlacedMedia) {
   if(item.kind!=="glb"||!item.entity.enabled)return null;
@@ -4194,6 +4194,7 @@ function buildExactSurfaceCache(item:ManagedPlacedMedia):SurfaceCache {
   const previous=exactSurfaceCaches.get(item.id);
   if(previous?.signature===signature)return previous;
   const triangles:SurfaceTriangle[]=[],cells=new Map<string,number[]>();
+  const walls:SurfaceTriangle[]=[],wallCells=new Map<string,number[]>();
   try {
     (item.entity as any).syncHierarchy?.();
     for(const render of item.entity.findComponents("render") as any[])for(const instance of render.meshInstances||[]) {
@@ -4217,23 +4218,24 @@ function buildExactSurfaceCache(item:ManagedPlacedMedia):SurfaceCache {
         const ux=b.x-a.x,uy=b.y-a.y,uz=b.z-a.z,vx=c.x-a.x,vy=c.y-a.y,vz=c.z-a.z;
         const nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;
         const length=Math.hypot(nx,ny,nz);
-        // Reject vertical/degenerate faces and slopes steeper than about 69°.
-        if(length<1e-7||Math.abs(ny)/length<.36)continue;
+        if(length<1e-7)continue;
         const triangle={ax:a.x,ay:a.y,az:a.z,bx:b.x,by:b.y,bz:b.z,cx:c.x,cy:c.y,cz:c.z};
-        const triangleIndex=triangles.push(triangle)-1;
         const minX=Math.min(a.x,b.x,c.x),maxX=Math.max(a.x,b.x,c.x);
         const minZ=Math.min(a.z,b.z,c.z),maxZ=Math.max(a.z,b.z,c.z);
+        const walkable=Math.abs(ny)/length>=.36;
+        const target=walkable?triangles:walls,targetCells=walkable?cells:wallCells;
+        const triangleIndex=target.push(triangle)-1;
         for(let gx=Math.floor(minX/COLLISION_GRID_SIZE);gx<=Math.floor(maxX/COLLISION_GRID_SIZE);gx++)
           for(let gz=Math.floor(minZ/COLLISION_GRID_SIZE);gz<=Math.floor(maxZ/COLLISION_GRID_SIZE);gz++) {
-            const key=`${gx},${gz}`,bucket=cells.get(key);
-            if(bucket)bucket.push(triangleIndex);else cells.set(key,[triangleIndex]);
+            const key=`${gx},${gz}`,bucket=targetCells.get(key);
+            if(bucket)bucket.push(triangleIndex);else targetCells.set(key,[triangleIndex]);
           }
       }
     }
-  } catch(error) { console.warn("[0.20.5.3 SURFACE CACHE FALLBACK]",item.id,error); }
-  const cache={signature,triangles,cells,failed:triangles.length===0};
+  } catch(error) { console.warn("[0.20.5.4 SURFACE CACHE FALLBACK]",item.id,error); }
+  const cache={signature,triangles,cells,walls,wallCells,failed:triangles.length===0};
   exactSurfaceCaches.set(item.id,cache);
-  console.log("[0.20.5.3 EXACT SURFACE READY]",item.id,triangles.length);
+  console.log("[0.20.5.4 RAMP COLLISION READY]",item.id,{surfaces:triangles.length,walls:walls.length});
   return cache;
 }
 function exactSurfaceHeight(item:ManagedPlacedMedia,x:number,z:number,currentFoot:number):number|null {
@@ -4255,6 +4257,42 @@ function exactSurfaceHeight(item:ManagedPlacedMedia,x:number,z:number,currentFoo
     if(y<=currentFoot+MAX_WALK_STEP&&y>=currentFoot-1.2&&y>best)best=y;
   }
   return Number.isFinite(best)?best:null;
+}
+function supportedSurfaceHeight(item:ManagedPlacedMedia,x:number,z:number,currentFoot:number):number|null {
+  // Sample a compact footprint so the avatar rises when its front reaches the
+  // slope, rather than after the visual body has already entered the mesh.
+  const radius=AVATAR_RADIUS*.58;
+  const samples=[[0,0],[radius,0],[-radius,0],[0,radius],[0,-radius]];
+  let best=-Infinity;
+  for(const [dx,dz] of samples) {
+    const y=exactSurfaceHeight(item,x+dx,z+dz,currentFoot);
+    if(y!==null&&y>best)best=y;
+  }
+  return Number.isFinite(best)?best:null;
+}
+function pointSegmentDistance2D(px:number,pz:number,ax:number,az:number,bx:number,bz:number) {
+  const dx=bx-ax,dz=bz-az,length2=dx*dx+dz*dz;
+  const t=length2>1e-10?pc.math.clamp(((px-ax)*dx+(pz-az)*dz)/length2,0,1):0;
+  return Math.hypot(px-(ax+dx*t),pz-(az+dz*t));
+}
+function exactRampWallBlocked(item:ManagedPlacedMedia,x:number,z:number,foot:number,head:number) {
+  const cache=buildExactSurfaceCache(item);
+  if(cache.failed)return false;
+  const gx=Math.floor(x/COLLISION_GRID_SIZE),gz=Math.floor(z/COLLISION_GRID_SIZE);
+  const checked=new Set<number>();
+  for(let ox=-1;ox<=1;ox++)for(let oz=-1;oz<=1;oz++)for(const index of cache.wallCells.get(`${gx+ox},${gz+oz}`)||[]) {
+    if(checked.has(index))continue;checked.add(index);
+    const t=cache.walls[index];
+    const minY=Math.min(t.ay,t.by,t.cy),maxY=Math.max(t.ay,t.by,t.cy);
+    if(head<=minY+.03||foot>=maxY-.03)continue;
+    const distance=Math.min(
+      pointSegmentDistance2D(x,z,t.ax,t.az,t.bx,t.bz),
+      pointSegmentDistance2D(x,z,t.bx,t.bz,t.cx,t.cz),
+      pointSegmentDistance2D(x,z,t.cx,t.cz,t.ax,t.az)
+    );
+    if(distance<AVATAR_RADIUS*.92)return true;
+  }
+  return false;
 }
 function rampAxis(item:ManagedPlacedMedia,b:NonNullable<ReturnType<typeof glbWorldBounds>>) {
   const title=item.title.toLowerCase();
@@ -4288,7 +4326,7 @@ function architectureGroundHeight(x:number,z:number,currentFoot:number) {
     let top=b.maxY;
     if(isWalkableRamp(item)) {
       const cache=buildExactSurfaceCache(item);
-      const exact=exactSurfaceHeight(item,x,z,currentFoot);
+      const exact=supportedSurfaceHeight(item,x,z,currentFoot);
       if(!cache.failed&&exact===null)continue;
       top=exact??rampSurfaceHeight(item,b,x,z);
     }
@@ -4303,7 +4341,12 @@ function architectureBlocked(x:number,z:number,centerY:number) {
     if(isWalkableRamp(item)) {
       const inside=x+AVATAR_RADIUS>b.minX&&x-AVATAR_RADIUS<b.maxX&&z+AVATAR_RADIUS>b.minZ&&z-AVATAR_RADIUS<b.maxZ;
       const cache=buildExactSurfaceCache(item);
-      const exact=exactSurfaceHeight(item,x,z,foot);
+      // A valid surface directly under the center wins over coincident internal
+      // faces at the ramp/landing seam. From the side there is no center
+      // support yet, so the vertical wall still blocks the avatar capsule.
+      const centerSurface=exactSurfaceHeight(item,x,z,foot);
+      if(centerSurface===null&&exactRampWallBlocked(item,x,z,foot,head))return true;
+      const exact=supportedSurfaceHeight(item,x,z,foot);
       if(inside&&(cache.failed? rampSurfaceHeight(item,b,x,z):(exact??-Infinity))>foot+MAX_WALK_STEP)return true;
       continue;
     }

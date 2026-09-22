@@ -29,6 +29,7 @@ type MediaActionPayload = {
 };
 
 export class SharedWorldRoom extends Room<WorldState> {
+  private environmentOwnerClientId = "";
   private environment = {
     sky:"#090c11", ground:"#262b33", grid:"#474d57", gridVisible:true,
     ambient:0.45, sunlight:1.5, lightColor:"#ffffff", sunAngle:45,
@@ -52,6 +53,25 @@ export class SharedWorldRoom extends Room<WorldState> {
     },this.environment.particleDuration*1000);
   }
   private worldLimit(size:number=this.environment.groundSize) { return Math.max(6.5,size/2-1); }
+  private environmentActorId(client:Client) {
+    const player=this.state.players.get(client.sessionId);
+    return player?.clientId || `session:${client.sessionId}`;
+  }
+  private canEditEnvironment(client:Client,claim=false) {
+    const actorId=this.environmentActorId(client);
+    if(!this.environmentOwnerClientId&&claim)this.environmentOwnerClientId=actorId;
+    return !this.environmentOwnerClientId||this.environmentOwnerClientId===actorId;
+  }
+  private sendEnvironmentPermissions(target?:Client) {
+    const recipients=target?[target]:this.clients;
+    const ownerPresent=!!this.environmentOwnerClientId&&this.clients.some(
+      item=>this.environmentActorId(item)===this.environmentOwnerClientId);
+    for(const item of recipients)item.send("environment:permissions",{
+      locked:!!this.environmentOwnerClientId,
+      canEdit:this.canEditEnvironment(item,false),
+      ownerPresent
+    });
+  }
   private cleanEnvironment(input:any) {
     if (!input || typeof input!=="object") return null;
     const color=(value:unknown,fallback:string)=>
@@ -504,11 +524,16 @@ export class SharedWorldRoom extends Room<WorldState> {
     // 0.17 / Portable world manifest. Assets remain at their original URLs.
     this.onMessage("environment:get",(client:Client)=>{
       client.send("environment:state",this.environment);
+      this.sendEnvironmentPermissions(client);
     });
     this.onMessage("environment:set",(client:Client,payload:any)=>{
       if (!this.state.players.has(client.sessionId)) return;
       const next=this.cleanEnvironment(payload);
       if (!next) return;
+      if(!this.canEditEnvironment(client,true)) {
+        client.send("environment:error",{reason:"owner-locked"});
+        this.sendEnvironmentPermissions(client);return;
+      }
       if(next.cycleEnabled) next.cycleStartedAt=Date.now();
       this.environment=next;
       this.scheduleParticleEnd();
@@ -519,6 +544,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
       this.broadcast("environment:state",next);
       client.send("environment:state",next);
+      this.sendEnvironmentPermissions();
     });
 
     this.onMessage("world:export", (client: Client) => {
@@ -590,6 +616,9 @@ export class SharedWorldRoom extends Room<WorldState> {
           scale:bounded(scale,1,.05,20)
         })});
       }
+      if(payload.environment&&!this.canEditEnvironment(client,true)) {
+        fail("environment-owner-locked");this.sendEnvironmentPermissions(client);return;
+      }
       for (const entry of entries) {
         this.mediaBehaviors.set(entry.id, entry.behavior);
         this.state.mediaObjects.set(entry.id, entry.media);
@@ -603,6 +632,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           this.scheduleParticleEnd();
           this.broadcast("environment:state",imported);
           client.send("environment:state",imported);
+          this.sendEnvironmentPermissions();
         }
       }
       client.send("world:import:result", {ok:true, count:entries.length});
@@ -658,6 +688,8 @@ export class SharedWorldRoom extends Room<WorldState> {
       z: Math.sin(angle) * radius
     }));
 
+    this.sendEnvironmentPermissions();
+
     console.log(`[join] ${safeName} / ${client.sessionId} / client:${clientId || "legacy"}`);
     console.log("[AUTHORITATIVE SNAPSHOT]", {
       players: this.state.players.size,
@@ -675,6 +707,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
     // If this session was already replaced, deleting by its old sessionId is harmless.
     this.state.players.delete(client.sessionId);
+    this.sendEnvironmentPermissions();
     console.log("[SESSION CLEANUP]", name, client.sessionId, { consented, players: this.state.players.size });
   }
 

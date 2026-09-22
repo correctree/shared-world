@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.1.6 BIDIRECTIONAL DIRECT VOICE LOADED]");
+console.log("[PROTOTYPE 0.20.3 ROOM ENVIRONMENT OWNERSHIP LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1169,6 +1169,8 @@ const voiceAnalysers=new Map<string,{source:MediaStreamAudioSourceNode,analyser:
   outputGain:GainNode|null,gateGain:GainNode|null,outputNodes:AudioNode[],smoothedLevel:number,activeFrames:number,transmitGate:boolean}>();
 const voicePendingCandidates=new Map<string,RTCIceCandidateInit[]>();
 const voiceReconnectTimers=new Map<string,number>();
+const voicePresentSessions=new Set<string>();
+let voiceMeshTimer:number|null=null;
 let voiceEnabled=false;
 let voiceRawStream:MediaStream|null=null;
 let voiceSendStream:MediaStream|null=null;
@@ -1178,7 +1180,17 @@ let voiceInputGain:GainNode|null=null;
 let voiceEffectNodes:AudioNode[]=[];
 let voiceDestination:MediaStreamAudioDestinationNode|null=null;
 function setVoiceStatus(text:string,error=false) {
-  voiceStatus.textContent=`VOICE: ${text}`;voiceStatus.style.color=error?"#ff7187":text==="LIVE"?"#58e6bb":"#9fb3c6";
+  voiceStatus.textContent=`VOICE: ${text}`;voiceStatus.style.color=error?"#ff7187":text.includes("LIVE")?"#58e6bb":"#9fb3c6";
+}
+function refreshVoiceMeshStatus() {
+  if(!voiceEnabled)return;
+  const targets=voicePresentSessions.size;
+  const connected=Array.from(voicePeers.values()).filter(peer=>peer.connectionState==="connected"||peer.iceConnectionState==="connected"||peer.iceConnectionState==="completed").length;
+  setVoiceStatus(targets?`${connected}/${targets} LIVE`:"READY");
+}
+function announceVoicePresence() {
+  if(!voiceEnabled||!activeRoom)return;
+  activeRoom.send("voice:ready",{});refreshVoiceMeshStatus();
 }
 function installVoiceAnalyser(sessionId:string,stream:MediaStream,playOutput=false) {
   const context=voiceAudioContext;if(!context)return;
@@ -1273,7 +1285,7 @@ function closeVoicePeer(sessionId:string) {
   const audio=voiceAudioElements.get(sessionId);if(audio){audio.pause();audio.srcObject=null;audio.remove();voiceAudioElements.delete(sessionId);}
   const analyser=voiceAnalysers.get(sessionId);if(analyser)try {analyser.source.disconnect();analyser.analyser.disconnect();for(const node of analyser.outputNodes)node.disconnect();} catch {}
   voiceAnalysers.delete(sessionId);voicePendingCandidates.delete(sessionId);
-  if(voiceEnabled&&voicePeers.size===0)setVoiceStatus(avatars.size>1?"CONNECTING":"READY");
+  voicePresentSessions.delete(sessionId);refreshVoiceMeshStatus();
 }
 function scheduleVoiceReconnect(sessionId:string,delay=1800) {
   if(!voiceEnabled||voiceReconnectTimers.has(sessionId))return;
@@ -1292,6 +1304,7 @@ function scheduleVoiceReconnect(sessionId:string,delay=1800) {
 }
 async function ensureVoicePeer(sessionId:string,makeOffer=false) {
   if(!voiceEnabled||!activeRoom||sessionId===currentSessionId)return null;
+  voicePresentSessions.add(sessionId);
   let peer=voicePeers.get(sessionId);
   if(!peer) {
     peer=new RTCPeerConnection({iceServers:[{urls:["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]}],iceCandidatePoolSize:4});voicePeers.set(sessionId,peer);
@@ -1308,15 +1321,16 @@ async function ensureVoicePeer(sessionId:string,makeOffer=false) {
         void audio.play().catch(error=>{console.warn("[VOICE PLAYBACK BLOCKED]",error);setVoiceStatus("TAP MIC",true);});
         installVoiceAnalyser(sessionId,stream,false);
       }
-      setVoiceStatus("LIVE");
+      refreshVoiceMeshStatus();
     };
     peer.onconnectionstatechange=()=>{
-      if(peer?.connectionState==="connected") {const timer=voiceReconnectTimers.get(sessionId);if(timer!==undefined)window.clearTimeout(timer);voiceReconnectTimers.delete(sessionId);setVoiceStatus("LIVE");}
+      if(peer?.connectionState==="connected") {const timer=voiceReconnectTimers.get(sessionId);if(timer!==undefined)window.clearTimeout(timer);voiceReconnectTimers.delete(sessionId);refreshVoiceMeshStatus();}
       else if(peer?.connectionState==="disconnected")scheduleVoiceReconnect(sessionId,2500);
       else if(peer?.connectionState==="failed")scheduleVoiceReconnect(sessionId,300);
+      else refreshVoiceMeshStatus();
     };
     peer.oniceconnectionstatechange=()=>{
-      if(peer?.iceConnectionState==="connected"||peer?.iceConnectionState==="completed")setVoiceStatus("LIVE");
+      if(peer?.iceConnectionState==="connected"||peer?.iceConnectionState==="completed")refreshVoiceMeshStatus();
       else if(peer?.iceConnectionState==="disconnected")scheduleVoiceReconnect(sessionId,2500);
       else if(peer?.iceConnectionState==="failed")scheduleVoiceReconnect(sessionId,300);
     };
@@ -1331,7 +1345,7 @@ async function ensureVoicePeer(sessionId:string,makeOffer=false) {
 }
 async function handleVoiceSignal(payload:any) {
   if(!voiceEnabled||!activeRoom)return;
-  const from=String(payload?.fromSessionId||"");if(!from)return;
+  const from=String(payload?.fromSessionId||"");if(!from)return;voicePresentSessions.add(from);
   const peer=await ensureVoicePeer(from,false);if(!peer)return;
   try {
     if(payload.description) {
@@ -1355,12 +1369,15 @@ async function enableVoice() {
   try {
     voiceRawStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:{ideal:true},noiseSuppression:{ideal:false},autoGainControl:{ideal:false},channelCount:{ideal:1}},video:false});
     voiceEnabled=true;await rebuildVoiceSendStream();voiceToggleButton.textContent="MIC ON";voiceToggleButton.classList.add("active");
-    activeRoom?.send("voice:ready",{});setVoiceStatus(avatars.size>1?"CONNECTING":"READY");
+    announceVoicePresence();
+    if(voiceMeshTimer!==null)window.clearInterval(voiceMeshTimer);
+    voiceMeshTimer=window.setInterval(announceVoicePresence,5000);
   } catch(error) {voiceEnabled=false;setVoiceStatus("DENIED",true);console.warn("[VOICE MIC ERROR]",error);}
   finally {voiceToggleButton.disabled=false;}
 }
 function disableVoice(notify=true) {
   if(notify)activeRoom?.send("voice:leave",{});voiceEnabled=false;
+  if(voiceMeshTimer!==null)window.clearInterval(voiceMeshTimer);voiceMeshTimer=null;voicePresentSessions.clear();
   for(const sessionId of Array.from(voicePeers.keys()))closeVoicePeer(sessionId);
   voiceRawStream?.getTracks().forEach(track=>track.stop());voiceRawStream=null;voiceSendStream=null;
   try {voiceSourceNode?.disconnect();voiceInputGain?.disconnect();} catch {}
@@ -3142,6 +3159,7 @@ function resetClientWorldForReentry() {
 
 async function enterWorld() {
   if(voiceEnabled)disableVoice(false);
+  applyEnvironmentPermissions({canEdit:false,locked:false,ownerPresent:false});
   unlockResonanceAudio();
   enterButton.disabled = true;
   status.textContent = "接続しています…";
@@ -3222,7 +3240,10 @@ async function enterWorld() {
     });
     room.onMessage("voice:ready",(payload:any)=>{
       if(room!==activeRoom||!voiceEnabled)return;
-      const sessionId=String(payload?.sessionId||"");if(sessionId)void ensureVoicePeer(sessionId,true);
+      const sessionId=String(payload?.sessionId||"");if(!sessionId)return;
+      voicePresentSessions.add(sessionId);const peer=voicePeers.get(sessionId);
+      if(!peer||peer.connectionState==="failed"||peer.connectionState==="disconnected")void ensureVoicePeer(sessionId,true);
+      else refreshVoiceMeshStatus();
     });
     room.onMessage("voice:signal",(payload:any)=>{if(room===activeRoom)void handleVoiceSignal(payload);});
     room.onMessage("voice:leave",(payload:any)=>{if(room===activeRoom)closeVoicePeer(String(payload?.sessionId||""));});
@@ -3334,6 +3355,14 @@ async function enterWorld() {
     });
     room.onMessage("environment:state",(payload:any)=>{
       if (room===activeRoom) applyWorldEnvironment(payload);
+    });
+    room.onMessage("environment:permissions",(payload:any)=>{
+      if(room===activeRoom)applyEnvironmentPermissions(payload);
+    });
+    room.onMessage("environment:error",(payload:any)=>{
+      if(room!==activeRoom)return;
+      applyEnvironmentPermissions({canEdit:false,locked:true,ownerPresent:true});
+      if(payload?.reason==="owner-locked")window.alert("WORLD ENVIRONMENT is locked by its owner.");
     });
     room.send("environment:get",{});
     room.onMessage("world:export:result", (manifest:any) => {
@@ -4206,8 +4235,10 @@ document.body.appendChild(mediaManagerPanel);
 mediaManagerPanel.appendChild(worldManifestControls);
 
 const environmentEditor=document.createElement("div");
+let environmentCanEdit=false;
 environmentEditor.style.cssText="border:1px solid #54718c;border-radius:12px;padding:12px;margin:12px 0;color:#e7f3ff";
 environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
+  <div data-env-owner-status style="font-size:11px;margin:8px 0;padding:7px;border-radius:7px;background:rgba(65,110,140,.18);color:#aaccdf">CHECKING EDIT PERMISSION…</div>
   <label style="display:block;font-size:12px;margin:9px 0">TIME PRESET
     <select data-env="environmentPreset"><option value="custom">CUSTOM</option><option value="morning">MORNING</option><option value="day">DAY</option><option value="sunset">SUNSET</option><option value="night">NIGHT</option></select>
   </label>
@@ -4299,7 +4330,20 @@ let uploadedGroundRef="";
 let uploadedParticleRef="";
 const customParticleInput=environmentEditor.querySelector<HTMLInputElement>("[data-particle-file]")!;
 const customParticleStatus=environmentEditor.querySelector<HTMLElement>("[data-particle-status]")!;
+function applyEnvironmentPermissions(payload:any) {
+  environmentCanEdit=payload?.canEdit===true;
+  const locked=payload?.locked===true,ownerPresent=payload?.ownerPresent===true;
+  const status=environmentEditor.querySelector<HTMLElement>("[data-env-owner-status]")!;
+  status.textContent=environmentCanEdit
+    ?locked?"ENVIRONMENT OWNER — EDITING ENABLED":"UNLOCKED — FIRST APPLY BECOMES OWNER"
+    :ownerPresent?"VIEW ONLY — ENVIRONMENT LOCKED BY OWNER":"VIEW ONLY — OWNER OFFLINE";
+  status.style.color=environmentCanEdit?"#58e6bb":"#ffca72";
+  for(const control of environmentEditor.querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLButtonElement>("input,select,button"))
+    control.disabled=!environmentCanEdit;
+  environmentEditor.style.opacity=environmentCanEdit?"1":".72";
+}
 customParticleInput.addEventListener("change",async()=>{
+  if(!environmentCanEdit)return;
   const file=customParticleInput.files?.[0];customParticleInput.value="";
   if(!file || !activeRoom) return;
   if(file.type!=="image/png" || file.size>4*1024*1024) {
@@ -4330,6 +4374,7 @@ customParticleInput.addEventListener("change",async()=>{
 const customGroundInput=environmentEditor.querySelector<HTMLInputElement>("[data-ground-file]")!;
 const customGroundStatus=environmentEditor.querySelector<HTMLElement>("[data-ground-status]")!;
 customGroundInput.addEventListener("change",async()=>{
+  if(!environmentCanEdit)return;
   const file=customGroundInput.files?.[0];customGroundInput.value="";
   if(!file || !activeRoom) return;
   if(file.size>12*1024*1024) {customGroundStatus.textContent="Image exceeds 12 MB";return;}
@@ -4357,6 +4402,7 @@ customGroundInput.addEventListener("change",async()=>{
 const panoramaInput=environmentEditor.querySelector<HTMLInputElement>("[data-panorama-file]")!;
 const panoramaStatus=environmentEditor.querySelector<HTMLElement>("[data-panorama-status]")!;
 panoramaInput.addEventListener("change",async()=>{
+  if(!environmentCanEdit)return;
   const file=panoramaInput.files?.[0];panoramaInput.value="";
   if(!file || !activeRoom) return;
   if(file.size>12*1024*1024) {panoramaStatus.textContent="Image exceeds 12 MB";return;}
@@ -4418,7 +4464,7 @@ environmentEditor.querySelector<HTMLSelectElement>('[data-env="environmentPreset
     environmentEditor.querySelector<HTMLSelectElement>('[data-env="skyMode"]')!.value="color";
   });
 environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEventListener("click",()=>{
-  if (!activeRoom) return;
+  if (!activeRoom||!environmentCanEdit) return;
   const payload:any={};
   for (const key of Object.keys(currentWorldEnvironment)) {
     const input=environmentEditor.querySelector<HTMLInputElement>(`[data-env="${key}"]`);

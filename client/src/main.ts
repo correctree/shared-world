@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.4 AVATAR FLASHLIGHT LOADED]");
+console.log("[PROTOTYPE 0.20.4.1 FIRST-PERSON FLASHLIGHT FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -66,6 +66,7 @@ type Avatar = {
   messageExpiresAt:number;
   flashlightRoot:pc.Entity;
   flashlightBeam:pc.Entity;
+  flashlightBody:pc.Entity;
   flashlightMaterial:pc.StandardMaterial;
   flashlightOn:boolean;
 };
@@ -1895,7 +1896,7 @@ function createAvatar(sessionId: string, player: any) {
   // The PlayCanvas spotlight points along local -Y. Rotating it 90 degrees
   // around X aligns it with the avatar's forward direction (local -Z).
   const flashlightRoot=new pc.Entity(`Flashlight-${sessionId}`);
-  flashlightRoot.setLocalPosition(.32,.05,-.48);
+  flashlightRoot.setLocalPosition(.32,.65,-.48);
   const flashlightBeam=new pc.Entity(`FlashlightBeam-${sessionId}`);
   flashlightBeam.addComponent("light",{type:"spot",color:new pc.Color(1,.91,.68),
     intensity:3.2,range:12,innerConeAngle:18,outerConeAngle:32,
@@ -1913,7 +1914,9 @@ function createAvatar(sessionId: string, player: any) {
   flashlightBody.render!.material=flashlightMaterial;
   flashlightRoot.addChild(flashlightBody);
   flashlightRoot.enabled=false;
-  body.addChild(flashlightRoot);
+  // Keep the light outside AvatarBody. First-person mode hides only the
+  // visible avatar meshes, while this root remains active at eye level.
+  entity.addChild(flashlightRoot);
 
   const proximityHalo = new pc.Entity(`ProximityHalo-${sessionId}`);
   proximityHalo.addComponent("render", { type: "plane" });
@@ -1978,6 +1981,7 @@ function createAvatar(sessionId: string, player: any) {
     messageExpiresAt:0,
     flashlightRoot,
     flashlightBeam,
+    flashlightBody,
     flashlightMaterial,
     flashlightOn:false
   });
@@ -6745,7 +6749,15 @@ app.on("update", (dt: number) => {
   const selfAvatar = currentSessionId ? avatars.get(currentSessionId) : undefined;
 
   if (selfAvatar) {
-    selfAvatar.entity.enabled = photoCameraMode!=="normal" || !firstPersonMode;
+    // Keep the root active because it owns the functional spotlight. In
+    // first-person, hide only render components that could enter the camera.
+    selfAvatar.entity.enabled=true;
+    const selfVisible=photoCameraMode!=="normal" || !firstPersonMode;
+    if(selfAvatar.body.render)selfAvatar.body.render.enabled=selfVisible;
+    if(selfAvatar.forwardMarker.render)selfAvatar.forwardMarker.render.enabled=selfVisible;
+    if(selfAvatar.proximityHalo.render)selfAvatar.proximityHalo.render.enabled=selfVisible;
+    if(selfAvatar.flashlightBody.render)selfAvatar.flashlightBody.render.enabled=selfVisible;
+    for(const part of selfAvatar.partEntities)if(part.render)part.render.enabled=selfVisible;
     selfAvatar.名前ラベル.style.display = firstPersonMode || !selfAvatar.labelVisible ? "none" : "";
   }
 
@@ -6829,6 +6841,12 @@ app.on("update", (dt: number) => {
     const waveLean=emote==="wave"?Math.sin(emoteProgress*Math.PI*6)*5:0;
     avatar.body.setLocalEulerAngles(avatarFlying?-18:(airborne?-8:0),spinY,
       (moving&&!airborne?Math.sin(avatar.motionPhase)*4:0)+waveLean);
+    // In first-person, compensate for the avatar's last movement-facing yaw
+    // and follow the live camera yaw/pitch, even while standing still.
+    const firstPersonFlashlight=sessionId===currentSessionId&&firstPersonMode;
+    avatar.flashlightRoot.setLocalEulerAngles(
+      firstPersonFlashlight?cameraPitch:0,
+      firstPersonFlashlight?cameraYaw-avatar.entity.getEulerAngles().y:0,0);
     for(const part of avatar.partEntities) {
       if(part.name==="AvatarArmLeft") part.setLocalEulerAngles(0,0,-12);
       else if(part.name==="AvatarArmRight") part.setLocalEulerAngles(0,0,

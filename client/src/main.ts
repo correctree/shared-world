@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.5.4 RAMP CAPSULE COLLISION LOADED]");
+console.log("[PROTOTYPE 0.20.5.5 SAFE LEDGE EXIT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4159,7 +4159,7 @@ worldPackageInput.addEventListener("change",async()=>{
 
 const managedPlacedMedia = new Map<string, ManagedPlacedMedia>();
 
-// 0.20.5.4 / Shared architecture collision. Every placed GLB is solid.
+// 0.20.5.5 / Shared architecture collision. Every placed GLB is solid.
 // Named stairs/ramps use their real rendered triangles as the walking surface;
 // this supports a slope and a flat landing even when both are one GLB mesh.
 const AVATAR_RADIUS=.38;
@@ -4232,10 +4232,10 @@ function buildExactSurfaceCache(item:ManagedPlacedMedia):SurfaceCache {
           }
       }
     }
-  } catch(error) { console.warn("[0.20.5.4 SURFACE CACHE FALLBACK]",item.id,error); }
+  } catch(error) { console.warn("[0.20.5.5 SURFACE CACHE FALLBACK]",item.id,error); }
   const cache={signature,triangles,cells,walls,wallCells,failed:triangles.length===0};
   exactSurfaceCaches.set(item.id,cache);
-  console.log("[0.20.5.4 RAMP COLLISION READY]",item.id,{surfaces:triangles.length,walls:walls.length});
+  console.log("[0.20.5.5 RAMP COLLISION READY]",item.id,{surfaces:triangles.length,walls:walls.length});
   return cache;
 }
 function exactSurfaceHeight(item:ManagedPlacedMedia,x:number,z:number,currentFoot:number):number|null {
@@ -4262,13 +4262,19 @@ function supportedSurfaceHeight(item:ManagedPlacedMedia,x:number,z:number,curren
   // Sample a compact footprint so the avatar rises when its front reaches the
   // slope, rather than after the visual body has already entered the mesh.
   const radius=AVATAR_RADIUS*.58;
-  const samples=[[0,0],[radius,0],[-radius,0],[0,radius],[0,-radius]];
-  let best=-Infinity;
+  const center=exactSurfaceHeight(item,x,z,currentFoot);
+  const samples=[[radius,0],[-radius,0],[0,radius],[0,-radius]];
+  let best=center??-Infinity;
   for(const [dx,dz] of samples) {
     const y=exactSurfaceHeight(item,x+dx,z+dz,currentFoot);
     if(y!==null&&y>best)best=y;
   }
-  return Number.isFinite(best)?best:null;
+  if(!Number.isFinite(best))return null;
+  // When the center has crossed a ledge, a rear footprint sample can still
+  // touch the old platform. Keep forward/upward anticipation for climbing,
+  // but do not let an equal-height rear sample suspend the avatar at the edge.
+  if(center===null&&best<=currentFoot+.015)return null;
+  return best;
 }
 function pointSegmentDistance2D(px:number,pz:number,ax:number,az:number,bx:number,bz:number) {
   const dx=bx-ax,dz=bz-az,length2=dx*dx+dz*dz;
@@ -4284,6 +4290,9 @@ function exactRampWallBlocked(item:ManagedPlacedMedia,x:number,z:number,foot:num
     if(checked.has(index))continue;checked.add(index);
     const t=cache.walls[index];
     const minY=Math.min(t.ay,t.by,t.cy),maxY=Math.max(t.ay,t.by,t.cy);
+    // Once the feet are near the wall top, treat the edge as a ledge rather
+    // than a side impact. This gives the capsule time to clear it while falling.
+    if(foot>=maxY-MAX_WALK_STEP)continue;
     if(head<=minY+.03||foot>=maxY-.03)continue;
     const distance=Math.min(
       pointSegmentDistance2D(x,z,t.ax,t.az,t.bx,t.bz),

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.4.3 LIGHT-REACTIVE WEBM AND SPRITE LOADED]");
+console.log("[PROTOTYPE 0.20.4.4 DOUBLE-SIDED MOBILE LIGHTING FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -366,6 +366,20 @@ function material(rgb: [number, number, number], metalness = 0.0) {
   m.gloss = 0.35;
   m.update();
   return m;
+}
+
+// A single transparent Plane is not lit consistently from its reverse side on
+// every mobile WebGL path. Pair it with a flipped, back-face-culled Plane so
+// each viewing side has a real forward-facing normal for dynamic spotlights.
+function addReverseLitPlane(front:pc.Entity,sharedMaterial:pc.StandardMaterial,
+  name:string,castShadows:boolean) {
+  const back=new pc.Entity(name);
+  back.addComponent("render",{type:"plane"});
+  back.render!.material=sharedMaterial;
+  back.render!.castShadows=castShadows;
+  back.setLocalEulerAngles(180,0,0);
+  front.addChild(back);
+  return back;
 }
 
 // =========================================================
@@ -2398,22 +2412,21 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     // 0.14.7.4.2: initialize Texture before Material references it.
     const spriteMaterial = new pc.StandardMaterial();
     spriteMaterial.diffuseMap = texture;
-    spriteMaterial.emissiveMap = texture;
-    spriteMaterial.emissive = new pc.Color(.12, .12, .12);
     spriteMaterial.opacityMap = texture;
     spriteMaterial.opacityMapChannel = "a";
     spriteMaterial.blendType = pc.BLEND_NORMAL;
     spriteMaterial.depthWrite = false;
     spriteMaterial.alphaTest = 0.05;
     spriteMaterial.useLighting = true;
-    spriteMaterial.cull = pc.CULLFACE_NONE;
-    spriteMaterial.twoSidedLighting = true;
+    spriteMaterial.cull = pc.CULLFACE_BACK;
+    spriteMaterial.twoSidedLighting = false;
     spriteMaterial.update();
 
     const plane = new pc.Entity(`SharedSprite_${mediaId}`);
     plane.addComponent("render", { type: "plane" });
     plane.render!.material = spriteMaterial;
     plane.render!.castShadows = false;
+    addReverseLitPlane(plane,spriteMaterial,`SharedSpriteBack_${mediaId}`,false);
     plane.setPosition(Number(media.x) || 0, Number(media.y) || 0, Number(media.z) || 0);
     const sharedScale = Number(media.scale) || 1;
     plane.setLocalScale(sharedScale, 1, sharedScale);
@@ -2748,22 +2761,21 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
 
     const material = new pc.StandardMaterial();
     material.diffuseMap = texture;
-    material.emissiveMap = texture;
-    material.emissive = new pc.Color(.12, .12, .12);
     material.opacityMap = texture;
     material.opacityMapChannel = "a";
     material.blendType = pc.BLEND_NORMAL;
     material.depthWrite = false;
     material.alphaTest = 0.12;
     material.useLighting = true;
-    material.cull = pc.CULLFACE_NONE;
-    material.twoSidedLighting = true;
+    material.cull = pc.CULLFACE_BACK;
+    material.twoSidedLighting = false;
     material.update();
 
     const plane = new pc.Entity(`SharedWebM_${mediaId}`);
     plane.addComponent("render", { type: "plane" });
     plane.render!.material = material;
     plane.render!.castShadows = true;
+    addReverseLitPlane(plane,material,`SharedWebMBack_${mediaId}`,true);
     plane.setPosition(Number(media.x), Number(media.y), Number(media.z));
     plane.setLocalScale(Number(media.scale) || 1, 1, Number(media.scale) || 1);
     plane.setEulerAngles(90, Number(media.rotationY) || 0, 0);
@@ -5665,22 +5677,21 @@ function addSpriteArtworkToWorld() {
 
   const spriteMaterial = new pc.StandardMaterial();
   spriteMaterial.diffuseMap = texture;
-  spriteMaterial.emissiveMap = texture;
-  spriteMaterial.emissive = new pc.Color(.12, .12, .12);
   spriteMaterial.opacityMap = texture;
   spriteMaterial.opacityMapChannel = "a";
   spriteMaterial.blendType = pc.BLEND_NORMAL;
   spriteMaterial.depthWrite = false;
   spriteMaterial.alphaTest = 0.12;
   spriteMaterial.useLighting = true;
-  spriteMaterial.cull = pc.CULLFACE_NONE;
-  spriteMaterial.twoSidedLighting = true;
+  spriteMaterial.cull = pc.CULLFACE_BACK;
+  spriteMaterial.twoSidedLighting = false;
   spriteMaterial.update();
 
   const plane = new pc.Entity("ImportedSpriteArtwork");
   plane.addComponent("render", { type: "plane" });
   plane.render!.material = spriteMaterial;
   plane.render!.castShadows = true;
+  addReverseLitPlane(plane,spriteMaterial,"ImportedSpriteArtworkBack",true);
   plane.setPosition(0, 1.8, -3);
   plane.setLocalScale(3.2, 1, 3.2);
   plane.setEulerAngles(90, 0, 0);
@@ -5752,22 +5763,21 @@ async function addWebMArtworkToWorld(file: File) {
 
   const importedMaterial = new pc.StandardMaterial();
   importedMaterial.diffuseMap = texture;
-  importedMaterial.emissiveMap = texture;
-  importedMaterial.emissive = new pc.Color(.12, .12, .12);
   importedMaterial.opacityMap = texture;
   importedMaterial.opacityMapChannel = "a";
   importedMaterial.blendType = pc.BLEND_NORMAL;
   importedMaterial.depthWrite = false;
   importedMaterial.alphaTest = 0.12;
   importedMaterial.useLighting = true;
-  importedMaterial.cull = pc.CULLFACE_NONE;
-  importedMaterial.twoSidedLighting = true;
+  importedMaterial.cull = pc.CULLFACE_BACK;
+  importedMaterial.twoSidedLighting = false;
   importedMaterial.update();
 
   const plane = new pc.Entity("ImportedArtwork");
   plane.addComponent("render", { type: "plane" });
   plane.render!.material = importedMaterial;
   plane.render!.castShadows = true;
+  addReverseLitPlane(plane,importedMaterial,"ImportedArtworkBack",true);
   plane.setPosition(0, 1.8, -3);
   plane.setLocalScale(3.2, 1, 3.2);
   plane.setEulerAngles(90, 0, 0);

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.5.2 EXPLICIT SLOPE DIRECTION FIX LOADED]");
+console.log("[PROTOTYPE 0.20.5.3 EXACT MESH SURFACE COLLISION LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4159,12 +4159,16 @@ worldPackageInput.addEventListener("change",async()=>{
 
 const managedPlacedMedia = new Map<string, ManagedPlacedMedia>();
 
-// 0.20.5 / Lightweight shared architecture collision. Every placed GLB is
-// solid. GLBs named stair/ramp/slope (including Japanese names) expose a
-// walkable inclined surface instead of acting as a full-height obstacle.
+// 0.20.5.3 / Shared architecture collision. Every placed GLB is solid.
+// Named stairs/ramps use their real rendered triangles as the walking surface;
+// this supports a slope and a flat landing even when both are one GLB mesh.
 const AVATAR_RADIUS=.38;
 const AVATAR_FOOT_OFFSET=.65;
 const MAX_WALK_STEP=.58;
+const COLLISION_GRID_SIZE=1;
+type SurfaceTriangle={ax:number;ay:number;az:number;bx:number;by:number;bz:number;cx:number;cy:number;cz:number};
+type SurfaceCache={signature:string;triangles:SurfaceTriangle[];cells:Map<string,number[]>;failed:boolean};
+const exactSurfaceCaches=new Map<string,SurfaceCache>();
 function glbWorldBounds(item:ManagedPlacedMedia) {
   if(item.kind!=="glb"||!item.entity.enabled)return null;
   let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity,found=false;
@@ -4177,6 +4181,80 @@ function glbWorldBounds(item:ManagedPlacedMedia) {
 }
 function isWalkableRamp(item:ManagedPlacedMedia) {
   return /(stair|stairs|staircase|ramp|slope|階段|スロープ)/i.test(item.title);
+}
+function surfaceTransformSignature(item:ManagedPlacedMedia) {
+  const p=item.entity.getPosition(),r=item.entity.getEulerAngles(),s=item.entity.getLocalScale();
+  return [p.x,p.y,p.z,r.x,r.y,r.z,s.x,s.y,s.z].map(v=>Number(v).toFixed(4)).join("/");
+}
+function surfaceCellKey(x:number,z:number) {
+  return `${Math.floor(x/COLLISION_GRID_SIZE)},${Math.floor(z/COLLISION_GRID_SIZE)}`;
+}
+function buildExactSurfaceCache(item:ManagedPlacedMedia):SurfaceCache {
+  const signature=surfaceTransformSignature(item);
+  const previous=exactSurfaceCaches.get(item.id);
+  if(previous?.signature===signature)return previous;
+  const triangles:SurfaceTriangle[]=[],cells=new Map<string,number[]>();
+  try {
+    (item.entity as any).syncHierarchy?.();
+    for(const render of item.entity.findComponents("render") as any[])for(const instance of render.meshInstances||[]) {
+      const mesh:any=instance.mesh;if(!mesh?.getPositions)continue;
+      const positions:number[]=[],indices:number[]=[];
+      const vertexCount=Number(mesh.getPositions(positions))||Math.floor(positions.length/3);
+      if(vertexCount<3)continue;
+      let indexCount=0;
+      if(mesh.getIndices)indexCount=Number(mesh.getIndices(indices))||indices.length;
+      if(indexCount<3)for(let i=0;i<vertexCount;i++)indices.push(i);
+      const matrix:any=instance.node?.getWorldTransform?.();
+      if(!matrix)continue;
+      const world=(index:number)=>{
+        const source=new pc.Vec3(positions[index*3],positions[index*3+1],positions[index*3+2]);
+        return matrix.transformPoint(source,new pc.Vec3());
+      };
+      for(let i=0;i+2<indices.length;i+=3) {
+        const ia=indices[i],ib=indices[i+1],ic=indices[i+2];
+        if(ia>=vertexCount||ib>=vertexCount||ic>=vertexCount)continue;
+        const a=world(ia),b=world(ib),c=world(ic);
+        const ux=b.x-a.x,uy=b.y-a.y,uz=b.z-a.z,vx=c.x-a.x,vy=c.y-a.y,vz=c.z-a.z;
+        const nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;
+        const length=Math.hypot(nx,ny,nz);
+        // Reject vertical/degenerate faces and slopes steeper than about 69°.
+        if(length<1e-7||Math.abs(ny)/length<.36)continue;
+        const triangle={ax:a.x,ay:a.y,az:a.z,bx:b.x,by:b.y,bz:b.z,cx:c.x,cy:c.y,cz:c.z};
+        const triangleIndex=triangles.push(triangle)-1;
+        const minX=Math.min(a.x,b.x,c.x),maxX=Math.max(a.x,b.x,c.x);
+        const minZ=Math.min(a.z,b.z,c.z),maxZ=Math.max(a.z,b.z,c.z);
+        for(let gx=Math.floor(minX/COLLISION_GRID_SIZE);gx<=Math.floor(maxX/COLLISION_GRID_SIZE);gx++)
+          for(let gz=Math.floor(minZ/COLLISION_GRID_SIZE);gz<=Math.floor(maxZ/COLLISION_GRID_SIZE);gz++) {
+            const key=`${gx},${gz}`,bucket=cells.get(key);
+            if(bucket)bucket.push(triangleIndex);else cells.set(key,[triangleIndex]);
+          }
+      }
+    }
+  } catch(error) { console.warn("[0.20.5.3 SURFACE CACHE FALLBACK]",item.id,error); }
+  const cache={signature,triangles,cells,failed:triangles.length===0};
+  exactSurfaceCaches.set(item.id,cache);
+  console.log("[0.20.5.3 EXACT SURFACE READY]",item.id,triangles.length);
+  return cache;
+}
+function exactSurfaceHeight(item:ManagedPlacedMedia,x:number,z:number,currentFoot:number):number|null {
+  const cache=buildExactSurfaceCache(item);
+  if(cache.failed)return null;
+  const candidates=cache.cells.get(surfaceCellKey(x,z));
+  if(!candidates)return null;
+  let best=-Infinity;
+  for(const index of candidates) {
+    const t=cache.triangles[index];
+    const denominator=(t.bz-t.cz)*(t.ax-t.cx)+(t.cx-t.bx)*(t.az-t.cz);
+    if(Math.abs(denominator)<1e-8)continue;
+    const u=((t.bz-t.cz)*(x-t.cx)+(t.cx-t.bx)*(z-t.cz))/denominator;
+    const v=((t.cz-t.az)*(x-t.cx)+(t.ax-t.cx)*(z-t.cz))/denominator;
+    const w=1-u-v;
+    // A tiny tolerance prevents seams between adjacent triangles from snagging.
+    if(u<-.002||v<-.002||w<-.002)continue;
+    const y=u*t.ay+v*t.by+w*t.cy;
+    if(y<=currentFoot+MAX_WALK_STEP&&y>=currentFoot-1.2&&y>best)best=y;
+  }
+  return Number.isFinite(best)?best:null;
 }
 function rampAxis(item:ManagedPlacedMedia,b:NonNullable<ReturnType<typeof glbWorldBounds>>) {
   const title=item.title.toLowerCase();
@@ -4207,7 +4285,13 @@ function architectureGroundHeight(x:number,z:number,currentFoot:number) {
     const b=glbWorldBounds(item);if(!b)continue;
     const supportMargin=AVATAR_RADIUS*.6;
     if(x<b.minX-supportMargin||x>b.maxX+supportMargin||z<b.minZ-supportMargin||z>b.maxZ+supportMargin)continue;
-    const top=isWalkableRamp(item)?rampSurfaceHeight(item,b,x,z):b.maxY;
+    let top=b.maxY;
+    if(isWalkableRamp(item)) {
+      const cache=buildExactSurfaceCache(item);
+      const exact=exactSurfaceHeight(item,x,z,currentFoot);
+      if(!cache.failed&&exact===null)continue;
+      top=exact??rampSurfaceHeight(item,b,x,z);
+    }
     if(top<=currentFoot+MAX_WALK_STEP&&top>=currentFoot-1.2)ground=Math.max(ground,top);
   }
   return ground;
@@ -4218,7 +4302,9 @@ function architectureBlocked(x:number,z:number,centerY:number) {
     const b=glbWorldBounds(item);if(!b)continue;
     if(isWalkableRamp(item)) {
       const inside=x+AVATAR_RADIUS>b.minX&&x-AVATAR_RADIUS<b.maxX&&z+AVATAR_RADIUS>b.minZ&&z-AVATAR_RADIUS<b.maxZ;
-      if(inside&&rampSurfaceHeight(item,b,x,z)>foot+MAX_WALK_STEP)return true;
+      const cache=buildExactSurfaceCache(item);
+      const exact=exactSurfaceHeight(item,x,z,foot);
+      if(inside&&(cache.failed? rampSurfaceHeight(item,b,x,z):(exact??-Infinity))>foot+MAX_WALK_STEP)return true;
       continue;
     }
     if(b.maxY<=foot+MAX_WALK_STEP)continue;

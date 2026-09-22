@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.4.1 FIRST-PERSON FLASHLIGHT FIX LOADED]");
+console.log("[PROTOTYPE 0.20.4.2 CAMERA-ALIGNED FLASHLIGHT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -6841,12 +6841,25 @@ app.on("update", (dt: number) => {
     const waveLean=emote==="wave"?Math.sin(emoteProgress*Math.PI*6)*5:0;
     avatar.body.setLocalEulerAngles(avatarFlying?-18:(airborne?-8:0),spinY,
       (moving&&!airborne?Math.sin(avatar.motionPhase)*4:0)+waveLean);
-    // In first-person, compensate for the avatar's last movement-facing yaw
-    // and follow the live camera yaw/pitch, even while standing still.
+    // In first-person, point the flashlight at the exact world-space center
+    // of the camera view. This avoids Euler yaw/pitch composition drift and
+    // lets the beam reach the upper and lower portions of tall artworks.
     const firstPersonFlashlight=sessionId===currentSessionId&&firstPersonMode;
-    avatar.flashlightRoot.setLocalEulerAngles(
-      firstPersonFlashlight?cameraPitch:0,
-      firstPersonFlashlight?cameraYaw-avatar.entity.getEulerAngles().y:0,0);
+    if(firstPersonFlashlight) {
+      avatar.flashlightRoot.setLocalPosition(0,.55,0);
+      const yaw=cameraYaw*pc.math.DEG_TO_RAD;
+      const pitch=cameraPitch*pc.math.DEG_TO_RAD;
+      const origin=avatar.flashlightRoot.getPosition().clone();
+      const target=origin.clone().add(new pc.Vec3(
+        -Math.sin(yaw)*Math.cos(pitch),
+        Math.sin(pitch),
+        -Math.cos(yaw)*Math.cos(pitch)
+      ).mulScalar(20));
+      avatar.flashlightRoot.lookAt(target);
+    } else {
+      avatar.flashlightRoot.setLocalPosition(.32,.65,-.48);
+      avatar.flashlightRoot.setLocalEulerAngles(0,0,0);
+    }
     for(const part of avatar.partEntities) {
       if(part.name==="AvatarArmLeft") part.setLocalEulerAngles(0,0,-12);
       else if(part.name==="AvatarArmRight") part.setLocalEulerAngles(0,0,

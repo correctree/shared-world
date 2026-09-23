@@ -13,12 +13,14 @@ type AddMediaPayload = {
   x?: number;
   y?: number;
   z?: number;
+  rotationX?: number;
   rotationY?: number;
+  rotationZ?: number;
   scale?: number;
 };
 
 type UpdateMediaPayload = {
-  id?: string; x?: number; y?: number; z?: number; rotationY?: number; scale?: number; assetRef?: string;
+  id?: string; x?: number; y?: number; z?: number; rotationX?: number; rotationY?: number; rotationZ?: number; scale?: number; assetRef?: string;
 };
 type DeleteMediaPayload = { id?: string };
 type MediaActionPayload = {
@@ -353,10 +355,12 @@ export class SharedWorldRoom extends Room<WorldState> {
       const x = Number(payload?.x);
       const y = Number(payload?.y);
       const z = Number(payload?.z);
+      const rotationX = Number(payload?.rotationX ?? (mediaType === "glb" || mediaType === "audio" ? 0 : 90));
       const rotationY = Number(payload?.rotationY);
+      const rotationZ = Number(payload?.rotationZ ?? 0);
       const scale = Number(payload?.scale);
 
-      if (![x, y, z, rotationY, scale].every(Number.isFinite)) {
+      if (![x, y, z, rotationX, rotationY, rotationZ, scale].every(Number.isFinite)) {
         console.warn("[media:add rejected] invalid transform", payload);
         return;
       }
@@ -371,7 +375,9 @@ export class SharedWorldRoom extends Room<WorldState> {
         x: Math.max(-this.worldLimit(), Math.min(this.worldLimit(), x)),
         y: Math.max(-10, Math.min(20, y)),
         z: Math.max(-this.worldLimit(), Math.min(this.worldLimit(), z)),
+        rotationX,
         rotationY,
+        rotationZ,
         scale: Math.max(0.05, Math.min(20, scale))
       }));
 
@@ -425,19 +431,22 @@ export class SharedWorldRoom extends Room<WorldState> {
         return;
       }
       const x=Number(payload?.x), y=Number(payload?.y), z=Number(payload?.z);
-      const rotationY=Number(payload?.rotationY), scale=Number(payload?.scale);
-      if (![x,y,z,rotationY,scale].every(Number.isFinite)) {
+      const rotationX=Number(payload?.rotationX ?? media.rotationX), rotationY=Number(payload?.rotationY),
+        rotationZ=Number(payload?.rotationZ ?? media.rotationZ), scale=Number(payload?.scale);
+      if (![x,y,z,rotationX,rotationY,rotationZ,scale].every(Number.isFinite)) {
         client.send("media:update:result", {id, ok:false, reason:"invalid-transform"});
         return;
       }
       media.x=Math.max(-this.worldLimit(),Math.min(this.worldLimit(),x));
       media.y=Math.max(-10,Math.min(20,y));
       media.z=Math.max(-this.worldLimit(),Math.min(this.worldLimit(),z));
+      media.rotationX=rotationX;
       media.rotationY=rotationY;
+      media.rotationZ=rotationZ;
       media.scale=Math.max(0.05,Math.min(20,scale));
       // Apply transforms to already-loaded clients without waiting for a state patch.
       this.broadcast("media:transform", {id, x:media.x, y:media.y, z:media.z,
-        rotationY:media.rotationY, scale:media.scale});
+        rotationX:media.rotationX, rotationY:media.rotationY, rotationZ:media.rotationZ, scale:media.scale});
       if (typeof payload?.assetRef === "string" && media.type === "audio") {
         media.assetRef=String(payload.assetRef).slice(0,240);
         // Prototype 0.16.1.4: state remains authoritative, while this explicit
@@ -519,7 +528,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           assetRef: media.assetRef,
           fallbackRef: media.fallbackRef,
           x: media.x, y: media.y, z: media.z,
-          rotationY: media.rotationY, scale: media.scale,
+          rotationX: media.rotationX, rotationY: media.rotationY, rotationZ: media.rotationZ, scale: media.scale,
           behavior: this.mediaBehaviors.get(id) || null
         });
       }
@@ -558,7 +567,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       const mediaObjects = Array.from(this.state.mediaObjects, ([id, media]) => ({
         id, title: media.title, type: media.type, assetRef: media.assetRef,
         fallbackRef: media.fallbackRef, x: media.x, y: media.y, z: media.z,
-        rotationY: media.rotationY, scale: media.scale,
+        rotationX: media.rotationX, rotationY: media.rotationY, rotationZ: media.rotationZ, scale: media.scale,
         behavior: this.mediaBehaviors.get(id) || null
       }));
       client.send("world:export:result", {
@@ -591,7 +600,9 @@ export class SharedWorldRoom extends Room<WorldState> {
       const entries: Array<{id:string; media:InstanceType<typeof SharedMediaObject>; behavior:Record<string, unknown>}> = [];
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        const transform = [item?.x, item?.y, item?.z, item?.rotationY, item?.scale].map(Number);
+        const defaultRotationX=["glb","audio"].includes(item?.type)?0:90;
+        const transform = [item?.x, item?.y, item?.z, item?.rotationX??defaultRotationX,
+          item?.rotationY, item?.rotationZ??0, item?.scale].map(Number);
         if (!item || !validTypes.includes(item.type) || !transform.every(Number.isFinite) ||
             typeof item.assetRef !== "string" || item.assetRef.length > 240 ||
             typeof item.fallbackRef !== "string" || item.fallbackRef.length > 240 ||
@@ -599,7 +610,7 @@ export class SharedWorldRoom extends Room<WorldState> {
             !/^(https?:\/\/|\/assets\/)/.test(item.assetRef)) {
           fail(`invalid-media-${i + 1}`); return;
         }
-        const [x,y,z,rotationY,scale] = transform;
+        const [x,y,z,rotationX,rotationY,rotationZ,scale] = transform;
         const raw = item.behavior && typeof item.behavior === "object" ? item.behavior : {};
         const behavior = {
           trigger: validTriggers.includes(raw.trigger) ? raw.trigger : "user-proximity",
@@ -619,7 +630,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           fallbackRef:item.fallbackRef, ownerSessionId:client.sessionId,
           ownerClientId:player.clientId,
           x:bounded(x,0,-importLimit,importLimit), y:bounded(y,1.8,-10,20),
-          z:bounded(z,-3,-importLimit,importLimit), rotationY,
+          z:bounded(z,-3,-importLimit,importLimit), rotationX, rotationY, rotationZ,
           scale:bounded(scale,1,.05,20)
         })});
       }

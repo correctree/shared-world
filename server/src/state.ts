@@ -48,7 +48,9 @@ export const SharedMediaObject = schema({
   x: t.number().default(0),
   y: t.number().default(1.8),
   z: t.number().default(-3),
+  rotationX: t.number().default(0),
   rotationY: t.number().default(0),
+  rotationZ: t.number().default(0),
   scale: t.number().default(1)
 }, "SharedMediaObject");
 export type SharedMediaObject = SchemaType<typeof SharedMediaObject>;

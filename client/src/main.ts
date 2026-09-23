@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.5.6 UPWARD SURFACE FILTER LOADED]");
+console.log("[PROTOTYPE 0.20.6 NUMERIC 3-AXIS PLACEMENT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -300,6 +300,42 @@ const artworkScale = document.querySelector<HTMLInputElement>("#artworkScale");
 const artworkRotationY = document.querySelector<HTMLInputElement>("#artworkRotationY");
 const cancelPlacementButton = document.querySelector<HTMLButtonElement>("#cancelPlacementButton");
 const placeArtworkButton = document.querySelector<HTMLButtonElement>("#placeArtworkButton");
+
+// 0.20.6 / Upgrade the original placement controls at runtime so existing
+// index.html deployments only need main.ts replaced.
+const placementNumberStyle="width:72px;height:40px;box-sizing:border-box;border:1px solid rgba(255,255,255,.2);border-radius:8px;background:#111722;color:#fff;text-align:center;font:700 13px/1 ui-monospace,monospace";
+function replacePlacementValue(element:HTMLElement|null,id:string,min:number,max:number) {
+  if(!element)return null;
+  const input=document.createElement("input");input.id=id;input.type="number";
+  input.min=String(min);input.max=String(max);input.step="0.1";input.inputMode="decimal";
+  input.style.cssText=placementNumberStyle;input.value=element.textContent||"0";
+  element.replaceWith(input);return input;
+}
+function wrapPlacementRange(range:HTMLInputElement|null,id:string,min:number,max:number,step:string) {
+  if(!range)return null;
+  const row=document.createElement("div");row.style.cssText="display:grid;grid-template-columns:minmax(0,1fr) 72px;gap:10px;align-items:center";
+  const number=document.createElement("input");number.id=id;number.type="number";number.min=String(min);number.max=String(max);
+  number.step=step;number.inputMode="decimal";number.style.cssText=placementNumberStyle;
+  number.value=range.value;range.replaceWith(row);row.append(range,number);return number;
+}
+const artworkXNumber=replacePlacementValue(artworkXValue,"artworkXNumber",-100,100);
+const artworkYNumber=replacePlacementValue(artworkYValue,"artworkYNumber",-20,30);
+const artworkZNumber=replacePlacementValue(artworkZValue,"artworkZNumber",-100,100);
+const artworkScaleNumber=wrapPlacementRange(artworkScale,"artworkScaleNumber",.05,20,"0.05");
+if(artworkScale){artworkScale.min="0.05";artworkScale.max="20";artworkScale.step="0.05";}
+const artworkRotationYNumber=wrapPlacementRange(artworkRotationY,"artworkRotationYNumber",-180,180,"1");
+function addRotationAxis(axis:"X"|"Z",before:Element|null) {
+  const title=document.createElement("div");title.className="placement-section-title";title.textContent=`ROTATION ${axis}`;
+  const range=document.createElement("input");range.id=`artworkRotation${axis}`;range.type="range";range.min="-180";range.max="180";range.step="1";range.value="0";range.style.width="100%";
+  const row=document.createElement("div");row.style.cssText="display:grid;grid-template-columns:minmax(0,1fr) 72px;gap:10px;align-items:center";
+  const number=document.createElement("input");number.id=`artworkRotation${axis}Number`;number.type="number";number.min="-180";number.max="180";number.step="1";number.inputMode="numeric";number.value="0";number.style.cssText=placementNumberStyle;
+  row.append(range,number);before?.parentElement?.insertBefore(title,before);before?.parentElement?.insertBefore(row,before);
+  return {range,number,row,title};
+}
+const rotationYTitle=artworkRotationY?.parentElement?.previousElementSibling;
+const rotationXControls=addRotationAxis("X",rotationYTitle);
+const placementActions=artworkPlacementPanel?.querySelector(".placement-actions")||null;
+const rotationZControls=addRotationAxis("Z",placementActions);
 
 
 // Prototype 0.10 / Stage 3 / GLB Animation UI
@@ -2243,7 +2279,7 @@ function createSharedSpritePlaceholder(mediaId: string, media: any) {
   plane.render!.material = placeholderMaterial;
   plane.setPosition(media.x, media.y, media.z);
   plane.setLocalScale(media.scale, 1, media.scale);
-  plane.setEulerAngles(90, media.rotationY, 0);
+  plane.setEulerAngles(Number(media.rotationX??90),Number(media.rotationY)||0,Number(media.rotationZ)||0);
   app.root.addChild(plane);
 
   const remoteMedia = createMediaObject({
@@ -2430,7 +2466,7 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     plane.setPosition(Number(media.x) || 0, Number(media.y) || 0, Number(media.z) || 0);
     const sharedScale = Number(media.scale) || 1;
     plane.setLocalScale(sharedScale, 1, sharedScale);
-    plane.setEulerAngles(90, Number(media.rotationY) || 0, 0);
+    plane.setEulerAngles(Number(media.rotationX??90),Number(media.rotationY)||0,Number(media.rotationZ)||0);
     app.root.addChild(plane);
     console.log("[SPRITE RECOVERY 05.5 PLANE READY]", mediaId);
 
@@ -2501,12 +2537,12 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
 function updateSharedSpritePlaceholder(mediaId: string, media: any) {
   const item = managedPlacedMedia.get(mediaId);
   if (!item || editingManagedMediaId === mediaId) return;
-  const values = [media.x, media.y, media.z, media.rotationY, media.scale].map(Number);
+  const values = [media.x,media.y,media.z,media.rotationX??(item.kind==="glb"||item.kind==="audio"?0:90),media.rotationY,media.rotationZ??0,media.scale].map(Number);
   if (!values.every(Number.isFinite)) return;
-  const [x, y, z, rotationY, scale] = values;
+  const [x,y,z,rotationX,rotationY,rotationZ,scale] = values;
   const animation=activeTransformAnimations.get(mediaId);
   const basePosition=new pc.Vec3(x,y,z);
-  const baseEuler=new pc.Vec3(item.kind==="glb"?0:90,rotationY,0);
+  const baseEuler=new pc.Vec3(rotationX,rotationY,rotationZ);
   const baseScale=new pc.Vec3(scale,item.kind==="glb"?scale:1,scale);
   if (animation) {
     animation.basePosition=basePosition;
@@ -2522,7 +2558,7 @@ function updateSharedSpritePlaceholder(mediaId: string, media: any) {
   refreshSharedStateDiagnosticPanel();
 }
 
-const pendingSharedMediaTransforms = new Map<string, {x:number;y:number;z:number;rotationY:number;scale:number}>();
+const pendingSharedMediaTransforms = new Map<string,{x:number;y:number;z:number;rotationX:number;rotationY:number;rotationZ:number;scale:number}>();
 const pendingSharedBehaviors = new Map<string, any>();
 const appliedSharedBehaviorSignatures = new Map<string,string>();
 function applySharedBehavior(mediaId:string, behavior:any) {
@@ -2600,7 +2636,7 @@ async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob:
   // Keep immutable publish data before the placement editor clears its import globals.
   const assetRef = sharedAssetURL(mediaId, "zip");
   const position = item.entity.getPosition().clone();
-  const rotationY = item.entity.getEulerAngles().y;
+  const rotation = item.entity.getEulerAngles();
   const scale = item.entity.getLocalScale().x;
   const payload = {
     id: mediaId,
@@ -2610,7 +2646,7 @@ async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob:
     x: position.x,
     y: position.y,
     z: position.z,
-    rotationY,
+    rotationX:rotation.x,rotationY:rotation.y,rotationZ:rotation.z,
     scale
   };
 
@@ -2673,7 +2709,8 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
   const fallbackRef=String(media.fallbackRef || "");
   if(isIOSLikeDevice() && fallbackRef){
     console.log("[SHARED WEBM ALPHA FALLBACK -> SPRITE]",mediaId,fallbackRef);
-    await createSharedSpriteFromAsset(mediaId,{title:media.title,assetRef:fallbackRef,x:media.x,y:media.y,z:media.z,rotationY:media.rotationY,scale:media.scale});
+    await createSharedSpriteFromAsset(mediaId,{title:media.title,assetRef:fallbackRef,x:media.x,y:media.y,z:media.z,
+      rotationX:media.rotationX,rotationY:media.rotationY,rotationZ:media.rotationZ,scale:media.scale});
     return;
   }
 
@@ -2778,7 +2815,7 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
     addReverseLitPlane(plane,material,`SharedWebMBack_${mediaId}`,true);
     plane.setPosition(Number(media.x), Number(media.y), Number(media.z));
     plane.setLocalScale(Number(media.scale) || 1, 1, Number(media.scale) || 1);
-    plane.setEulerAngles(90, Number(media.rotationY) || 0, 0);
+    plane.setEulerAngles(Number(media.rotationX??90),Number(media.rotationY)||0,Number(media.rotationZ)||0);
     app.root.addChild(plane);
 
     console.log("[SHARED WEBM 06 SCENE ADD]", mediaId);
@@ -2891,7 +2928,7 @@ async function publishCommittedWebMToSharedWorld(mediaId:string,webmBlob:Blob|nu
     }
     const p=item.entity.getPosition(),r=item.entity.getEulerAngles(),s=item.entity.getLocalScale();
     activeRoom.send("media:add",{id:mediaId,title:media.title||"WebM Artwork",type:"webm",
-      assetRef,fallbackRef:sharedFallback,x:p.x,y:p.y,z:p.z,rotationY:r.y,scale:s.x});
+      assetRef,fallbackRef:sharedFallback,x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:s.x});
     console.log("[SHARED WEBM MEDIA SENT]",mediaId,{assetRef,fallbackRef:sharedFallback||"(none)"});
   }catch(e){console.error("[SHARED WEBM PUBLISH ERROR]",mediaId,e)}
 }
@@ -2962,7 +2999,7 @@ async function createSharedAudioFromAsset(mediaId:string, media:any){
     const response=await fetchSharedAssetWithRetry(ref,`audio:${mediaId}`); const blob=await response.blob();
     if(!isSharedMediaGenerationCurrent(mediaId,gen)) return;
     const url=URL.createObjectURL(blob); const el=new Audio(url); const cfg=audioConfigFromRef(ref); const entity=makeAudioMarker(`SharedAudio_${mediaId}`);
-    entity.setPosition(Number(media.x),Number(media.y),Number(media.z)); entity.setEulerAngles(0,Number(media.rotationY)||0,0); entity.setLocalScale(Number(media.scale)||1,Number(media.scale)||1,Number(media.scale)||1);
+    entity.setPosition(Number(media.x),Number(media.y),Number(media.z)); entity.setEulerAngles(Number(media.rotationX)||0,Number(media.rotationY)||0,Number(media.rotationZ)||0); entity.setLocalScale(Number(media.scale)||1,Number(media.scale)||1,Number(media.scale)||1);
     configureSpatialAudioElement(mediaId,el,entity,cfg);
     const remote=createMediaObject({title:media.title||"Audio",type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{await playXRAudio(el,mediaId)},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:true}]});
     (remote as any).id=mediaId; xrMediaManager.register(remote as any); managedPlacedMedia.set(mediaId,{id:mediaId,title:`${media.title||"Audio"} [SHARED]`,kind:"audio",entity}); sharedRemoteMediaIds.add(mediaId);
@@ -2974,7 +3011,7 @@ async function publishCommittedAudioToSharedWorld(mediaId:string, blob:Blob|null
   const cfg:XRAudioConfig={volume:Number(audioVolume.value),loop:audioLoop.checked,spatial:audioSpatial.checked,distance:Number(audioDistance.value),reactive:audioReactiveAction.value as AudioReactiveAction,strength:Number(audioReactiveStrength.value),smoothing:Number(audioReactiveSmoothing.value)};
   const base=sharedAssetURL(mediaId,ext); const up=await fetch(base,{method:"PUT",headers:{"Content-Type":ext==="mp3"?"audio/mpeg":"audio/wav"},body:blob}); if(!up.ok)throw new Error(`Audio upload HTTP ${up.status}`);
   const ref=`${base}?volume=${cfg.volume}&loop=${cfg.loop?1:0}&spatial=${cfg.spatial?1:0}&distance=${cfg.distance}&reactive=${cfg.reactive}&strength=${cfg.strength}&smoothing=${cfg.smoothing}`; const pos=item.entity.getPosition(), rot=item.entity.getEulerAngles(), sc=item.entity.getLocalScale();
-  activeRoom.send("media:add",{id:mediaId,title:media.title||"Audio",type:"audio",assetRef:ref,x:pos.x,y:pos.y,z:pos.z,rotationY:rot.y,scale:sc.x});
+  activeRoom.send("media:add",{id:mediaId,title:media.title||"Audio",type:"audio",assetRef:ref,x:pos.x,y:pos.y,z:pos.z,rotationX:rot.x,rotationY:rot.y,rotationZ:rot.z,scale:sc.x});
 }
 
 async function createSharedGLBFromAsset(mediaId: string, media: any) {
@@ -3025,7 +3062,7 @@ async function createSharedGLBFromAsset(mediaId: string, media: any) {
 
     const s = Math.max(0.0001, Number(media.scale) || 1);
     holder.setPosition(Number(media.x), Number(media.y), Number(media.z));
-    holder.setEulerAngles(0, Number(media.rotationY) || 0, 0);
+    holder.setEulerAngles(Number(media.rotationX)||0,Number(media.rotationY)||0,Number(media.rotationZ)||0);
     holder.setLocalScale(s, s, s);
 
     console.log("[SHARED GLB NORMALIZATION PARITY]", mediaId, {
@@ -3166,7 +3203,9 @@ async function publishCommittedGLBToSharedWorld(mediaId: string, glbBlob: Blob |
       x: position.x,
       y: position.y,
       z: position.z,
+      rotationX: rotation.x,
       rotationY: rotation.y,
+      rotationZ: rotation.z,
       scale: scale.x
     });
 
@@ -3400,10 +3439,10 @@ async function enterWorld() {
       if (!mediaId) return;
       sharedStateDiagnostic.transformRx += 1;
       refreshSharedStateDiagnosticPanel();
-      const values=[payload?.x,payload?.y,payload?.z,payload?.rotationY,payload?.scale].map(Number);
+      const values=[payload?.x,payload?.y,payload?.z,payload?.rotationX??0,payload?.rotationY,payload?.rotationZ??0,payload?.scale].map(Number);
       if (!values.every(Number.isFinite)) return;
-      const [x,y,z,rotationY,scale]=values;
-      const transform={x,y,z,rotationY,scale};
+      const [x,y,z,rotationX,rotationY,rotationZ,scale]=values;
+      const transform={x,y,z,rotationX,rotationY,rotationZ,scale};
       if (managedPlacedMedia.has(mediaId)) updateSharedSpritePlaceholder(mediaId,transform);
       else pendingSharedMediaTransforms.set(mediaId,transform);
     });
@@ -4820,7 +4859,7 @@ function refreshManagedAudioSpatialUI(){managedAudioSpatialState.textContent=man
 managedAudioSpatial.addEventListener("change",refreshManagedAudioSpatialUI);
 function currentAudioAssetRef(id:string){const map:any=getAuthoritativeMediaMap();try{return String(map?.get?.(id)?.assetRef||"");}catch{return "";}}
 function openManagedAudioEditor(id:string){const el=audioElements.get(id);if(!el)return;const a=el as any;managedAudioVolume.value=String(Number(a.__xrBaseVolume??.8));managedAudioLoop.checked=!!el.loop;managedAudioSpatial.checked=!!a.__xrSpatial;managedAudioDistance.value=String(Number(a.__xrDistance??12));managedAudioReactiveAction.value=String(a.__xrReactiveAction||"off");managedAudioReactiveStrength.value=String(Number(a.__xrReactiveStrength??1));managedAudioReactiveSmoothing.value=String(Number(a.__xrReactiveSmoothing??.7));refreshManagedAudioSpatialUI();managedAudioEditPanel.classList.remove("hidden");managedAudioEditPanel.scrollIntoView({block:"start",behavior:"smooth"});}
-function applyManagedAudioConfig(id:string){const el=audioElements.get(id);const item=managedPlacedMedia.get(id);if(!el||!item)return;const a=el as any;a.__xrBaseVolume=Number(managedAudioVolume.value);el.loop=managedAudioLoop.checked;a.__xrSpatial=managedAudioSpatial.checked;a.__xrDistance=Number(managedAudioDistance.value);a.__xrReactiveAction=managedAudioReactiveAction.value as AudioReactiveAction;a.__xrReactiveStrength=Number(managedAudioReactiveStrength.value);a.__xrReactiveSmoothing=Number(managedAudioReactiveSmoothing.value);a.__xrReactiveRotation=0;a.__xrReactiveLevel=0;if(a.__xrReactiveBase){const b=a.__xrReactiveBase;item.entity.setPosition(b.position);item.entity.setEulerAngles(b.euler);item.entity.setLocalScale(b.scale);}a.__xrReactiveBase={position:item.entity.getPosition().clone(),euler:item.entity.getEulerAngles().clone(),scale:item.entity.getLocalScale().clone()};el.volume=Number(managedAudioVolume.value);const oldRef=currentAudioAssetRef(id);if(activeRoom&&oldRef){const u=new URL(oldRef,window.location.href);u.searchParams.set("volume",managedAudioVolume.value);u.searchParams.set("loop",managedAudioLoop.checked?"1":"0");u.searchParams.set("spatial",managedAudioSpatial.checked?"1":"0");u.searchParams.set("distance",managedAudioDistance.value);u.searchParams.set("reactive",managedAudioReactiveAction.value);u.searchParams.set("strength",managedAudioReactiveStrength.value);u.searchParams.set("smoothing",managedAudioReactiveSmoothing.value);const p=item.entity.getPosition(),r=item.entity.getEulerAngles(),sc=item.entity.getLocalScale();activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationY:r.y,scale:sc.x,assetRef:u.toString()});}managedAudioEditPanel.classList.add("hidden");console.log("[0.16.1.3 AUDIO CONFIG APPLIED]",id);}
+function applyManagedAudioConfig(id:string){const el=audioElements.get(id);const item=managedPlacedMedia.get(id);if(!el||!item)return;const a=el as any;a.__xrBaseVolume=Number(managedAudioVolume.value);el.loop=managedAudioLoop.checked;a.__xrSpatial=managedAudioSpatial.checked;a.__xrDistance=Number(managedAudioDistance.value);a.__xrReactiveAction=managedAudioReactiveAction.value as AudioReactiveAction;a.__xrReactiveStrength=Number(managedAudioReactiveStrength.value);a.__xrReactiveSmoothing=Number(managedAudioReactiveSmoothing.value);a.__xrReactiveRotation=0;a.__xrReactiveLevel=0;if(a.__xrReactiveBase){const b=a.__xrReactiveBase;item.entity.setPosition(b.position);item.entity.setEulerAngles(b.euler);item.entity.setLocalScale(b.scale);}a.__xrReactiveBase={position:item.entity.getPosition().clone(),euler:item.entity.getEulerAngles().clone(),scale:item.entity.getLocalScale().clone()};el.volume=Number(managedAudioVolume.value);const oldRef=currentAudioAssetRef(id);if(activeRoom&&oldRef){const u=new URL(oldRef,window.location.href);u.searchParams.set("volume",managedAudioVolume.value);u.searchParams.set("loop",managedAudioLoop.checked?"1":"0");u.searchParams.set("spatial",managedAudioSpatial.checked?"1":"0");u.searchParams.set("distance",managedAudioDistance.value);u.searchParams.set("reactive",managedAudioReactiveAction.value);u.searchParams.set("strength",managedAudioReactiveStrength.value);u.searchParams.set("smoothing",managedAudioReactiveSmoothing.value);const p=item.entity.getPosition(),r=item.entity.getEulerAngles(),sc=item.entity.getLocalScale();activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:sc.x,assetRef:u.toString()});}managedAudioEditPanel.classList.add("hidden");console.log("[0.16.1.3 AUDIO CONFIG APPLIED]",id);}
 managedAudioApply.addEventListener("click",()=>{if(selectedManagedMediaId)applyManagedAudioConfig(selectedManagedMediaId);});
 managedAudioCancel.addEventListener("click",()=>managedAudioEditPanel.classList.add("hidden"));
 
@@ -5249,7 +5288,7 @@ function sendSharedMediaTransform(id: string) {
   // Recovered objects are marked remote even on their original author's device.
   // The server checks the persistent ownerClientId before accepting this update.
   const p=item.entity.getPosition(), r=item.entity.getEulerAngles(), s=item.entity.getLocalScale();
-  activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationY:r.y,scale:s.x});
+  activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:s.x});
   console.log("[SHARED MEDIA UPDATE SENT]",id);
 }
 
@@ -5342,7 +5381,10 @@ editManagedMediaButton.addEventListener("click", () => {
   placementX = position.x;
   placementY = position.y;
   placementZ = position.z;
-  placementRotationY = item.entity.getEulerAngles().y;
+  const rotation=item.entity.getEulerAngles();
+  placementRotationX = item.kind === "glb" ? rotation.x : rotation.x-90;
+  placementRotationY = rotation.y;
+  placementRotationZ = rotation.z;
   const scale = item.entity.getLocalScale();
   placementScale = item.kind === "glb" ? scale.x : scale.x;
 
@@ -6209,14 +6251,22 @@ let placementX = 0;
 let placementY = 1.8;
 let placementZ = -3;
 let placementScale = 3.2;
+let placementRotationX = 0;
 let placementRotationY = 0;
+let placementRotationZ = 0;
 
 function updatePlacementUI() {
-  if (artworkXValue) artworkXValue.textContent = placementX.toFixed(1);
-  if (artworkYValue) artworkYValue.textContent = placementY.toFixed(1);
-  if (artworkZValue) artworkZValue.textContent = placementZ.toFixed(1);
+  if (artworkXNumber) artworkXNumber.value = placementX.toFixed(1);
+  if (artworkYNumber) artworkYNumber.value = placementY.toFixed(1);
+  if (artworkZNumber) artworkZNumber.value = placementZ.toFixed(1);
   if (artworkScale) artworkScale.value = String(placementScale);
+  if (artworkScaleNumber) artworkScaleNumber.value = placementScale.toFixed(2);
+  rotationXControls.range.value = String(placementRotationX);
+  rotationXControls.number.value = placementRotationX.toFixed(0);
   if (artworkRotationY) artworkRotationY.value = String(placementRotationY);
+  if (artworkRotationYNumber) artworkRotationYNumber.value = placementRotationY.toFixed(0);
+  rotationZControls.range.value = String(placementRotationZ);
+  rotationZControls.number.value = placementRotationZ.toFixed(0);
 }
 
 function applyArtworkPlacement() {
@@ -6230,10 +6280,10 @@ function applyArtworkPlacement() {
       placementScale,
       placementScale
     );
-    importedArtworkEntity.setEulerAngles(0, placementRotationY, 0);
+    importedArtworkEntity.setEulerAngles(placementRotationX, placementRotationY, placementRotationZ);
   } else {
     importedArtworkEntity.setLocalScale(placementScale, 1, placementScale);
-    importedArtworkEntity.setEulerAngles(90, placementRotationY, 0);
+    importedArtworkEntity.setEulerAngles(90+placementRotationX, placementRotationY, placementRotationZ);
   }
   scheduleSharedMediaTransform();
 }
@@ -6241,7 +6291,9 @@ function applyArtworkPlacement() {
 function openPlacementEditor() {
   placementX = 0;
   placementZ = -3;
+  placementRotationX = 0;
   placementRotationY = 0;
+  placementRotationZ = 0;
 
   if (importedArtworkKind === "glb") {
     placementY = 0;
@@ -6304,13 +6356,33 @@ artworkZPlus?.addEventListener("click", () => {
 
 artworkScale?.addEventListener("input", () => {
   placementScale = Number(artworkScale.value);
+  updatePlacementUI();
   applyArtworkPlacement();
 });
 
 artworkRotationY?.addEventListener("input", () => {
   placementRotationY = Number(artworkRotationY.value);
+  updatePlacementUI();
   applyArtworkPlacement();
 });
+
+function bindPlacementNumber(input:HTMLInputElement|null,apply:(value:number)=>void,min:number,max:number) {
+  if(!input)return;
+  const update=()=>{const value=Number(input.value);if(!Number.isFinite(value))return;apply(pc.math.clamp(value,min,max));updatePlacementUI();applyArtworkPlacement();};
+  input.addEventListener("input",update);input.addEventListener("change",update);
+}
+bindPlacementNumber(artworkXNumber,value=>placementX=value,-100,100);
+bindPlacementNumber(artworkYNumber,value=>placementY=value,-20,30);
+bindPlacementNumber(artworkZNumber,value=>placementZ=value,-100,100);
+bindPlacementNumber(artworkScaleNumber,value=>placementScale=value,.05,20);
+bindPlacementNumber(artworkRotationYNumber,value=>placementRotationY=value,-180,180);
+for(const [controls,set] of [
+  [rotationXControls,(value:number)=>placementRotationX=value],
+  [rotationZControls,(value:number)=>placementRotationZ=value]
+] as const) {
+  controls.range.addEventListener("input",()=>{set(Number(controls.range.value));updatePlacementUI();applyArtworkPlacement();});
+  bindPlacementNumber(controls.number,set,-180,180);
+}
 
 placeArtworkButton?.addEventListener("click", () => {
   if (editingManagedMediaId) {

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.0.1 DIRECTOR BUTTON CONTRAST LOADED]");
+console.log("[PROTOTYPE 0.21.0.2 CUE CONTROL CONTRAST LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -5102,9 +5102,12 @@ mediaManagerStyle.textContent = `
   .cue-manager input,.cue-manager select { width:100%;min-width:0;box-sizing:border-box;padding:8px;border:1px solid #5f5140;border-radius:8px;background:#17130e;color:#fff; }
   .cue-manager .hidden { display:none!important; }
   .cue-actions { display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px; }
-  .cue-actions button { width:100%!important;min-width:0;padding:9px 4px;font-size:10px; }
-  #cueFireButton { border-color:#ffb54a;color:#ffd18b; }
-  #cueStatus { min-height:14px;font-size:10px;color:#ffd18b; }
+  .cue-actions button { width:100%!important;min-width:0;padding:9px 4px;border:1px solid #7c8796!important;background:#101720!important;color:#fff!important;font-size:10px;font-weight:900;text-shadow:none!important; }
+  .cue-actions button:hover,.cue-actions button:focus-visible { border-color:#ffb54a!important;background:#26313e!important;color:#fff!important; }
+  .cue-actions button:active { background:#ffb54a!important;color:#171008!important; }
+  .cue-actions button:disabled { background:#303741!important;color:#dce3ec!important;opacity:.72; }
+  #cueFireButton { border-color:#ffb54a!important;color:#fff!important; }
+  #cueStatus { min-height:14px;padding:4px 2px;font-size:10px;color:#fff;font-weight:800; }
   .scene-manager input,.scene-manager select { width:100%;min-width:0;box-sizing:border-box;padding:8px;border:1px solid #4a5260;border-radius:8px;background:#111720;color:#fff; }
   .scene-actions { display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px; }
   .scene-actions button { width:100%!important;min-width:0;padding:9px 4px;font-size:10px; }

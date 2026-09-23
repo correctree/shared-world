@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.6 NUMERIC 3-AXIS PLACEMENT LOADED]");
+console.log("[PROTOTYPE 0.20.6.1 MID-SLOPE EXIT RELEASE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4208,6 +4208,10 @@ const COLLISION_GRID_SIZE=1;
 type SurfaceTriangle={ax:number;ay:number;az:number;bx:number;by:number;bz:number;cx:number;cy:number;cz:number};
 type SurfaceCache={signature:string;triangles:SurfaceTriangle[];cells:Map<string,number[]>;walls:SurfaceTriangle[];wallCells:Map<string,number[]>;failed:boolean};
 const exactSurfaceCaches=new Map<string,SurfaceCache>();
+// A ledge exit is directional state: it starts only when the avatar moves from
+// a valid ramp surface to empty space. Keep it active until the avatar lands or
+// returns to the ramp, so a slow mobile joystick cannot be re-captured midway.
+const activeRampExits=new Set<string>();
 function glbWorldBounds(item:ManagedPlacedMedia) {
   if(item.kind!=="glb"||!item.entity.enabled)return null;
   let minX=Infinity,minY=Infinity,minZ=Infinity,maxX=-Infinity,maxY=-Infinity,maxZ=-Infinity,found=false;
@@ -4400,7 +4404,11 @@ function architectureBlocked(x:number,z:number,centerY:number) {
       // faces at the ramp/landing seam. From the side there is no center
       // support yet, so the vertical wall still blocks the avatar capsule.
       const centerSurface=exactSurfaceHeight(item,x,z,foot);
-      if(centerSurface===null&&exactRampWallBlocked(item,x,z,foot,head))return true;
+      const currentSurface=exactSurfaceHeight(item,localPosition.x,localPosition.z,foot);
+      if(currentSurface!==null&&centerSurface===null)activeRampExits.add(item.id);
+      else if(centerSurface!==null)activeRampExits.delete(item.id);
+      if(activeRampExits.has(item.id)&&foot<=b.minY+.12)activeRampExits.delete(item.id);
+      if(centerSurface===null&&!activeRampExits.has(item.id)&&exactRampWallBlocked(item,x,z,foot,head))return true;
       const exact=supportedSurfaceHeight(item,x,z,foot);
       if(inside&&(cache.failed? rampSurfaceHeight(item,b,x,z):(exact??-Infinity))>foot+MAX_WALK_STEP)return true;
       continue;

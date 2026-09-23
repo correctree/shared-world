@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.9.3 CUE TARGET SELECTION MEMORY LOADED]");
+console.log("[PROTOTYPE 0.21.0 DIRECTOR CONTROL LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3293,6 +3293,7 @@ function resetClientWorldForReentry() {
 
 async function enterWorld() {
   if(voiceEnabled)disableVoice(false);
+  directorCanDirect=false;directorCanManage=false;directorParticipants=[];directorPanel.classList.add("hidden");refreshDirectorPanel();
   applyEnvironmentPermissions({canEdit:false,locked:false,ownerPresent:false});
   unlockResonanceAudio();
   enterButton.disabled = true;
@@ -3482,6 +3483,7 @@ async function enterWorld() {
         id:String(scene.id||""),name:String(scene.name||"Scene"),updatedAt:Number(scene.updatedAt)||0,objectCount:Number(scene.objectCount)||0
       })).filter((scene:SceneSummary)=>!!scene.id):[];
       refreshSceneUI();
+      refreshDirectorPanel();
     });
     room.onMessage("cue:list",(payload:any)=>{
       if(room!==activeRoom)return;
@@ -3490,7 +3492,7 @@ async function enterWorld() {
       cueSummaries=Array.isArray(payload?.cues)?payload.cues.map((cue:any)=>({
         id:String(cue.id||""),name:String(cue.name||"Cue"),targetType:String(cue.targetType||"scene") as CueSummary["targetType"],
         target:String(cue.target||""),action:String(cue.action||"play"),updatedAt:Number(cue.updatedAt)||0
-      })).filter((cue:CueSummary)=>!!cue.id):[];refreshCueUI();
+      })).filter((cue:CueSummary)=>!!cue.id):[];refreshCueUI();refreshDirectorPanel();
     });
     room.onMessage("cue:result",(payload:any)=>{
       if(room!==activeRoom)return;
@@ -3502,6 +3504,17 @@ async function enterWorld() {
     });
     room.onMessage("cue:fired",(payload:any)=>{
       if(room!==activeRoom)return;cueStatus.textContent=`LIVE CUE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0}`;
+      directorActionStatus.textContent=`LIVE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0} OBJECTS`;
+    });
+    room.onMessage("director:state",(payload:any)=>{
+      if(room!==activeRoom)return;directorCanDirect=payload?.canDirect===true;directorCanManage=payload?.canManage===true;
+      directorParticipants=Array.isArray(payload?.participants)?payload.participants.map((person:any)=>({
+        sessionId:String(person.sessionId||""),name:String(person.name||"Guest"),clientId:String(person.clientId||""),
+        isOwner:person.isOwner===true,isDirector:person.isDirector===true
+      })):[];refreshDirectorPanel();
+    });
+    room.onMessage("director:result",(payload:any)=>{
+      if(room!==activeRoom)return;directorActionStatus.textContent=payload?.ok?"DIRECTOR ACCESS UPDATED":`DIRECTOR UPDATE FAILED · ${String(payload?.reason||"unknown")}`;
     });
     room.onMessage("scene:result",(payload:any)=>{
       if(room!==activeRoom)return;
@@ -3513,6 +3526,7 @@ async function enterWorld() {
     });
     room.onMessage("scene:recalled",(payload:any)=>{
       if(room!==activeRoom)return;sceneStatus.textContent=`LIVE SCENE · ${String(payload?.name||"Scene")}`;
+      directorActionStatus.textContent=`LIVE SCENE · ${String(payload?.name||"Scene")} · ${Number(payload?.count)||0} OBJECTS`;
       room.send("media:snapshot:request",{});
     });
 
@@ -3559,6 +3573,7 @@ async function enterWorld() {
     room.send("environment:get",{});
     room.send("scene:list:request",{});
     room.send("cue:list:request",{});
+    room.send("director:get",{});
     room.onMessage("world:export:result", (manifest:any) => {
       if(room===activeRoom&&pendingLocalWorldSave&&!pendingWorldPackageExport){
         const reason=pendingLocalWorldSaveReason;pendingLocalWorldSave=false;pendingLocalWorldSaveReason="";
@@ -4715,6 +4730,17 @@ mediaManagerPanel.innerHTML = `
 document.body.appendChild(mediaManagerPanel);
 mediaManagerPanel.appendChild(worldManifestControls);
 
+const directorButton=document.createElement("button");
+directorButton.id="directorButton";directorButton.type="button";directorButton.textContent="DIRECTOR";directorButton.className="hidden";
+const directorPanel=document.createElement("section");directorPanel.id="directorPanel";directorPanel.className="hidden";
+directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</strong><button id="closeDirectorButton" type="button">×</button></div>
+  <div id="directorRoleStatus">VIEWER</div>
+  <div class="director-section"><strong>LIVE CUES</strong><div id="directorCueGrid" class="director-grid"></div></div>
+  <div class="director-section"><strong>SCENES</strong><div id="directorSceneGrid" class="director-grid"></div></div>
+  <div id="directorManageSection" class="director-section hidden"><strong>DIRECTOR ACCESS</strong><div id="directorParticipantList"></div></div>
+  <div id="directorActionStatus">READY</div>`;
+document.body.append(directorButton,directorPanel);
+
 const environmentEditor=document.createElement("div");
 let environmentCanEdit=false;
 environmentEditor.style.cssText="border:1px solid #54718c;border-radius:12px;padding:12px;margin:12px 0;color:#e7f3ff";
@@ -5041,6 +5067,21 @@ mediaManagerStyle.textContent = `
     font-family: system-ui, sans-serif;
   }
   #mediaManagerPanel.hidden { display: none; }
+  #directorButton { position:fixed;top:max(114px,calc(env(safe-area-inset-top) + 114px));right:max(16px,env(safe-area-inset-right));z-index:41;width:auto!important;padding:10px 14px;border:1px solid #ffb54a;border-radius:12px;background:rgba(32,20,7,.94);color:#ffd18b;font:800 12px/1 system-ui;letter-spacing:.08em; }
+  #directorButton.hidden,#directorPanel.hidden { display:none!important; }
+  #directorPanel { position:fixed;top:max(68px,calc(env(safe-area-inset-top) + 54px));left:max(16px,env(safe-area-inset-left));z-index:80;width:min(420px,calc(100vw - 32px));max-height:82vh;overflow:auto;box-sizing:border-box;padding:14px;border:1px solid #ffb54a;border-radius:16px;background:rgba(20,14,7,.97);color:#fff;backdrop-filter:blur(14px);font-family:system-ui,sans-serif; }
+  .director-header { display:flex;align-items:center;justify-content:space-between;margin-bottom:10px; }
+  #closeDirectorButton { width:36px!important;height:36px;border-radius:10px; }
+  #directorRoleStatus { margin-bottom:12px;padding:8px;border-radius:8px;background:rgba(255,181,74,.12);color:#ffd18b;font-size:10px;font-weight:800;letter-spacing:.08em; }
+  .director-section { margin:10px 0;padding:10px;border:1px solid rgba(255,181,74,.35);border-radius:12px; }
+  .director-section.hidden { display:none!important; }
+  .director-section>strong { display:block;margin-bottom:8px;font-size:10px;letter-spacing:.1em; }
+  .director-grid { display:grid;grid-template-columns:1fr 1fr;gap:8px; }
+  .director-grid button { width:100%!important;min-height:56px;padding:8px;border-color:#ffb54a;color:#ffe0a8;font-size:11px; }
+  .director-empty { padding:10px;text-align:center;opacity:.55;font-size:10px; }
+  .director-participant { display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:7px 0;padding:8px;border-radius:8px;background:#17130e;font-size:11px; }
+  .director-participant button { width:auto!important;min-width:82px;padding:7px;font-size:9px; }
+  #directorActionStatus { position:sticky;bottom:-14px;padding:10px 2px;background:rgba(20,14,7,.98);color:#ffd18b;font-size:10px;font-weight:800; }
   .media-manager-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
   #closeMediaManagerButton { width:36px !important; height:36px; border-radius:10px; }
   #mediaManagerList { display:grid; gap:8px; }
@@ -5148,6 +5189,9 @@ mediaManagerStyle.textContent = `
       padding:14px 14px calc(22px + env(safe-area-inset-bottom));
     }
     #mediaManagerButton { right:12px; }
+    #directorButton { right:12px;top:max(114px,calc(env(safe-area-inset-top) + 98px)); }
+    #directorPanel { top:max(10px,env(safe-area-inset-top));left:10px;right:10px;bottom:max(10px,env(safe-area-inset-bottom));width:auto;max-height:none;padding-bottom:calc(18px + env(safe-area-inset-bottom)); }
+    .director-grid button { min-height:64px;font-size:12px; }
     .media-manager-header { position:sticky; top:-14px; z-index:8; padding:10px 0; background:rgba(9,13,19,.98); }
     .behavior-editor { padding:12px 10px; }
     .behavior-row, .behavior-enabled-row { grid-template-columns:84px minmax(0,1fr); }
@@ -5160,6 +5204,37 @@ mediaManagerStyle.textContent = `
   }
 `;
 document.head.appendChild(mediaManagerStyle);
+
+type DirectorParticipant={sessionId:string;name:string;clientId:string;isOwner:boolean;isDirector:boolean};
+let directorCanDirect=false,directorCanManage=false;
+let directorParticipants:DirectorParticipant[]=[];
+const closeDirectorButton=directorPanel.querySelector<HTMLButtonElement>("#closeDirectorButton")!;
+const directorRoleStatus=directorPanel.querySelector<HTMLElement>("#directorRoleStatus")!;
+const directorCueGrid=directorPanel.querySelector<HTMLElement>("#directorCueGrid")!;
+const directorSceneGrid=directorPanel.querySelector<HTMLElement>("#directorSceneGrid")!;
+const directorManageSection=directorPanel.querySelector<HTMLElement>("#directorManageSection")!;
+const directorParticipantList=directorPanel.querySelector<HTMLElement>("#directorParticipantList")!;
+const directorActionStatus=directorPanel.querySelector<HTMLElement>("#directorActionStatus")!;
+function refreshDirectorPanel(){
+  directorButton.classList.toggle("hidden",!directorCanDirect&&!directorCanManage);
+  if(!directorCanDirect&&!directorCanManage)directorPanel.classList.add("hidden");
+  directorRoleStatus.textContent=directorCanManage?"ROOM OWNER · DIRECTOR MANAGEMENT ENABLED":directorCanDirect?"DIRECTOR · LIVE CONTROL ENABLED":"VIEWER";
+  directorCueGrid.innerHTML="";
+  if(!cueSummaries.length)directorCueGrid.innerHTML='<div class="director-empty">NO CUES</div>';
+  for(const cue of cueSummaries){const button=document.createElement("button");button.type="button";button.textContent=cue.name;
+    button.addEventListener("click",()=>{if(activeRoom&&directorCanDirect){activeRoom.send("cue:fire",{id:cue.id});directorActionStatus.textContent=`FIRING · ${cue.name}`;}});directorCueGrid.appendChild(button);}
+  directorSceneGrid.innerHTML="";
+  if(!sceneSummaries.length)directorSceneGrid.innerHTML='<div class="director-empty">NO SCENES</div>';
+  for(const scene of sceneSummaries){const button=document.createElement("button");button.type="button";button.textContent=scene.name;
+    button.addEventListener("click",()=>{if(activeRoom&&directorCanDirect){activeRoom.send("scene:recall",{id:scene.id});directorActionStatus.textContent=`RECALLING · ${scene.name}`;}});directorSceneGrid.appendChild(button);}
+  directorManageSection.classList.toggle("hidden",!directorCanManage);directorParticipantList.innerHTML="";
+  if(directorCanManage)for(const person of directorParticipants){const row=document.createElement("div");row.className="director-participant";
+    const label=document.createElement("span");label.textContent=`${person.name}${person.isOwner?" · OWNER":person.isDirector?" · DIRECTOR":""}`;
+    const button=document.createElement("button");button.type="button";button.disabled=person.isOwner;button.textContent=person.isOwner?"OWNER":person.isDirector?"REVOKE":"GRANT";
+    button.addEventListener("click",()=>activeRoom?.send("director:grant",{sessionId:person.sessionId,enabled:!person.isDirector}));row.append(label,button);directorParticipantList.appendChild(row);}
+}
+directorButton.addEventListener("click",()=>{directorPanel.classList.toggle("hidden");refreshDirectorPanel();});
+closeDirectorButton.addEventListener("click",()=>directorPanel.classList.add("hidden"));
 
 const closeMediaManagerButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#closeMediaManagerButton")!;
 const mediaManagerList = mediaManagerPanel.querySelector<HTMLElement>("#mediaManagerList")!;

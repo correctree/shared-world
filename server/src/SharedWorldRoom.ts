@@ -48,6 +48,7 @@ type CueDefinition = {
 export class SharedWorldRoom extends Room<WorldState> {
   private scenes = new Map<string,SceneSnapshot>();
   private cues = new Map<string,CueDefinition>();
+  private directorClientIds = new Set<string>();
   private environmentOwnerClientId = "";
   private environment = {
     sky:"#090c11", ground:"#262b33", grid:"#474d57", gridVisible:true,
@@ -81,6 +82,22 @@ export class SharedWorldRoom extends Room<WorldState> {
     if(!this.environmentOwnerClientId&&claim)this.environmentOwnerClientId=actorId;
     return !this.environmentOwnerClientId||this.environmentOwnerClientId===actorId;
   }
+  private canDirect(client:Client) {
+    const actorId=this.environmentActorId(client);
+    return this.canEditEnvironment(client,false)||this.directorClientIds.has(actorId);
+  }
+  private sendDirectorState(target?:Client) {
+    const participants=Array.from(this.state.players,([sessionId,player])=>({
+      sessionId,name:player.name,clientId:player.clientId,
+      isOwner:!!this.environmentOwnerClientId&&player.clientId===this.environmentOwnerClientId,
+      isDirector:this.directorClientIds.has(player.clientId)||
+        (!!this.environmentOwnerClientId&&player.clientId===this.environmentOwnerClientId)
+    }));
+    const recipients=target?[target]:this.clients;
+    for(const item of recipients)item.send("director:state",{
+      canDirect:this.canDirect(item),canManage:this.canEditEnvironment(item,false),participants
+    });
+  }
   private sendEnvironmentPermissions(target?:Client) {
     const recipients=target?[target]:this.clients;
     const ownerPresent=!!this.environmentOwnerClientId&&this.clients.some(
@@ -90,6 +107,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       canEdit:this.canEditEnvironment(item,false),
       ownerPresent
     });
+    this.sendDirectorState(target);
   }
   private cleanMediaGroup(value:unknown) {
     return String(value ?? "").trim().replace(/\s+/g," ").slice(0,32);
@@ -500,8 +518,8 @@ export class SharedWorldRoom extends Room<WorldState> {
       client.send("scene:result",{ok:true,action:"save",id,name});this.sendSceneList();this.sendEnvironmentPermissions();
     });
     this.onMessage("scene:recall",(client:Client,payload:any)=>{
-      if(!this.canEditEnvironment(client,false)){
-        client.send("scene:result",{ok:false,action:"recall",reason:"owner-locked"});return;
+      if(!this.canDirect(client)){
+        client.send("scene:result",{ok:false,action:"recall",reason:"director-required"});return;
       }
       const id=String(payload?.id||"");const scene=this.scenes.get(id);
       if(!scene){client.send("scene:result",{ok:false,action:"recall",reason:"scene-not-found"});return;}
@@ -551,7 +569,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.cues.set(id,cue);client.send("cue:result",{ok:true,operation:"save",...cue});this.sendCueList();this.sendEnvironmentPermissions();
     });
     this.onMessage("cue:fire",(client:Client,payload:any)=>{
-      if(!this.canEditEnvironment(client,false)){client.send("cue:result",{ok:false,operation:"fire",reason:"owner-locked"});return;}
+      if(!this.canDirect(client)){client.send("cue:result",{ok:false,operation:"fire",reason:"director-required"});return;}
       const id=String(payload?.id||"");const cue=this.cues.get(id);
       if(!cue){client.send("cue:result",{ok:false,operation:"fire",reason:"cue-not-found"});return;}
       let count=0;
@@ -574,6 +592,18 @@ export class SharedWorldRoom extends Room<WorldState> {
       if(!this.canEditEnvironment(client,false)){client.send("cue:result",{ok:false,operation:"delete",reason:"owner-locked"});return;}
       const id=String(payload?.id||"");if(!this.cues.delete(id)){client.send("cue:result",{ok:false,operation:"delete",reason:"cue-not-found"});return;}
       client.send("cue:result",{ok:true,operation:"delete",id});this.sendCueList();
+    });
+    this.onMessage("director:get",(client:Client)=>this.sendDirectorState(client));
+    this.onMessage("director:grant",(client:Client,payload:any)=>{
+      if(!this.canEditEnvironment(client,true)){
+        client.send("director:result",{ok:false,reason:"owner-required"});this.sendDirectorState(client);return;
+      }
+      const sessionId=String(payload?.sessionId||"");const player=this.state.players.get(sessionId);
+      if(!player?.clientId){client.send("director:result",{ok:false,reason:"player-not-found"});return;}
+      const enabled=payload?.enabled===true;
+      if(player.clientId===this.environmentOwnerClientId&& !enabled){client.send("director:result",{ok:false,reason:"owner-is-director"});return;}
+      if(enabled)this.directorClientIds.add(player.clientId);else this.directorClientIds.delete(player.clientId);
+      client.send("director:result",{ok:true,sessionId,enabled});this.sendDirectorState();this.sendEnvironmentPermissions();
     });
 
     this.onMessage("media:behavior", (client: Client, payload: any) => {
@@ -940,6 +970,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     }));
 
     this.sendEnvironmentPermissions();
+    this.sendDirectorState();
 
     console.log(`[join] ${safeName} / ${client.sessionId} / client:${clientId || "legacy"}`);
     console.log("[AUTHORITATIVE SNAPSHOT]", {
@@ -959,6 +990,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     // If this session was already replaced, deleting by its old sessionId is harmless.
     this.state.players.delete(client.sessionId);
     this.sendEnvironmentPermissions();
+    this.sendDirectorState();
     console.log("[SESSION CLEANUP]", name, client.sessionId, { consented, players: this.state.players.size });
   }
 

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.1 UI ACTION REGRESSION FIX LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.2 VIEW DOCK AND EDITOR INPUT FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1094,6 +1094,8 @@ function applyFlashlightState(avatar:Avatar,enabled:boolean) {
     flashlightButton.textContent=avatar.flashlightOn?"FLASHLIGHT ON":"FLASHLIGHT OFF";
     flashlightButton.classList.toggle("active",avatar.flashlightOn);
     flashlightButton.setAttribute("aria-pressed",String(avatar.flashlightOn));
+    const dockButton=document.querySelector<HTMLButtonElement>(".dock-light");
+    if(dockButton){dockButton.textContent=flashlightButton.textContent;dockButton.classList.toggle("active",avatar.flashlightOn);dockButton.setAttribute("aria-pressed",String(avatar.flashlightOn));}
   }
 }
 flashlightButton.addEventListener("click",()=>{
@@ -3500,6 +3502,7 @@ async function enterWorld() {
     });
     room.onMessage("media:metadata:result",(payload:any)=>{
       if(room!==activeRoom)return;
+      if(metadataSaveWatchdog!==null){window.clearTimeout(metadataSaveWatchdog);metadataSaveWatchdog=null;}
       if(payload?.ok){
         metadataEditorDirty=false;
         applyMediaMetadata(String(payload.id||""),payload);
@@ -5320,6 +5323,7 @@ const mediaGroupFilter=mediaManagerPanel.querySelector<HTMLSelectElement>("#medi
 const mediaTagFilter=mediaManagerPanel.querySelector<HTMLInputElement>("#mediaTagFilter")!;
 let metadataEditorDirty=false;
 let metadataEditorId:string|null=null;
+let metadataSaveWatchdog:number|null=null;
 mediaGroupInput.addEventListener("input",()=>{metadataEditorDirty=true;});
 mediaTagsInput.addEventListener("input",()=>{metadataEditorDirty=true;});
 const sceneNameInput=mediaManagerPanel.querySelector<HTMLInputElement>("#sceneNameInput")!;
@@ -5453,6 +5457,11 @@ saveMediaMetadataButton.addEventListener("click",()=>{
   const meta=normalizeMediaMetadata({groupName:mediaGroupInput.value,tags:mediaTagsInput.value});
   activeRoom.send("media:metadata",{id:selectedManagedMediaId,groupName:meta.groupName,tags:meta.tags.join(",")});
   saveMediaMetadataButton.textContent="SAVING…";
+  if(metadataSaveWatchdog!==null)window.clearTimeout(metadataSaveWatchdog);
+  metadataSaveWatchdog=window.setTimeout(()=>{
+    metadataSaveWatchdog=null;
+    if(saveMediaMetadataButton.textContent==="SAVING…")saveMediaMetadataButton.textContent="SERVER TIMEOUT · RETRY";
+  },5000);
 });
 mediaGroupFilter.addEventListener("change",refreshMediaManagerUI);
 mediaTagFilter.addEventListener("input",refreshMediaManagerUI);
@@ -5643,6 +5652,19 @@ transformSpeed.addEventListener("input", applyBehaviorEditorUI);
 transformAxis.addEventListener("change", applyBehaviorEditorUI);
 transformDuration.addEventListener("input", applyBehaviorEditorUI);
 behaviorEnabled.addEventListener("change", applyBehaviorEditorUI);
+
+// Editing a select/range leaves browser focus on that control. Release it
+// after the edit so WASD/arrow movement resumes without an extra canvas click.
+function releaseBehaviorEditorFocus(target:EventTarget|null){
+  const element=target instanceof HTMLElement?target:null;
+  if(!element||element.matches('input[type="text"],input:not([type]),textarea'))return;
+  window.setTimeout(()=>{if(document.activeElement===element)element.blur();},0);
+}
+behaviorEditor.addEventListener("change",event=>releaseBehaviorEditorFocus(event.target));
+behaviorEditor.addEventListener("pointerup",event=>{
+  const element=event.target as HTMLElement;
+  if(element?.matches('input[type="range"]'))releaseBehaviorEditorFocus(element);
+});
 
 // Prototype 0.15.2.2 / BEHAVIOR TEST ACTION FIX
 // TEST buttons are explicit manual actions. Execute the selected media locally
@@ -5882,8 +5904,8 @@ const cueManagerSurface=mediaManagerPanel.querySelector<HTMLElement>(".cue-manag
 cueFloatingPanel.append(cueFloatingHeader,cueManagerSurface);document.body.appendChild(cueFloatingPanel);
 cueFloatingHeader.querySelector<HTMLButtonElement>("#closeCueFloatingPanel")!.addEventListener("click",()=>cueFloatingPanel.classList.add("hidden"));
 
-// Desktop VIEW uses a single categorized control dock. Proven controls are
-// moved rather than recreated, so their existing listeners remain intact.
+// Desktop VIEW uses explicit dock controls. Reparenting delegated controls
+// broke their event path, so the dock now calls the proven actions directly.
 const viewControlDock=document.createElement("section");viewControlDock.id="viewControlDock";
 function createViewControlGroup(label:string,nodes:HTMLElement[]){
   const group=document.createElement("div");group.className="view-control-group";
@@ -5891,16 +5913,37 @@ function createViewControlGroup(label:string,nodes:HTMLElement[]){
   const content=document.createElement("div");content.className="view-control-content";content.append(...nodes);
   group.append(heading,content);return group;
 }
-const messageComposerNode=communicationControls.querySelector<HTMLElement>("#messageComposer")!;
-const quickMessagesNode=communicationControls.querySelector<HTMLElement>("#quickMessages")!;
 const voiceControlsNode=communicationControls.querySelector<HTMLElement>("#voiceControls")!;
-const photoStudioNode=communicationControls.querySelector<HTMLElement>("#photoStudio")!;
+const dockChat=document.createElement("div");dockChat.className="dock-chat";
+dockChat.innerHTML=`<input maxlength="48" placeholder="MESSAGE / EMOJI" aria-label="Message"><button type="button">SEND</button><div class="dock-quick"><button type="button">👋</button><button type="button">❤️</button><button type="button">✨</button><button type="button">😊</button></div>`;
+const dockChatInput=dockChat.querySelector<HTMLInputElement>("input")!;
+const sendDockMessage=()=>{sendAvatarMessage(dockChatInput.value);dockChatInput.value="";dockChatInput.blur();};
+dockChat.querySelector<HTMLButtonElement>(":scope>button")!.addEventListener("click",sendDockMessage);
+dockChatInput.addEventListener("keydown",event=>{if(event.key==="Enter"&&!event.isComposing){event.preventDefault();sendDockMessage();}});
+dockChat.querySelector<HTMLElement>(".dock-quick")!.addEventListener("click",event=>{const button=(event.target as HTMLElement).closest("button");if(button)sendAvatarMessage(button.textContent||"");});
+
+const dockPhoto=document.createElement("div");dockPhoto.className="dock-photo";
+dockPhoto.innerHTML=`<button type="button" data-photo-mode="selfie">SELFIE</button><button type="button" data-photo-mode="group">GROUP</button><select aria-label="Photo timer"><option value="0">TIMER OFF</option><option value="3">3 SEC</option><option value="10">10 SEC</option></select><button type="button" data-take-photo>PHOTO</button>`;
+const dockSelfie=dockPhoto.querySelector<HTMLButtonElement>('[data-photo-mode="selfie"]')!;
+const dockGroup=dockPhoto.querySelector<HTMLButtonElement>('[data-photo-mode="group"]')!;
+const dockPhotoTimer=dockPhoto.querySelector<HTMLSelectElement>("select")!;
+function refreshDockPhotoMode(){dockSelfie.classList.toggle("active",photoCameraMode==="selfie");dockGroup.classList.toggle("active",photoCameraMode==="group");}
+dockSelfie.addEventListener("click",()=>{setPhotoCameraMode("selfie");refreshDockPhotoMode();dockSelfie.blur();});
+dockGroup.addEventListener("click",()=>{setPhotoCameraMode("group");refreshDockPhotoMode();dockGroup.blur();});
+dockPhoto.querySelector<HTMLButtonElement>("[data-take-photo]")!.addEventListener("click",()=>{photoTimerSelect.value=dockPhotoTimer.value;void takeWorldPhoto();});
+
+const dockActions=document.createElement("div");dockActions.className="dock-actions";
+dockActions.innerHTML=`<button type="button" data-emote="wave">WAVE</button><button type="button" data-emote="joy">JOY</button><button type="button" data-emote="spin">SPIN</button>`;
+dockActions.addEventListener("click",event=>{const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button[data-emote]");if(activeRoom&&button?.dataset.emote)activeRoom.send("avatar:emote",{type:button.dataset.emote});button?.blur();});
+const dockLight=document.createElement("button");dockLight.type="button";dockLight.className="dock-light";dockLight.textContent="FLASHLIGHT OFF";
+dockLight.addEventListener("click",()=>{flashlightButton.click();dockLight.textContent=flashlightButton.textContent||"FLASHLIGHT";dockLight.classList.toggle("active",flashlightButton.classList.contains("active"));dockLight.blur();});
 viewControlDock.append(
   createViewControlGroup("VIEW",[viewToggle]),
-  createViewControlGroup("CHAT",[messageComposerNode,quickMessagesNode]),
+  createViewControlGroup("CHAT",[dockChat]),
   createViewControlGroup("VOICE",[voiceControlsNode]),
-  createViewControlGroup("PHOTO",[photoStudioNode]),
-  createViewControlGroup("ACTION",[emoteControls])
+  createViewControlGroup("PHOTO",[dockPhoto]),
+  createViewControlGroup("ACTION",[dockActions]),
+  createViewControlGroup("LIGHT",[dockLight])
 );
 document.body.appendChild(viewControlDock);
 
@@ -5961,7 +6004,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.1</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.2</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -6089,7 +6132,7 @@ uiFoundationStyle.textContent=`
   .ui-context-heading{display:flex;flex-direction:column;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12)}.ui-context-heading strong{font-size:13px;letter-spacing:.08em}.ui-context-heading span{margin-top:4px;color:#8ea5b7;font-size:8px;letter-spacing:.08em}
   #uiContextActions{display:grid;gap:6px;margin-top:10px}#uiContextActions button{width:100%!important;min-height:38px;padding:8px 10px;border:1px solid #52697c;border-radius:9px;background:#0d1722;color:#fff;font-size:9px;font-weight:850;text-align:left;letter-spacing:.06em}#uiContextActions button:hover{border-color:#52d7ff;background:#132838}
   body[data-ui-workspace] #addArtworkButton,body[data-ui-workspace] #mediaManagerButton,body[data-ui-workspace] #directorButton,body[data-ui-workspace] #avatarSettingsButton{display:none!important}
-  body[data-ui-workspace] #avatarControls{width:auto}body[data-ui-workspace] #flashlightButton{width:auto!important}
+  body[data-ui-workspace] #avatarControls{width:auto}body[data-ui-workspace] #flashlightButton,body[data-ui-workspace] #emoteControls,body[data-ui-workspace] #communicationControls{display:none!important}
   body[data-ui-workspace] #sharedStateDiagnosticPanel{display:none!important}
   #viewControlDock{display:none}
   .avatar-floating-header{position:sticky;top:-16px;z-index:4;display:flex;align-items:center;justify-content:space-between;margin:-16px -16px 12px;padding:13px 16px;background:rgba(9,15,24,.99);border-bottom:1px solid rgba(113,145,174,.45);cursor:grab;touch-action:none}.avatar-floating-header>div{display:flex;flex-direction:column}.avatar-floating-header strong{font-size:12px;letter-spacing:.08em}.avatar-floating-header span{margin-top:3px;color:#8fa8bb;font-size:8px;letter-spacing:.08em}.avatar-floating-header button{width:36px!important;height:36px!important;margin:0!important}
@@ -6099,12 +6142,12 @@ uiFoundationStyle.textContent=`
   .cue-floating-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(20,14,7,.99);border-bottom:1px solid rgba(255,181,74,.28);cursor:grab;touch-action:none}.cue-floating-header:active,.director-header:active{cursor:grabbing}.cue-floating-header>div{display:flex;flex-direction:column}.cue-floating-header strong{font-size:12px;letter-spacing:.08em}.cue-floating-header span{margin-top:3px;color:#d6b27e;font-size:8px;letter-spacing:.08em}.cue-floating-header button{width:36px!important;height:36px!important;border-radius:10px!important}
   #cueFloatingPanel .cue-manager{margin:0!important}
   #worldWorkspacePanel{position:fixed;z-index:81;width:min(390px,calc(100vw - 32px));max-height:calc(100vh - 100px);overflow:auto;box-sizing:border-box;padding:0 14px 14px;border:1px solid #54718c;border-radius:16px;background:rgba(9,13,19,.97);color:#fff;backdrop-filter:blur(16px);font-family:system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.3)}#worldWorkspacePanel.hidden{display:none!important}.world-workspace-header{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(9,13,19,.99);border-bottom:1px solid rgba(84,113,140,.55);cursor:grab;touch-action:none}.world-workspace-header>div{display:flex;flex-direction:column}.world-workspace-header strong{font-size:12px;letter-spacing:.08em}.world-workspace-header span{margin-top:3px;color:#8fa8bb;font-size:8px}.world-workspace-header button{width:36px!important;height:36px!important;border-radius:10px!important}.world-workspace-body{display:block}
-  .media-manager-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:stretch;padding:4px;border:1px solid #303b48;border-radius:12px;background:#0d141e}.media-manager-row.selected{outline:2px solid #2f8cff;background:#172334}.media-manager-row .media-manager-item{min-height:48px;border:0!important;background:transparent!important}.media-row-actions{display:grid;grid-template-columns:repeat(3,auto);gap:4px;align-items:center}.media-row-actions button{width:auto!important;min-width:52px!important;min-height:34px!important;padding:6px!important;font-size:8px!important}.media-row-actions .media-row-visibility{min-width:68px!important}.media-row-actions .danger{border-color:#7b3940!important;color:#ffd6d9!important}.media-manager-actions{display:none!important}
+  .media-manager-row{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;align-items:stretch;padding:5px;border:1px solid #303b48;border-radius:12px;background:#0d141e}.media-manager-row.selected{outline:2px solid #2f8cff;background:#172334}.media-manager-row .media-manager-item{width:100%!important;min-height:48px;border:0!important;background:transparent!important}.media-row-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;align-items:center}.media-row-actions button{width:100%!important;min-width:0!important;min-height:34px!important;padding:6px 3px!important;font-size:8px!important}.media-row-actions .danger{border-color:#7b3940!important;color:#ffd6d9!important}.media-manager-actions{display:none!important}
   .artwork-panel-header,.artwork-placement-header{cursor:grab;touch-action:none}.artwork-placement-header{display:flex!important;align-items:center;justify-content:space-between}.artwork-placement-header #closePlacementPanel{width:36px!important;height:36px!important;margin:0!important;border-radius:10px!important}
   .director-header.ui-drag-handle{position:sticky;top:-14px;z-index:4;margin:-14px -14px 10px;padding:14px;background:rgba(20,14,7,.99);cursor:grab;touch-action:none}
   @media (min-width:761px) and (pointer:fine){
-    body[data-ui-workspace="view"] #viewControlDock.room-active{display:grid;position:fixed;left:16px;right:16px;bottom:16px;z-index:45;grid-template-columns:minmax(78px,.65fr) minmax(0,2.1fr) minmax(0,1.55fr) minmax(0,1.75fr) minmax(0,1fr);gap:6px;padding:7px;overflow-x:auto;box-sizing:border-box;border:1px solid rgba(120,150,175,.56);border-radius:15px;background:rgba(7,13,21,.93);backdrop-filter:blur(18px);box-shadow:0 14px 38px rgba(0,0,0,.25)}
-    .view-control-group{min-width:0;padding:6px 8px 7px;border:1px solid rgba(100,128,150,.34);border-radius:10px;background:rgba(12,21,31,.72)}.view-control-label{display:block;margin:0 0 5px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}.view-control-content{display:flex;align-items:center;gap:5px;min-height:38px}.view-control-content #messageComposer{flex:1}.view-control-content #avatarMessageInput{width:100%;min-width:100px;box-sizing:border-box}.view-control-content #voiceControls,.view-control-content #photoStudio,.view-control-content #emoteControls{display:flex!important;position:static!important;inset:auto!important;gap:4px;transform:none!important}.view-control-content #viewToggle{display:block!important;position:static!important;inset:auto!important;transform:none!important;width:100%!important;min-height:38px!important}.view-control-content #communicationControls{display:none!important}.view-control-content button,.view-control-content select{min-height:36px!important;padding:7px 8px!important;white-space:nowrap}.view-control-content #voiceStatus{display:none}.view-control-content #quickMessages{display:flex;gap:3px}.view-control-content #quickMessages button{padding:6px!important}
+    body[data-ui-workspace="view"] #viewControlDock.room-active{display:grid;position:fixed;left:16px;right:16px;bottom:16px;z-index:45;grid-template-columns:minmax(72px,.6fr) minmax(300px,2.1fr) minmax(220px,1.45fr) minmax(320px,1.9fr) minmax(190px,1.2fr) minmax(120px,.8fr);gap:6px;padding:7px;overflow-x:auto;box-sizing:border-box;border:1px solid rgba(120,150,175,.56);border-radius:15px;background:rgba(7,13,21,.93);backdrop-filter:blur(18px);box-shadow:0 14px 38px rgba(0,0,0,.25)}
+    .view-control-group{min-width:0;padding:6px 8px 7px;border:1px solid rgba(100,128,150,.34);border-radius:10px;background:rgba(12,21,31,.72)}.view-control-label{display:block;margin:0 0 5px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}.view-control-content{display:flex;align-items:center;gap:5px;min-height:38px}.view-control-content #voiceControls{display:flex!important;position:static!important;inset:auto!important;gap:4px;transform:none!important}.view-control-content #viewToggle{display:block!important;position:static!important;inset:auto!important;transform:none!important;width:100%!important;min-height:38px!important}.view-control-content button,.view-control-content select{min-height:36px!important;padding:7px 8px!important;white-space:nowrap}.view-control-content #voiceStatus{display:none}.dock-chat,.dock-photo,.dock-actions{width:100%;display:flex;align-items:center;gap:4px}.dock-chat>input{min-width:105px;flex:1;box-sizing:border-box;padding:9px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff}.dock-quick{display:flex;gap:3px}.dock-quick button{padding:6px!important}.dock-photo select{min-width:96px}.dock-actions button{flex:1;min-width:0}.dock-light{width:100%!important}.dock-light.active{border-color:#ffe08a!important;color:#ffe08a!important;box-shadow:0 0 14px rgba(255,224,138,.35)}
     body[data-ui-workspace="avatar"] #avatarControls{display:block!important;position:fixed!important;top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;z-index:50!important;width:min(370px,calc(100vw - 270px))!important;height:auto!important}
     body[data-ui-workspace="avatar"] #avatarControls>#flashlightButton{display:none!important}
     body[data-ui-workspace="avatar"] #avatarSettingsPanel{display:block!important;width:100%!important;height:100%!important;max-height:none!important;margin:0!important;padding:16px!important;box-sizing:border-box!important;overflow-y:auto!important;overscroll-behavior:contain;border-color:#54718c!important;border-radius:16px!important;background:rgba(9,15,24,.96)!important;backdrop-filter:blur(16px)}
@@ -6123,7 +6166,7 @@ uiFoundationStyle.textContent=`
     #uiWorkspaceBar,#uiContextRail{display:none!important}
     #viewControlDock{display:none}
     body.mobile-compact.mobile-panel-chat #viewControlDock,body.mobile-compact.mobile-panel-photo #viewControlDock,body.mobile-compact.mobile-panel-emote #viewControlDock{display:flex;position:fixed;left:8px;right:8px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));z-index:68;padding:7px;box-sizing:border-box;border:1px solid rgba(120,160,195,.55);border-radius:15px;background:rgba(7,13,21,.96);backdrop-filter:blur(18px)}
-    body.mobile-compact #viewControlDock .view-control-group{display:none;width:100%}body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(2),body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(3),body.mobile-compact.mobile-panel-photo #viewControlDock .view-control-group:nth-child(4),body.mobile-compact.mobile-panel-emote #viewControlDock .view-control-group:nth-child(5){display:block}.view-control-label{display:block;margin-bottom:6px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}body.mobile-compact #viewControlDock .view-control-content{display:flex;flex-wrap:wrap;gap:4px}body.mobile-compact #viewControlDock #voiceControls,body.mobile-compact #viewControlDock #photoStudio,body.mobile-compact #viewControlDock #emoteControls{display:flex!important;position:static!important;inset:auto!important;transform:none!important;flex-wrap:wrap}
+    body.mobile-compact #viewControlDock .view-control-group{display:none;width:100%}body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(2),body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(3),body.mobile-compact.mobile-panel-photo #viewControlDock .view-control-group:nth-child(4),body.mobile-compact.mobile-panel-emote #viewControlDock .view-control-group:nth-child(5){display:block}.view-control-label{display:block;margin-bottom:6px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}body.mobile-compact #viewControlDock .view-control-content{display:flex;flex-wrap:wrap;gap:4px}body.mobile-compact #viewControlDock #voiceControls{display:flex!important;position:static!important;inset:auto!important;transform:none!important;flex-wrap:wrap}body.mobile-compact .dock-chat,body.mobile-compact .dock-photo,body.mobile-compact .dock-actions{display:flex;flex-wrap:wrap}
     body.mobile-compact #avatarControls{display:none!important}
     body.mobile-compact[data-ui-workspace="avatar"] #avatarControls{display:block!important;position:static;width:0;height:0}
     body.mobile-compact[data-ui-workspace="avatar"] #avatarControls>#flashlightButton{display:none!important}

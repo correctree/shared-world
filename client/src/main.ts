@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.2 DRAGGABLE DIRECTOR PANELS LOADED]");
+console.log("[PROTOTYPE 0.21.1.3 UNIFIED WORKSPACE UI LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3717,6 +3717,7 @@ async function enterWorld() {
     communicationControls.classList.add("room-active");
     mobileActionDock.classList.add("room-active");
     uiFoundationRoot.classList.add("room-active");
+    viewControlDock.classList.add("room-active");
     hud.querySelector<HTMLElement>(".controls")!.textContent=
       "WASD：移動 / SPACE：ジャンプ・上昇 / F：飛行 / SHIFT：下降";
   } catch (error) {
@@ -5798,6 +5799,33 @@ const cueManagerSurface=mediaManagerPanel.querySelector<HTMLElement>(".cue-manag
 cueFloatingPanel.append(cueFloatingHeader,cueManagerSurface);document.body.appendChild(cueFloatingPanel);
 cueFloatingHeader.querySelector<HTMLButtonElement>("#closeCueFloatingPanel")!.addEventListener("click",()=>cueFloatingPanel.classList.add("hidden"));
 
+// Desktop VIEW uses a single categorized control dock. Proven controls are
+// moved rather than recreated, so their existing listeners remain intact.
+const viewControlDock=document.createElement("section");viewControlDock.id="viewControlDock";
+function createViewControlGroup(label:string,nodes:HTMLElement[]){
+  const group=document.createElement("div");group.className="view-control-group";
+  const heading=document.createElement("span");heading.className="view-control-label";heading.textContent=label;
+  const content=document.createElement("div");content.className="view-control-content";content.append(...nodes);
+  group.append(heading,content);return group;
+}
+const messageComposerNode=communicationControls.querySelector<HTMLElement>("#messageComposer")!;
+const quickMessagesNode=communicationControls.querySelector<HTMLElement>("#quickMessages")!;
+const voiceControlsNode=communicationControls.querySelector<HTMLElement>("#voiceControls")!;
+const photoStudioNode=communicationControls.querySelector<HTMLElement>("#photoStudio")!;
+viewControlDock.append(
+  createViewControlGroup("VIEW",[viewToggle]),
+  createViewControlGroup("CHAT",[messageComposerNode,quickMessagesNode]),
+  createViewControlGroup("VOICE",[voiceControlsNode]),
+  createViewControlGroup("PHOTO",[photoStudioNode]),
+  createViewControlGroup("ACTION",[emoteControls])
+);
+document.body.appendChild(viewControlDock);
+
+const avatarFloatingHeader=document.createElement("div");avatarFloatingHeader.className="avatar-floating-header ui-drag-handle";
+avatarFloatingHeader.innerHTML=`<div><strong>AVATAR DESIGN</strong><span>IDENTITY & EXPRESSION</span></div><button type="button" aria-label="Close Avatar Design">×</button>`;
+avatarSettingsPanel.prepend(avatarFloatingHeader);
+avatarFloatingHeader.querySelector("button")!.addEventListener("click",()=>{avatarSettingsPanel.hidden=true;});
+
 // =========================================================
 // Prototype 0.21.1 / UI FOUNDATION
 // Task-oriented workspaces for desktop and one-sheet-at-a-time navigation
@@ -5810,7 +5838,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.2</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.3</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -5852,9 +5880,9 @@ const uiSaveState=uiFoundationRoot.querySelector<HTMLElement>("#uiSaveState")!;
 
 const uiWorkspaceCopy:Record<UIFoundationWorkspace,{title:string;subtitle:string;actions:Array<[string,string]>}>={
   view:{title:"VIEW",subtitle:"EXPLORE & COMMUNICATE",actions:[["camera","CAMERA VIEW"],["talk","VOICE / CHAT"],["photo","TAKE PHOTO"]]},
-  create:{title:"CREATE",subtitle:"ARTWORK & BEHAVIOR",actions:[["add","+ ADD ARTWORK"],["objects","ARTWORK LIST"],["groups","GROUP / TAG"]]},
-  world:{title:"WORLD",subtitle:"ROOM ENVIRONMENT",actions:[["environment","ENVIRONMENT"],["scenes","SCENES / BACKUP"]]},
-  avatar:{title:"AVATAR",subtitle:"IDENTITY & EXPRESSION",actions:[["avatar","AVATAR DESIGN"],["emote","EMOTES"],["flashlight","FLASHLIGHT"]]},
+  create:{title:"CREATE",subtitle:"ARTWORK & BEHAVIOR",actions:[["add","+ ADD ARTWORK"],["objects","ARTWORK LIST"],["groups","GROUP / TAG"],["reset-layout","RESET LAYOUT"]]},
+  world:{title:"WORLD",subtitle:"ROOM ENVIRONMENT",actions:[["environment","ENVIRONMENT"],["scenes","SCENES / BACKUP"],["reset-layout","RESET LAYOUT"]]},
+  avatar:{title:"AVATAR",subtitle:"IDENTITY & EXPRESSION",actions:[["avatar","AVATAR DESIGN"],["emote","EMOTES"],["flashlight","FLASHLIGHT"],["reset-layout","RESET LAYOUT"]]},
   direct:{title:"DIRECT",subtitle:"LIVE PERFORMANCE",actions:[["director","DIRECTOR CONTROL"],["cue-editor","CUE EDITOR"],["reset-layout","RESET LAYOUT"]]}
 };
 
@@ -5914,7 +5942,7 @@ uiFoundationRoot.addEventListener("click",event=>{
   const workspaceButton=(event.target as HTMLElement).closest<HTMLButtonElement>("[data-workspace]");
   if(workspaceButton){selectUIWorkspace(String(workspaceButton.dataset.workspace) as UIFoundationWorkspace);return;}
   const actionButton=(event.target as HTMLElement).closest<HTMLButtonElement>("[data-ui-action]");
-  if(actionButton){runFoundationAction(String(actionButton.dataset.uiAction||""));setMobileFoundationPanel("");}
+  if(actionButton){const action=String(actionButton.dataset.uiAction||"");runFoundationAction(action);if(action==="flashlight"||action==="camera")setMobileFoundationPanel("");}
 });
 const uiFoundationStyle=document.createElement("style");
 uiFoundationStyle.textContent=`
@@ -5926,27 +5954,40 @@ uiFoundationStyle.textContent=`
   .ui-workspace-tabs button{min-height:40px;padding:5px 8px;border:1px solid transparent;border-radius:9px;background:transparent;color:#c8d4de;font-size:10px;font-weight:900;letter-spacing:.07em}.ui-workspace-tabs button span{display:block;margin-top:2px;color:#8195a5;font-size:8px;font-weight:600;letter-spacing:0}.ui-workspace-tabs button:hover,.ui-workspace-tabs button.active{border-color:#52d7ff;background:#102638;color:#fff}.ui-workspace-tabs button.active span{color:#74ddff}
   #uiSaveState{min-width:66px;padding:6px 8px;border-radius:8px;background:#13202b;color:#9ab0c1;font-size:8px;font-weight:800;text-align:center;letter-spacing:.06em}
   #uiContextRail{position:fixed;top:84px;left:max(14px,env(safe-area-inset-left));z-index:39;width:206px;padding:13px;box-sizing:border-box;border:1px solid rgba(120,150,175,.46);border-radius:14px;background:rgba(7,13,21,.88);backdrop-filter:blur(15px)}
+  body[data-ui-workspace="view"] #uiContextRail{display:none!important}
   .ui-context-heading{display:flex;flex-direction:column;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12)}.ui-context-heading strong{font-size:13px;letter-spacing:.08em}.ui-context-heading span{margin-top:4px;color:#8ea5b7;font-size:8px;letter-spacing:.08em}
   #uiContextActions{display:grid;gap:6px;margin-top:10px}#uiContextActions button{width:100%!important;min-height:38px;padding:8px 10px;border:1px solid #52697c;border-radius:9px;background:#0d1722;color:#fff;font-size:9px;font-weight:850;text-align:left;letter-spacing:.06em}#uiContextActions button:hover{border-color:#52d7ff;background:#132838}
   body[data-ui-workspace] #addArtworkButton,body[data-ui-workspace] #mediaManagerButton,body[data-ui-workspace] #directorButton,body[data-ui-workspace] #avatarSettingsButton{display:none!important}
   body[data-ui-workspace] #avatarControls{width:auto}body[data-ui-workspace] #flashlightButton{width:auto!important}
+  body[data-ui-workspace] #sharedStateDiagnosticPanel{display:none!important}
+  #viewControlDock{display:none}
+  .avatar-floating-header{position:sticky;top:-16px;z-index:4;display:flex;align-items:center;justify-content:space-between;margin:-16px -16px 12px;padding:13px 16px;background:rgba(9,15,24,.99);border-bottom:1px solid rgba(113,145,174,.45);cursor:grab;touch-action:none}.avatar-floating-header>div{display:flex;flex-direction:column}.avatar-floating-header strong{font-size:12px;letter-spacing:.08em}.avatar-floating-header span{margin-top:3px;color:#8fa8bb;font-size:8px;letter-spacing:.08em}.avatar-floating-header button{width:36px!important;height:36px!important;margin:0!important}
+  #avatarSettingsPanel>strong:first-of-type{display:none}
   #cueFloatingPanel{position:fixed;z-index:82;width:min(360px,calc(100vw - 32px));max-height:calc(100vh - 100px);overflow:auto;box-sizing:border-box;padding:0 14px 14px;border:1px solid #ffb54a;border-radius:16px;background:rgba(20,14,7,.97);color:#fff;backdrop-filter:blur(16px);font-family:system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.3)}
   #cueFloatingPanel.hidden{display:none!important}
   .cue-floating-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(20,14,7,.99);border-bottom:1px solid rgba(255,181,74,.28);cursor:grab;touch-action:none}.cue-floating-header:active,.director-header:active{cursor:grabbing}.cue-floating-header>div{display:flex;flex-direction:column}.cue-floating-header strong{font-size:12px;letter-spacing:.08em}.cue-floating-header span{margin-top:3px;color:#d6b27e;font-size:8px;letter-spacing:.08em}.cue-floating-header button{width:36px!important;height:36px!important;border-radius:10px!important}
   #cueFloatingPanel .cue-manager{margin:0!important}
   .director-header.ui-drag-handle{position:sticky;top:-14px;z-index:4;margin:-14px -14px 10px;padding:14px;background:rgba(20,14,7,.99);cursor:grab;touch-action:none}
   @media (min-width:761px) and (pointer:fine){
+    body[data-ui-workspace="view"] #viewControlDock.room-active{display:grid;position:fixed;left:16px;right:16px;bottom:16px;z-index:45;grid-template-columns:minmax(78px,.65fr) minmax(0,2.1fr) minmax(0,1.55fr) minmax(0,1.75fr) minmax(0,1fr);gap:6px;padding:7px;overflow-x:auto;box-sizing:border-box;border:1px solid rgba(120,150,175,.56);border-radius:15px;background:rgba(7,13,21,.93);backdrop-filter:blur(18px);box-shadow:0 14px 38px rgba(0,0,0,.25)}
+    .view-control-group{min-width:0;padding:6px 8px 7px;border:1px solid rgba(100,128,150,.34);border-radius:10px;background:rgba(12,21,31,.72)}.view-control-label{display:block;margin:0 0 5px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}.view-control-content{display:flex;align-items:center;gap:5px;min-height:38px}.view-control-content #messageComposer{flex:1}.view-control-content #avatarMessageInput{width:100%;min-width:100px;box-sizing:border-box}.view-control-content #voiceControls,.view-control-content #photoStudio,.view-control-content #emoteControls{display:flex!important;position:static!important;inset:auto!important;gap:4px;transform:none!important}.view-control-content #viewToggle{display:block!important;position:static!important;inset:auto!important;transform:none!important;width:100%!important;min-height:38px!important}.view-control-content #communicationControls{display:none!important}.view-control-content button,.view-control-content select{min-height:36px!important;padding:7px 8px!important;white-space:nowrap}.view-control-content #voiceStatus{display:none}.view-control-content #quickMessages{display:flex;gap:3px}.view-control-content #quickMessages button{padding:6px!important}
     body[data-ui-workspace="avatar"] #avatarControls{display:block!important;position:fixed!important;top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;z-index:50!important;width:min(370px,calc(100vw - 270px))!important;height:auto!important}
     body[data-ui-workspace="avatar"] #avatarControls>#flashlightButton{display:none!important}
     body[data-ui-workspace="avatar"] #avatarSettingsPanel{display:block!important;width:100%!important;height:100%!important;max-height:none!important;margin:0!important;padding:16px!important;box-sizing:border-box!important;overflow-y:auto!important;overscroll-behavior:contain;border-color:#54718c!important;border-radius:16px!important;background:rgba(9,15,24,.96)!important;backdrop-filter:blur(16px)}
+    body[data-ui-workspace="avatar"] #avatarControls.ui-positioned{bottom:auto!important}
     body[data-ui-workspace="direct"] #directorPanel{display:block;position:fixed!important;top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;width:min(390px,calc(100vw - 270px))!important;max-height:none!important;overflow-y:auto!important;box-sizing:border-box!important}
     body[data-ui-workspace="direct"] #directorPanel.ui-positioned{bottom:auto!important;max-height:calc(100vh - 100px)!important}
     body[data-ui-workspace="direct"] #cueFloatingPanel.ui-positioned{right:auto!important;bottom:auto!important}
     body[data-ui-workspace="create"] #mediaManagerPanel,body[data-ui-workspace="world"] #mediaManagerPanel{top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;max-height:none!important}
+    body[data-ui-workspace="create"] #mediaManagerPanel.ui-positioned,body[data-ui-workspace="world"] #mediaManagerPanel.ui-positioned{bottom:auto!important;max-height:calc(100vh - 100px)!important}
+    .media-manager-header.ui-drag-handle{cursor:grab;touch-action:none}
   }
   .ui-mobile-sheet{display:none}
   @media (max-width:760px),(pointer:coarse){
     #uiWorkspaceBar,#uiContextRail{display:none!important}
+    #viewControlDock{display:none}
+    body.mobile-compact.mobile-panel-chat #viewControlDock,body.mobile-compact.mobile-panel-photo #viewControlDock,body.mobile-compact.mobile-panel-emote #viewControlDock{display:flex;position:fixed;left:8px;right:8px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));z-index:68;padding:7px;box-sizing:border-box;border:1px solid rgba(120,160,195,.55);border-radius:15px;background:rgba(7,13,21,.96);backdrop-filter:blur(18px)}
+    body.mobile-compact #viewControlDock .view-control-group{display:none;width:100%}body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(2),body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(3),body.mobile-compact.mobile-panel-photo #viewControlDock .view-control-group:nth-child(4),body.mobile-compact.mobile-panel-emote #viewControlDock .view-control-group:nth-child(5){display:block}.view-control-label{display:block;margin-bottom:6px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}body.mobile-compact #viewControlDock .view-control-content{display:flex;flex-wrap:wrap;gap:4px}body.mobile-compact #viewControlDock #voiceControls,body.mobile-compact #viewControlDock #photoStudio,body.mobile-compact #viewControlDock #emoteControls{display:flex!important;position:static!important;inset:auto!important;transform:none!important;flex-wrap:wrap}
     body.mobile-compact #avatarControls{display:none!important}
     body.mobile-compact[data-ui-workspace="avatar"] #avatarControls{display:block!important;position:static;width:0;height:0}
     body.mobile-compact[data-ui-workspace="avatar"] #avatarControls>#flashlightButton{display:none!important}
@@ -5965,13 +6006,13 @@ directorDragHeader.classList.add("ui-drag-handle");
 const FLOATING_PANEL_POSITION_KEY="shared-world-director-panel-layout-v1";
 let floatingPanelZ=82;
 type FloatingPosition={x:number;y:number};
-type FloatingLayout={director?:FloatingPosition;cue?:FloatingPosition};
+type FloatingLayout={director?:FloatingPosition;cue?:FloatingPosition;media?:FloatingPosition;avatar?:FloatingPosition};
 function bringFloatingPanelToFront(panel:HTMLElement){panel.style.zIndex=String(++floatingPanelZ);}
 function defaultFloatingLayout():FloatingLayout{
   const directorWidth=Math.min(390,Math.max(300,window.innerWidth-270));
   const cueWidth=Math.min(360,window.innerWidth-32);
   const directorX=Math.max(8,window.innerWidth-directorWidth-16);
-  return {director:{x:directorX,y:84},cue:{x:Math.max(222,directorX-cueWidth-12),y:84}};
+  return {director:{x:directorX,y:84},cue:{x:Math.max(222,directorX-cueWidth-12),y:84},media:{x:directorX,y:84},avatar:{x:directorX,y:84}};
 }
 function readFloatingLayout():FloatingLayout{
   try{return {...defaultFloatingLayout(),...JSON.parse(localStorage.getItem(FLOATING_PANEL_POSITION_KEY)||"{}")};}
@@ -5986,16 +6027,17 @@ function applyFloatingPosition(panel:HTMLElement,position:FloatingPosition){
   panel.classList.add("ui-positioned");
   panel.style.setProperty("left",`${x}px`,"important");panel.style.setProperty("top",`${y}px`,"important");
   panel.style.setProperty("right","auto","important");panel.style.setProperty("bottom","auto","important");
+  if(panel===avatarControls)panel.style.setProperty("height",`${Math.max(280,window.innerHeight-y-8)}px`,"important");
 }
-function saveFloatingPanelLayout(){
+function saveFloatingPanelLayout(panel:HTMLElement){
   if(compactMobileQuery.matches)return;
-  const directorRect=directorPanel.getBoundingClientRect(),cueRect=cueFloatingPanel.getBoundingClientRect();
-  const layout:FloatingLayout={director:{x:directorRect.left,y:directorRect.top},cue:{x:cueRect.left,y:cueRect.top}};
+  const layout=readFloatingLayout(),rect=panel.getBoundingClientRect(),position={x:rect.left,y:rect.top};
+  if(panel===directorPanel)layout.director=position;else if(panel===cueFloatingPanel)layout.cue=position;else if(panel===mediaManagerPanel)layout.media=position;else if(panel===avatarControls)layout.avatar=position;
   try{localStorage.setItem(FLOATING_PANEL_POSITION_KEY,JSON.stringify(layout));}catch{}
 }
 function restoreFloatingPanelLayout(){
   if(compactMobileQuery.matches)return;const layout=readFloatingLayout();
-  applyFloatingPosition(directorPanel,layout.director!);applyFloatingPosition(cueFloatingPanel,layout.cue!);
+  applyFloatingPosition(directorPanel,layout.director!);applyFloatingPosition(cueFloatingPanel,layout.cue!);applyFloatingPosition(mediaManagerPanel,layout.media!);applyFloatingPosition(avatarControls,layout.avatar!);
 }
 function resetDirectorPanelLayout(){
   try{localStorage.removeItem(FLOATING_PANEL_POSITION_KEY);}catch{}
@@ -6007,12 +6049,13 @@ function enableFloatingPanelDrag(panel:HTMLElement,handle:HTMLElement){
     event.preventDefault();bringFloatingPanelToFront(panel);handle.setPointerCapture(event.pointerId);
     const rect=panel.getBoundingClientRect(),offsetX=event.clientX-rect.left,offsetY=event.clientY-rect.top;
     const move=(moveEvent:PointerEvent)=>applyFloatingPosition(panel,{x:moveEvent.clientX-offsetX,y:moveEvent.clientY-offsetY});
-    const finish=()=>{handle.removeEventListener("pointermove",move);saveFloatingPanelLayout();};
+    const finish=()=>{handle.removeEventListener("pointermove",move);saveFloatingPanelLayout(panel);};
     handle.addEventListener("pointermove",move);handle.addEventListener("pointerup",finish,{once:true});handle.addEventListener("pointercancel",finish,{once:true});
   });
   panel.addEventListener("pointerdown",()=>bringFloatingPanelToFront(panel));
 }
-enableFloatingPanelDrag(directorPanel,directorDragHeader);enableFloatingPanelDrag(cueFloatingPanel,cueFloatingHeader);
+const mediaManagerDragHeader=mediaManagerPanel.querySelector<HTMLElement>(".media-manager-header")!;mediaManagerDragHeader.classList.add("ui-drag-handle");
+enableFloatingPanelDrag(directorPanel,directorDragHeader);enableFloatingPanelDrag(cueFloatingPanel,cueFloatingHeader);enableFloatingPanelDrag(mediaManagerPanel,mediaManagerDragHeader);enableFloatingPanelDrag(avatarControls,avatarFloatingHeader);
 window.addEventListener("resize",()=>requestAnimationFrame(restoreFloatingPanelLayout));
 restoreFloatingPanelLayout();
 document.body.dataset.uiWorkspace="view";renderFoundationContext();selectUIWorkspace("view");

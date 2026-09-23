@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.8 SCENE SAVE RECALL LOADED]");
+console.log("[PROTOTYPE 0.20.8.1 LOCAL SCENE METADATA PERSISTENCE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -964,6 +964,28 @@ function destroyResonancePair(key:string) {
 const keys = new Set<string>();
 let currentSessionId = "";
 let activeRoom: Room | null = null;
+const LOCAL_WORLD_BACKUP_PREFIX="shared-world-local-backup-v1:";
+let pendingLocalWorldSave=false;
+let pendingLocalWorldSaveReason="";
+let localAutoRestoreAttempted=false;
+let lastSnapshotMediaCount=-1;
+function localWorldBackupKey(){return `${LOCAL_WORLD_BACKUP_PREFIX}${(roomInput.value.trim()||"ART001").toUpperCase()}`;}
+function readLocalWorldBackup():any|null {
+  try {const value=localStorage.getItem(localWorldBackupKey());return value?JSON.parse(value):null;} catch{return null;}
+}
+function requestLocalWorldSave(reason:string){
+  if(!activeRoom||!environmentCanEdit)return;
+  pendingLocalWorldSave=true;pendingLocalWorldSaveReason=reason;
+  activeRoom.send("world:export",{});
+}
+function maybeRestoreLocalWorld(){
+  if(localAutoRestoreAttempted||!activeRoom||!environmentCanEdit||lastSnapshotMediaCount!==0)return;
+  localAutoRestoreAttempted=true;const manifest=readLocalWorldBackup();
+  if(!manifest||manifest.format!=="shared-world-manifest"||!Array.isArray(manifest.mediaObjects)||
+    (!manifest.mediaObjects.length&&!(Array.isArray(manifest.scenes)&&manifest.scenes.length)))return;
+  sceneStatus.textContent="Restoring local room backup…";
+  activeRoom.send("world:import",manifest);
+}
 
 const CLIENT_ID_STORAGE_KEY = "shared-world-client-id-v1";
 function getOrCreateClientId() {
@@ -3304,6 +3326,7 @@ async function enterWorld() {
     const client = new Client(SERVER_URL);
     const room = await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
     activeRoom = room;
+    localAutoRestoreAttempted=false;lastSnapshotMediaCount=-1;
     currentSessionId = room.sessionId;
     latestMoveAck=0;
     lastSentMove={x:NaN,y:NaN,z:NaN,rotationY:NaN,flying:false};
@@ -3444,7 +3467,8 @@ async function enterWorld() {
       if(room!==activeRoom)return;
       if(payload?.ok){
         applyMediaMetadata(String(payload.id||""),payload);
-        saveMediaMetadataButton.textContent="SAVED";
+        saveMediaMetadataButton.textContent="SAVED · ROOM + LOCAL";
+        requestLocalWorldSave("GROUP / TAG");
         window.setTimeout(refreshMediaMetadataEditor,700);
       } else {
         saveMediaMetadataButton.textContent=payload?.reason==="owner-locked"?"ROOM OWNER ONLY":"SAVE FAILED";
@@ -3463,6 +3487,7 @@ async function enterWorld() {
       sceneStatus.textContent=payload.action==="recall"?`Recalled ${String(payload.name||"scene")} · ${Number(payload.count)||0} objects`:
         payload.action==="delete"?"Scene deleted.":`Saved ${String(payload.name||"scene")}`;
       if(payload.action==="save"&&payload.id)sceneSelect.dataset.pendingSelection=String(payload.id);
+      requestLocalWorldSave(`SCENE ${String(payload.action||"").toUpperCase()}`);
     });
     room.onMessage("scene:recalled",(payload:any)=>{
       if(room!==activeRoom)return;sceneStatus.textContent=`LIVE SCENE · ${String(payload?.name||"Scene")}`;
@@ -3512,6 +3537,14 @@ async function enterWorld() {
     room.send("environment:get",{});
     room.send("scene:list:request",{});
     room.onMessage("world:export:result", (manifest:any) => {
+      if(room===activeRoom&&pendingLocalWorldSave&&!pendingWorldPackageExport){
+        const reason=pendingLocalWorldSaveReason;pendingLocalWorldSave=false;pendingLocalWorldSaveReason="";
+        try {
+          localStorage.setItem(localWorldBackupKey(),JSON.stringify(manifest));
+          localBackupStatus.textContent=`LOCAL SAVED · ${reason} · ${new Date().toLocaleTimeString()}`;
+        } catch(error){localBackupStatus.textContent=`LOCAL SAVE FAILED · ${String(error)}`;}
+        return;
+      }
       if (room === activeRoom && pendingWorldPackageExport) {
         pendingWorldPackageExport = false;
         void exportPortableWorld(manifest, room);
@@ -3532,7 +3565,10 @@ async function enterWorld() {
       worldManifestStatus.textContent = result?.ok
         ? `${result.count} objects imported. Check that asset URLs are still available.`
         : `Import failed: ${String(result?.reason || "unknown")}`;
-      if (result?.ok) room.send("media:snapshot:request", {});
+      if (result?.ok) {
+        room.send("media:snapshot:request", {});
+        window.setTimeout(()=>requestLocalWorldSave("ROOM RESTORE"),800);
+      }
     });
     room.onMessage("media:behavior", (payload:any) => {
       const id=String(payload?.id||"");
@@ -3544,6 +3580,7 @@ async function enterWorld() {
     // snapshot is a safety net for mobile clients that miss a live onAdd.
     room.onMessage("media:snapshot", (payload: any) => {
       const list = Array.isArray(payload?.mediaObjects) ? payload.mediaObjects : [];
+      lastSnapshotMediaCount=list.length;
       sharedStateDiagnostic.snapshotRx += 1;
       sharedStateDiagnostic.serverMedia = list.length;
       if (list.length) sharedStateDiagnostic.lastMediaId = String(list[list.length - 1]?.id || "-");
@@ -3572,6 +3609,7 @@ async function enterWorld() {
           removeSharedMediaLifecycle(mediaId, "snapshot-reconcile");
         }
       }
+      maybeRestoreLocalWorld();
     });
 
     const requestLiveMediaSnapshot = () => {
@@ -4499,6 +4537,7 @@ mediaManagerPanel.innerHTML = `
       <button id="sceneDeleteButton" type="button">DELETE</button>
     </div>
     <div id="sceneStatus">No scenes saved.</div>
+    <div class="local-backup-row"><button id="restoreLocalBackupButton" type="button">RESTORE LOCAL</button><span id="localBackupStatus">LOCAL BACKUP READY</span></div>
   </div>
   <div id="mediaMetadataEditor" class="media-metadata-editor">
     <div class="behavior-editor-title">GROUP / TAG</div>
@@ -4751,6 +4790,7 @@ function applyEnvironmentPermissions(payload:any) {
   environmentEditor.style.opacity=environmentCanEdit?"1":".72";
   refreshMediaMetadataEditor();
   refreshSceneUI();
+  maybeRestoreLocalWorld();
 }
 customParticleInput.addEventListener("change",async()=>{
   if(!environmentCanEdit)return;
@@ -4983,6 +5023,9 @@ mediaManagerStyle.textContent = `
   .scene-actions { display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px; }
   .scene-actions button { width:100%!important;min-width:0;padding:9px 4px;font-size:10px; }
   #sceneStatus { min-height:14px;font-size:10px;color:#9ddce6; }
+  .local-backup-row { display:grid;grid-template-columns:112px 1fr;gap:8px;align-items:center;padding-top:7px;border-top:1px solid rgba(255,255,255,.12); }
+  #restoreLocalBackupButton { width:100%!important;padding:8px 4px;font-size:9px; }
+  #localBackupStatus { font-size:9px;color:#8fb6bf;overflow-wrap:anywhere; }
   .media-metadata-editor { margin:0 0 12px;padding:12px;border:1px solid #9a6ee8;border-radius:12px;background:#151124; }
   .media-metadata-editor .hidden { display:none!important; }
   .metadata-row { display:grid;grid-template-columns:58px 1fr;align-items:center;gap:8px;margin:8px 0;font-size:11px; }
@@ -5093,6 +5136,8 @@ const sceneSaveButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#scene
 const sceneRecallButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#sceneRecallButton")!;
 const sceneDeleteButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#sceneDeleteButton")!;
 const sceneStatus=mediaManagerPanel.querySelector<HTMLElement>("#sceneStatus")!;
+const restoreLocalBackupButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#restoreLocalBackupButton")!;
+const localBackupStatus=mediaManagerPanel.querySelector<HTMLElement>("#localBackupStatus")!;
 type SceneSummary={id:string;name:string;updatedAt:number;objectCount:number};
 let sceneSummaries:SceneSummary[]=[];
 function refreshSceneUI(){
@@ -5102,9 +5147,17 @@ function refreshSceneUI(){
   if(sceneSummaries.some(scene=>scene.id===selected))sceneSelect.value=selected;
   const has=!!sceneSelect.value;sceneRecallButton.disabled=!environmentCanEdit||!has;sceneDeleteButton.disabled=!environmentCanEdit||!has;
   sceneSaveButton.disabled=!environmentCanEdit;
+  const backup=readLocalWorldBackup();
+  restoreLocalBackupButton.disabled=!environmentCanEdit||lastSnapshotMediaCount!==0||!backup;
+  if(backup?.exportedAt)localBackupStatus.textContent=`LOCAL BACKUP · ${new Date(backup.exportedAt).toLocaleString()}`;
   if(!environmentCanEdit)sceneStatus.textContent="ROOM OWNER ONLY";
   else if(!sceneSummaries.length)sceneStatus.textContent="No scenes saved.";
 }
+restoreLocalBackupButton.addEventListener("click",()=>{
+  if(!activeRoom||!environmentCanEdit||lastSnapshotMediaCount!==0)return;
+  const manifest=readLocalWorldBackup();if(!manifest)return;
+  localAutoRestoreAttempted=true;sceneStatus.textContent="Restoring local room backup…";activeRoom.send("world:import",manifest);
+});
 sceneSelect.addEventListener("change",()=>{
   const scene=sceneSummaries.find(item=>item.id===sceneSelect.value);if(scene)sceneNameInput.value=scene.name;
   refreshSceneUI();

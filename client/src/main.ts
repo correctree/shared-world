@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.0 DIRECTOR CONTROL LOADED]");
+console.log("[PROTOTYPE 0.21.0.1 DIRECTOR BUTTON CONTRAST LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -5077,10 +5077,13 @@ mediaManagerStyle.textContent = `
   .director-section.hidden { display:none!important; }
   .director-section>strong { display:block;margin-bottom:8px;font-size:10px;letter-spacing:.1em; }
   .director-grid { display:grid;grid-template-columns:1fr 1fr;gap:8px; }
-  .director-grid button { width:100%!important;min-height:56px;padding:8px;border-color:#ffb54a;color:#ffe0a8;font-size:11px; }
+  .director-grid button { width:100%!important;min-height:56px;padding:8px;border:1px solid #7c8796!important;border-radius:10px;background:#101720!important;color:#fff!important;font-size:11px;font-weight:900;text-shadow:none!important;box-shadow:none; }
+  .director-grid button:hover,.director-grid button:focus-visible { border-color:#ffb54a!important;background:#26313e!important;color:#fff!important;outline:2px solid rgba(255,181,74,.4); }
+  .director-grid button:active { background:#ffb54a!important;color:#171008!important;transform:translateY(1px); }
   .director-empty { padding:10px;text-align:center;opacity:.55;font-size:10px; }
   .director-participant { display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin:7px 0;padding:8px;border-radius:8px;background:#17130e;font-size:11px; }
-  .director-participant button { width:auto!important;min-width:82px;padding:7px;font-size:9px; }
+  .director-participant button { width:auto!important;min-width:82px;padding:7px;border-color:#738094!important;background:#26313e!important;color:#fff!important;font-size:9px;font-weight:900; }
+  .director-participant button:disabled { background:#555d68!important;color:#fff!important;opacity:1; }
   #directorActionStatus { position:sticky;bottom:-14px;padding:10px 2px;background:rgba(20,14,7,.98);color:#ffd18b;font-size:10px;font-weight:800; }
   .media-manager-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
   #closeMediaManagerButton { width:36px !important; height:36px; border-radius:10px; }

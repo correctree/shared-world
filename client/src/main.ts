@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.8.2 METADATA INPUT STABILITY LOADED]");
+console.log("[PROTOTYPE 0.20.9 CUE SYSTEM LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -982,7 +982,8 @@ function maybeRestoreLocalWorld(){
   if(localAutoRestoreAttempted||!activeRoom||!environmentCanEdit||lastSnapshotMediaCount!==0)return;
   localAutoRestoreAttempted=true;const manifest=readLocalWorldBackup();
   if(!manifest||manifest.format!=="shared-world-manifest"||!Array.isArray(manifest.mediaObjects)||
-    (!manifest.mediaObjects.length&&!(Array.isArray(manifest.scenes)&&manifest.scenes.length)))return;
+    (!manifest.mediaObjects.length&&!(Array.isArray(manifest.scenes)&&manifest.scenes.length)&&
+      !(Array.isArray(manifest.cues)&&manifest.cues.length)))return;
   sceneStatus.textContent="Restoring local room backup…";
   activeRoom.send("world:import",manifest);
 }
@@ -3482,6 +3483,24 @@ async function enterWorld() {
       })).filter((scene:SceneSummary)=>!!scene.id):[];
       refreshSceneUI();
     });
+    room.onMessage("cue:list",(payload:any)=>{
+      if(room!==activeRoom)return;
+      cueSummaries=Array.isArray(payload?.cues)?payload.cues.map((cue:any)=>({
+        id:String(cue.id||""),name:String(cue.name||"Cue"),targetType:String(cue.targetType||"scene") as CueSummary["targetType"],
+        target:String(cue.target||""),action:String(cue.action||"play"),updatedAt:Number(cue.updatedAt)||0
+      })).filter((cue:CueSummary)=>!!cue.id):[];refreshCueUI();
+    });
+    room.onMessage("cue:result",(payload:any)=>{
+      if(room!==activeRoom)return;
+      if(!payload?.ok){cueStatus.textContent=`CUE ${String(payload?.operation||"")} failed: ${String(payload?.reason||"unknown")}`;return;}
+      cueStatus.textContent=payload.operation==="fire"?`FIRED · ${String(payload.name||"CUE")} · ${Number(payload.count)||0} objects`:
+        payload.operation==="delete"?"CUE deleted.":`SAVED · ${String(payload.name||"CUE")}`;
+      if(payload.operation==="save"&&payload.id)cueSelect.dataset.pendingSelection=String(payload.id);
+      if(payload.operation!=="fire")requestLocalWorldSave(`CUE ${String(payload.operation||"").toUpperCase()}`);
+    });
+    room.onMessage("cue:fired",(payload:any)=>{
+      if(room!==activeRoom)return;cueStatus.textContent=`LIVE CUE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0}`;
+    });
     room.onMessage("scene:result",(payload:any)=>{
       if(room!==activeRoom)return;
       if(!payload?.ok){sceneStatus.textContent=`Scene ${String(payload?.action||"")} failed: ${String(payload?.reason||"unknown")}`;return;}
@@ -3537,6 +3556,7 @@ async function enterWorld() {
     });
     room.send("environment:get",{});
     room.send("scene:list:request",{});
+    room.send("cue:list:request",{});
     room.onMessage("world:export:result", (manifest:any) => {
       if(room===activeRoom&&pendingLocalWorldSave&&!pendingWorldPackageExport){
         const reason=pendingLocalWorldSaveReason;pendingLocalWorldSave=false;pendingLocalWorldSaveReason="";
@@ -4528,6 +4548,17 @@ mediaManagerPanel.innerHTML = `
     <strong>MEDIA OBJECTS</strong>
     <button id="closeMediaManagerButton" type="button">×</button>
   </div>
+  <div class="cue-manager">
+    <div class="behavior-editor-title">CUE SYSTEM</div>
+    <select id="cueSelect"><option value="">NEW CUE</option></select>
+    <input id="cueNameInput" maxlength="32" placeholder="CUE NAME">
+    <select id="cueTargetType"><option value="scene">SCENE</option><option value="group">GROUP</option><option value="tag">TAG</option></select>
+    <select id="cueSceneTarget"></select>
+    <input id="cueTextTarget" maxlength="32" class="hidden" placeholder="GROUP / TAG NAME">
+    <select id="cueAction"><option value="play">PLAY</option><option value="stop">STOP</option><option value="move">MOVE</option><option value="rotate">ROTATE</option><option value="scale">SCALE</option><option value="float">FLOAT</option><option value="orbit">ORBIT</option><option value="shake">SHAKE</option></select>
+    <div class="cue-actions"><button id="cueSaveButton" type="button">SAVE</button><button id="cueFireButton" type="button">FIRE</button><button id="cueDeleteButton" type="button">DELETE</button></div>
+    <div id="cueStatus">No cues saved.</div>
+  </div>
   <div class="scene-manager">
     <div class="behavior-editor-title">SCENES</div>
     <input id="sceneNameInput" maxlength="32" placeholder="SCENE NAME">
@@ -4791,6 +4822,7 @@ function applyEnvironmentPermissions(payload:any) {
   environmentEditor.style.opacity=environmentCanEdit?"1":".72";
   refreshMediaMetadataEditor();
   refreshSceneUI();
+  refreshCueUI();
   maybeRestoreLocalWorld();
 }
 customParticleInput.addEventListener("change",async()=>{
@@ -5020,6 +5052,13 @@ mediaManagerStyle.textContent = `
   .media-manager-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   .media-manager-empty { opacity:.55; padding:18px 6px; text-align:center; font-size:12px; }
   .scene-manager { margin:0 0 12px;padding:12px;border:1px solid #4bc4d8;border-radius:12px;background:#0c1b22;display:grid;gap:8px; }
+  .cue-manager { margin:0 0 12px;padding:12px;border:1px solid #ffb54a;border-radius:12px;background:#21170b;display:grid;gap:8px; }
+  .cue-manager input,.cue-manager select { width:100%;min-width:0;box-sizing:border-box;padding:8px;border:1px solid #5f5140;border-radius:8px;background:#17130e;color:#fff; }
+  .cue-manager .hidden { display:none!important; }
+  .cue-actions { display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px; }
+  .cue-actions button { width:100%!important;min-width:0;padding:9px 4px;font-size:10px; }
+  #cueFireButton { border-color:#ffb54a;color:#ffd18b; }
+  #cueStatus { min-height:14px;font-size:10px;color:#ffd18b; }
   .scene-manager input,.scene-manager select { width:100%;min-width:0;box-sizing:border-box;padding:8px;border:1px solid #4a5260;border-radius:8px;background:#111720;color:#fff; }
   .scene-actions { display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px; }
   .scene-actions button { width:100%!important;min-width:0;padding:9px 4px;font-size:10px; }
@@ -5143,6 +5182,51 @@ const sceneDeleteButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#sce
 const sceneStatus=mediaManagerPanel.querySelector<HTMLElement>("#sceneStatus")!;
 const restoreLocalBackupButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#restoreLocalBackupButton")!;
 const localBackupStatus=mediaManagerPanel.querySelector<HTMLElement>("#localBackupStatus")!;
+const cueSelect=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueSelect")!;
+const cueNameInput=mediaManagerPanel.querySelector<HTMLInputElement>("#cueNameInput")!;
+const cueTargetType=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueTargetType")!;
+const cueSceneTarget=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueSceneTarget")!;
+const cueTextTarget=mediaManagerPanel.querySelector<HTMLInputElement>("#cueTextTarget")!;
+const cueAction=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueAction")!;
+const cueSaveButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueSaveButton")!;
+const cueFireButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueFireButton")!;
+const cueDeleteButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueDeleteButton")!;
+const cueStatus=mediaManagerPanel.querySelector<HTMLElement>("#cueStatus")!;
+type CueSummary={id:string;name:string;targetType:"scene"|"group"|"tag";target:string;action:string;updatedAt:number};
+let cueSummaries:CueSummary[]=[];
+function refreshCueTargetUI(){
+  const sceneTarget=cueTargetType.value==="scene";cueSceneTarget.classList.toggle("hidden",!sceneTarget);
+  cueTextTarget.classList.toggle("hidden",sceneTarget);cueAction.disabled=sceneTarget;
+  if(sceneTarget)cueAction.value="play";
+}
+function refreshCueUI(){
+  const selected=cueSelect.dataset.pendingSelection||cueSelect.value;delete cueSelect.dataset.pendingSelection;
+  cueSelect.innerHTML='<option value="">NEW CUE</option>';
+  for(const cue of cueSummaries){const option=document.createElement("option");option.value=cue.id;option.textContent=cue.name;cueSelect.appendChild(option);}
+  if(cueSummaries.some(cue=>cue.id===selected))cueSelect.value=selected;
+  const sceneSelected=cueSceneTarget.value;cueSceneTarget.innerHTML="";
+  for(const scene of sceneSummaries){const option=document.createElement("option");option.value=scene.id;option.textContent=scene.name;cueSceneTarget.appendChild(option);}
+  if(sceneSummaries.some(scene=>scene.id===sceneSelected))cueSceneTarget.value=sceneSelected;
+  const has=!!cueSelect.value;cueSaveButton.disabled=!environmentCanEdit;
+  cueFireButton.disabled=!environmentCanEdit||!has;cueDeleteButton.disabled=!environmentCanEdit||!has;
+  if(!environmentCanEdit)cueStatus.textContent="ROOM OWNER ONLY";else if(!cueSummaries.length)cueStatus.textContent="No cues saved.";
+  refreshCueTargetUI();
+}
+cueTargetType.addEventListener("change",refreshCueTargetUI);
+cueSelect.addEventListener("change",()=>{
+  const cue=cueSummaries.find(item=>item.id===cueSelect.value);if(cue){
+    cueNameInput.value=cue.name;cueTargetType.value=cue.targetType;cueAction.value=cue.action==="recall"?"play":cue.action;
+    if(cue.targetType==="scene")cueSceneTarget.value=cue.target;else cueTextTarget.value=cue.target;
+  }refreshCueUI();
+});
+cueSaveButton.addEventListener("click",()=>{
+  if(!activeRoom||!environmentCanEdit)return;const targetType=cueTargetType.value;
+  const target=targetType==="scene"?cueSceneTarget.value:cueTextTarget.value.trim();const name=cueNameInput.value.trim();
+  if(!name||!target){cueStatus.textContent="CUE name and target are required.";return;}
+  activeRoom.send("cue:save",{id:cueSelect.value,name,targetType,target,action:cueAction.value});cueStatus.textContent="Saving cue…";
+});
+cueFireButton.addEventListener("click",()=>{if(activeRoom&&environmentCanEdit&&cueSelect.value){activeRoom.send("cue:fire",{id:cueSelect.value});cueStatus.textContent="Firing cue…";}});
+cueDeleteButton.addEventListener("click",()=>{if(activeRoom&&environmentCanEdit&&cueSelect.value&&window.confirm("Delete this cue?"))activeRoom.send("cue:delete",{id:cueSelect.value});});
 type SceneSummary={id:string;name:string;updatedAt:number;objectCount:number};
 let sceneSummaries:SceneSummary[]=[];
 function refreshSceneUI(){
@@ -5157,6 +5241,7 @@ function refreshSceneUI(){
   if(backup?.exportedAt)localBackupStatus.textContent=`LOCAL BACKUP · ${new Date(backup.exportedAt).toLocaleString()}`;
   if(!environmentCanEdit)sceneStatus.textContent="ROOM OWNER ONLY";
   else if(!sceneSummaries.length)sceneStatus.textContent="No scenes saved.";
+  refreshCueUI();
 }
 restoreLocalBackupButton.addEventListener("click",()=>{
   if(!activeRoom||!environmentCanEdit||lastSnapshotMediaCount!==0)return;

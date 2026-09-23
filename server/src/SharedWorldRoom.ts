@@ -39,9 +39,15 @@ type SceneSnapshot = {
   id:string;name:string;updatedAt:number;environment:Record<string,unknown>;
   media:Record<string,SceneMediaState>;
 };
+type CueDefinition = {
+  id:string;name:string;targetType:"scene"|"group"|"tag";target:string;
+  action:"recall"|"play"|"stop"|"move"|"rotate"|"scale"|"float"|"orbit"|"shake";
+  updatedAt:number;
+};
 
 export class SharedWorldRoom extends Room<WorldState> {
   private scenes = new Map<string,SceneSnapshot>();
+  private cues = new Map<string,CueDefinition>();
   private environmentOwnerClientId = "";
   private environment = {
     sky:"#090c11", ground:"#262b33", grid:"#474d57", gridVisible:true,
@@ -115,6 +121,30 @@ export class SharedWorldRoom extends Room<WorldState> {
       groupName:item.groupName,tags:item.tags,behavior:{...(this.mediaBehaviors.get(mediaId)||{})}
     };
     return {id,name,updatedAt:Date.now(),environment:{...this.environment},media};
+  }
+  private cueList() {return Array.from(this.cues.values()).sort((a,b)=>b.updatedAt-a.updatedAt);}
+  private sendCueList(target?:Client) {
+    const payload={cues:this.cueList()};if(target)target.send("cue:list",payload);else this.broadcast("cue:list",payload);
+  }
+  private recallScene(scene:SceneSnapshot) {
+    const nextEnvironment=this.cleanEnvironment(scene.environment);
+    if(nextEnvironment){
+      if(nextEnvironment.cycleEnabled)nextEnvironment.cycleStartedAt=Date.now();
+      this.environment=nextEnvironment;this.scheduleParticleEnd();this.broadcast("environment:state",nextEnvironment);
+    }
+    let count=0;
+    for(const [mediaId,saved] of Object.entries(scene.media)){
+      const media=this.state.mediaObjects.get(mediaId);if(!media)continue;
+      media.x=saved.x;media.y=saved.y;media.z=saved.z;media.rotationX=saved.rotationX;
+      media.rotationY=saved.rotationY;media.rotationZ=saved.rotationZ;media.scale=saved.scale;
+      media.groupName=saved.groupName;media.tags=saved.tags;
+      if(saved.behavior)this.mediaBehaviors.set(mediaId,{...saved.behavior});
+      this.broadcast("media:transform",{id:mediaId,x:media.x,y:media.y,z:media.z,rotationX:media.rotationX,rotationY:media.rotationY,rotationZ:media.rotationZ,scale:media.scale});
+      this.broadcast("media:metadata",{id:mediaId,groupName:media.groupName,tags:media.tags});
+      if(saved.behavior)this.broadcast("media:behavior",{id:mediaId,behavior:saved.behavior});
+      count++;
+    }
+    this.broadcast("scene:recalled",{id:scene.id,name:scene.name,count});return count;
   }
   private cleanEnvironment(input:any) {
     if (!input || typeof input!=="object") return null;
@@ -468,25 +498,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
       const id=String(payload?.id||"");const scene=this.scenes.get(id);
       if(!scene){client.send("scene:result",{ok:false,action:"recall",reason:"scene-not-found"});return;}
-      const nextEnvironment=this.cleanEnvironment(scene.environment);
-      if(nextEnvironment){
-        if(nextEnvironment.cycleEnabled)nextEnvironment.cycleStartedAt=Date.now();
-        this.environment=nextEnvironment;this.scheduleParticleEnd();
-        this.broadcast("environment:state",nextEnvironment);
-      }
-      let count=0;
-      for(const [mediaId,saved] of Object.entries(scene.media)){
-        const media=this.state.mediaObjects.get(mediaId);if(!media)continue;
-        media.x=saved.x;media.y=saved.y;media.z=saved.z;media.rotationX=saved.rotationX;
-        media.rotationY=saved.rotationY;media.rotationZ=saved.rotationZ;media.scale=saved.scale;
-        media.groupName=saved.groupName;media.tags=saved.tags;
-        if(saved.behavior)this.mediaBehaviors.set(mediaId,{...saved.behavior});
-        this.broadcast("media:transform",{id:mediaId,x:media.x,y:media.y,z:media.z,rotationX:media.rotationX,rotationY:media.rotationY,rotationZ:media.rotationZ,scale:media.scale});
-        this.broadcast("media:metadata",{id:mediaId,groupName:media.groupName,tags:media.tags});
-        if(saved.behavior)this.broadcast("media:behavior",{id:mediaId,behavior:saved.behavior});
-        count++;
-      }
-      this.broadcast("scene:recalled",{id,name:scene.name,count});
+      const count=this.recallScene(scene);
       client.send("scene:result",{ok:true,action:"recall",id,name:scene.name,count});
     });
     this.onMessage("scene:delete",(client:Client,payload:any)=>{
@@ -496,6 +508,54 @@ export class SharedWorldRoom extends Room<WorldState> {
       const id=String(payload?.id||"");
       if(!this.scenes.delete(id)){client.send("scene:result",{ok:false,action:"delete",reason:"scene-not-found"});return;}
       client.send("scene:result",{ok:true,action:"delete",id});this.sendSceneList();
+    });
+
+    // 0.20.9 / CUE system. Cues are server-authoritative, owner-operated and
+    // target a scene or all media sharing one GROUP / TAG classification.
+    this.onMessage("cue:list:request",(client:Client)=>this.sendCueList(client));
+    this.onMessage("cue:save",(client:Client,payload:any)=>{
+      if(!this.canEditEnvironment(client,true)){client.send("cue:result",{ok:false,operation:"save",reason:"owner-locked"});return;}
+      const name=String(payload?.name||"").trim().replace(/\s+/g," ").slice(0,32);
+      const targetType=String(payload?.targetType||"");
+      const validActions=["play","stop","move","rotate","scale","float","orbit","shake"];
+      let target=String(payload?.target||"").trim().slice(0,80);
+      let action=String(payload?.action||"");
+      if(targetType==="scene")action="recall";
+      if(!name||!["scene","group","tag"].includes(targetType)||!target||
+        (targetType==="scene"?!this.scenes.has(target):!validActions.includes(action))){
+        client.send("cue:result",{ok:false,operation:"save",reason:"invalid-cue"});return;
+      }
+      let id=String(payload?.id||"").trim().slice(0,80);if(id&&!this.cues.has(id))id="";
+      if(!id&&this.cues.size>=24){client.send("cue:result",{ok:false,operation:"save",reason:"cue-limit"});return;}
+      if(!id)id=`cue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
+      const cue={id,name,targetType:targetType as CueDefinition["targetType"],target,
+        action:action as CueDefinition["action"],updatedAt:Date.now()};
+      this.cues.set(id,cue);client.send("cue:result",{ok:true,operation:"save",...cue});this.sendCueList();this.sendEnvironmentPermissions();
+    });
+    this.onMessage("cue:fire",(client:Client,payload:any)=>{
+      if(!this.canEditEnvironment(client,false)){client.send("cue:result",{ok:false,operation:"fire",reason:"owner-locked"});return;}
+      const id=String(payload?.id||"");const cue=this.cues.get(id);
+      if(!cue){client.send("cue:result",{ok:false,operation:"fire",reason:"cue-not-found"});return;}
+      let count=0;
+      if(cue.targetType==="scene"){
+        const scene=this.scenes.get(cue.target);if(!scene){client.send("cue:result",{ok:false,operation:"fire",reason:"scene-not-found"});return;}
+        count=this.recallScene(scene);
+      } else {
+        const target=cue.target.toLocaleLowerCase();
+        for(const [mediaId,media] of this.state.mediaObjects){
+          const matches=cue.targetType==="group"?media.groupName.toLocaleLowerCase()===target:
+            media.tags.split(",").some(tag=>tag.trim().toLocaleLowerCase()===target);
+          if(!matches)continue;
+          this.broadcast("media:action",{id:mediaId,action:cue.action,source:`cue-${cue.targetType}`,actorSessionId:client.sessionId,eventId:++this.mediaActionSequence});count++;
+        }
+      }
+      this.broadcast("cue:fired",{id:cue.id,name:cue.name,count,targetType:cue.targetType,action:cue.action});
+      client.send("cue:result",{ok:true,operation:"fire",id:cue.id,name:cue.name,count});
+    });
+    this.onMessage("cue:delete",(client:Client,payload:any)=>{
+      if(!this.canEditEnvironment(client,false)){client.send("cue:result",{ok:false,operation:"delete",reason:"owner-locked"});return;}
+      const id=String(payload?.id||"");if(!this.cues.delete(id)){client.send("cue:result",{ok:false,operation:"delete",reason:"cue-not-found"});return;}
+      client.send("cue:result",{ok:true,operation:"delete",id});this.sendCueList();
     });
 
     this.onMessage("media:behavior", (client: Client, payload: any) => {
@@ -689,7 +749,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         format: "shared-world-manifest", version: 1,
         roomCode: String(this.metadata?.roomCode || "ART001"),
         exportedAt: new Date().toISOString(), environment:this.environment, mediaObjects,
-        scenes:Array.from(this.scenes.values())
+        scenes:Array.from(this.scenes.values()),cues:Array.from(this.cues.values())
       });
     });
 
@@ -751,7 +811,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           scale:bounded(scale,1,.05,20)
         })});
       }
-      if((payload.environment||Array.isArray(payload.scenes))&&!this.canEditEnvironment(client,true)) {
+      if((payload.environment||Array.isArray(payload.scenes)||Array.isArray(payload.cues))&&!this.canEditEnvironment(client,true)) {
         fail("environment-owner-locked");this.sendEnvironmentPermissions(client);return;
       }
       for (const entry of entries) {
@@ -770,6 +830,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           this.sendEnvironmentPermissions();
         }
       }
+      const importedSceneIds=new Map<string,string>();
       if(Array.isArray(payload.scenes)){
         const idMap=new Map(entries.map(entry=>[entry.sourceId,entry.id]));
         for(const rawScene of payload.scenes.slice(0,12)){
@@ -788,8 +849,23 @@ export class SharedWorldRoom extends Room<WorldState> {
           }
           const id=`scene-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
           this.scenes.set(id,{id,name,updatedAt:Date.now(),environment:sceneEnvironment,media});
+          importedSceneIds.set(String(rawScene?.id||""),id);
         }
         this.sendSceneList();
+      }
+      if(Array.isArray(payload.cues)){
+        const validCueActions=["play","stop","move","rotate","scale","float","orbit","shake"];
+        for(const raw of payload.cues.slice(0,24)){
+          const name=String(raw?.name||"").trim().replace(/\s+/g," ").slice(0,32);
+          const targetType=String(raw?.targetType||"");let target=String(raw?.target||"").trim().slice(0,80);
+          let action=String(raw?.action||"");if(targetType==="scene"){target=importedSceneIds.get(target)||"";action="recall";}
+          if(!name||!["scene","group","tag"].includes(targetType)||!target||
+            (targetType!=="scene"&&!validCueActions.includes(action)))continue;
+          const id=`cue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
+          this.cues.set(id,{id,name,targetType:targetType as CueDefinition["targetType"],target,
+            action:action as CueDefinition["action"],updatedAt:Date.now()});
+        }
+        this.sendCueList();
       }
       client.send("world:import:result", {ok:true, count:entries.length});
     });

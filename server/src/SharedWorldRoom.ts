@@ -124,7 +124,13 @@ export class SharedWorldRoom extends Room<WorldState> {
   }
   private cueList() {return Array.from(this.cues.values()).sort((a,b)=>b.updatedAt-a.updatedAt);}
   private sendCueList(target?:Client) {
-    const payload={cues:this.cueList()};if(target)target.send("cue:list",payload);else this.broadcast("cue:list",payload);
+    const groups=new Set<string>(),tags=new Set<string>();
+    for(const media of this.state.mediaObjects.values()){
+      if(media.groupName.trim())groups.add(media.groupName.trim());
+      for(const tag of media.tags.split(",")){const value=tag.trim();if(value)tags.add(value);}
+    }
+    const payload={cues:this.cueList(),groups:Array.from(groups).sort(),tags:Array.from(tags).sort()};
+    if(target)target.send("cue:list",payload);else this.broadcast("cue:list",payload);
   }
   private recallScene(scene:SceneSnapshot) {
     const nextEnvironment=this.cleanEnvironment(scene.environment);
@@ -474,6 +480,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       const metadata={id,groupName:media.groupName,tags:media.tags};
       this.broadcast("media:metadata",metadata);
       client.send("media:metadata:result",{...metadata,ok:true});
+      this.sendCueList();
       this.sendEnvironmentPermissions();
     });
 
@@ -897,6 +904,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.state.mediaObjects.delete(id);
       this.mediaBehaviors.delete(id);
       this.proximityActors.delete(id);
+      this.sendCueList();
       console.log("[media:delete stored]", id, "total:", this.state.mediaObjects.size);
       client.send("media:delete:result", {id, ok:true});
     });

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.9.1 CUE TARGET MATCH FIX LOADED]");
+console.log("[PROTOTYPE 0.20.9.2 SERVER CLASSIFICATION LIST LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3485,6 +3485,8 @@ async function enterWorld() {
     });
     room.onMessage("cue:list",(payload:any)=>{
       if(room!==activeRoom)return;
+      cueTargetGroups=Array.isArray(payload?.groups)?payload.groups.map(String).filter(Boolean):[];
+      cueTargetTags=Array.isArray(payload?.tags)?payload.tags.map(String).filter(Boolean):[];
       cueSummaries=Array.isArray(payload?.cues)?payload.cues.map((cue:any)=>({
         id:String(cue.id||""),name:String(cue.name||"Cue"),targetType:String(cue.targetType||"scene") as CueSummary["targetType"],
         target:String(cue.target||""),action:String(cue.action||"play"),updatedAt:Number(cue.updatedAt)||0
@@ -5194,15 +5196,18 @@ const cueDeleteButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueDe
 const cueStatus=mediaManagerPanel.querySelector<HTMLElement>("#cueStatus")!;
 type CueSummary={id:string;name:string;targetType:"scene"|"group"|"tag";target:string;action:string;updatedAt:number};
 let cueSummaries:CueSummary[]=[];
+let cueTargetGroups:string[]=[];
+let cueTargetTags:string[]=[];
 function refreshCueTargetUI(){
   const sceneTarget=cueTargetType.value==="scene";cueSceneTarget.classList.toggle("hidden",!sceneTarget);
   cueTextTarget.classList.toggle("hidden",sceneTarget);cueAction.disabled=sceneTarget;
   if(sceneTarget)cueAction.value="play";
   else {
     const selected=cueTextTarget.dataset.pendingTarget||cueTextTarget.value;delete cueTextTarget.dataset.pendingTarget;
-    const values=cueTargetType.value==="group"
-      ?Array.from(new Set(Array.from(mediaMetadata.values()).map(meta=>meta.groupName).filter(Boolean)))
-      :Array.from(new Set(Array.from(mediaMetadata.values()).flatMap(meta=>meta.tags).filter(Boolean)));
+    const localValues=cueTargetType.value==="group"
+      ?Array.from(mediaMetadata.values()).map(meta=>meta.groupName).filter(Boolean)
+      :Array.from(mediaMetadata.values()).flatMap(meta=>meta.tags).filter(Boolean);
+    const values=Array.from(new Set([...(cueTargetType.value==="group"?cueTargetGroups:cueTargetTags),...localValues]));
     values.sort((a,b)=>a.localeCompare(b));cueTextTarget.innerHTML='<option value="">SELECT TARGET</option>';
     for(const value of values){const option=document.createElement("option");option.value=value;option.textContent=value;cueTextTarget.appendChild(option);}
     if(values.includes(selected))cueTextTarget.value=selected;

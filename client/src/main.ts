@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.3 PROVEN CONTROL PROXY AND AVATAR COMMIT FIX LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.4 INPUT FOCUS AND OPTIMISTIC SOCIAL ACTION FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1227,6 +1227,7 @@ avatarSaveButton.addEventListener("click",()=>{
   if(localAvatar)applyLocalAvatarAppearance(localAvatar,appearance);
   void sendSavedAvatarStyle(false,appearance);
   avatarSaveButton.textContent="APPLIED";
+  avatarSaveButton.blur();
   window.setTimeout(()=>{avatarSaveButton.textContent="APPLY AVATAR";},1200);
 });
 const flyButton=flightControls.querySelector<HTMLButtonElement>("#flyButton")!;
@@ -1259,13 +1260,19 @@ for(const type of ["pointerup","pointercancel","lostpointercapture"])
   descendButton.addEventListener(type,()=>{mobileDescend=false;});
 emoteControls.addEventListener("click",event=>{
   const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button[data-emote]");
-  if(activeRoom && button?.dataset.emote) activeRoom.send("avatar:emote",{type:button.dataset.emote});
+  if(activeRoom && button?.dataset.emote) {
+    const type=button.dataset.emote as Avatar["emoteType"];
+    const avatar=avatars.get(currentSessionId);
+    if(avatar&&["wave","joy","spin"].includes(type)){avatar.emoteType=type;avatar.emoteStartedAt=performance.now();}
+    activeRoom.send("avatar:emote",{type});
+  }
 });
 const avatarMessageInput=communicationControls.querySelector<HTMLInputElement>("#avatarMessageInput")!;
 const sendAvatarMessageButton=communicationControls.querySelector<HTMLButtonElement>("#sendAvatarMessage")!;
 function sendAvatarMessage(text=avatarMessageInput.value) {
   const message=text.replace(/[\u0000-\u001f\u007f]/g," ").trim().slice(0,48);
   if(!activeRoom||!message)return;
+  showAvatarMessage(currentSessionId,message);
   activeRoom.send("avatar:message",{text:message});avatarMessageInput.value="";
 }
 sendAvatarMessageButton.addEventListener("click",()=>sendAvatarMessage());
@@ -1683,7 +1690,7 @@ canvas.addEventListener("wheel", (e) => {
 
 window.addEventListener("keydown", (e) => {
   const target=e.target as HTMLElement;
-  if(target?.closest?.("input,textarea,select,button") || target?.isContentEditable) return;
+  if(target?.closest?.("input,textarea,select") || target?.isContentEditable) return;
   if(e.code==="Space") {
     e.preventDefault();
     if(!e.repeat && !flying) jumpRequested=true;
@@ -6025,7 +6032,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.3</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

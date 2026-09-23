@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.4 WORKSPACE CONTENT SEPARATION LOADED]");
+console.log("[PROTOTYPE 0.21.1.5 ARTWORK HIERARCHY INSPECTOR LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4562,6 +4562,9 @@ function architectureBlocked(x:number,z:number,centerY:number) {
 }
 let selectedManagedMediaId: string | null = null;
 let editingManagedMediaId: string | null = null;
+let selectedArtworkInspector: HTMLElement | null = null;
+let selectedArtworkInspectorTitle: HTMLElement | null = null;
+let selectedArtworkInspectorMeta: HTMLElement | null = null;
 
 // Prototype 0.11 / Stage 3 / MEDIA OBJECT MANAGER
 // The panel is created at runtime so index.html/style.css do not need replacing.
@@ -5059,7 +5062,7 @@ const managedAudioCancel=managedAudioEditPanel.querySelector<HTMLButtonElement>(
 function refreshManagedAudioSpatialUI(){managedAudioSpatialState.textContent=managedAudioSpatial.checked?"ON":"OFF";managedAudioDistance.disabled=!managedAudioSpatial.checked;managedAudioDistance.style.opacity=managedAudioSpatial.checked?"1":".4";}
 managedAudioSpatial.addEventListener("change",refreshManagedAudioSpatialUI);
 function currentAudioAssetRef(id:string){const map:any=getAuthoritativeMediaMap();try{return String(map?.get?.(id)?.assetRef||"");}catch{return "";}}
-function openManagedAudioEditor(id:string){const el=audioElements.get(id);if(!el)return;const a=el as any;managedAudioVolume.value=String(Number(a.__xrBaseVolume??.8));managedAudioLoop.checked=!!el.loop;managedAudioSpatial.checked=!!a.__xrSpatial;managedAudioDistance.value=String(Number(a.__xrDistance??12));managedAudioReactiveAction.value=String(a.__xrReactiveAction||"off");managedAudioReactiveStrength.value=String(Number(a.__xrReactiveStrength??1));managedAudioReactiveSmoothing.value=String(Number(a.__xrReactiveSmoothing??.7));refreshManagedAudioSpatialUI();managedAudioEditPanel.classList.remove("hidden");managedAudioEditPanel.scrollIntoView({block:"start",behavior:"smooth"});}
+function openManagedAudioEditor(id:string){const el=audioElements.get(id);if(!el)return;const a=el as any;managedAudioVolume.value=String(Number(a.__xrBaseVolume??.8));managedAudioLoop.checked=!!el.loop;managedAudioSpatial.checked=!!a.__xrSpatial;managedAudioDistance.value=String(Number(a.__xrDistance??12));managedAudioReactiveAction.value=String(a.__xrReactiveAction||"off");managedAudioReactiveStrength.value=String(Number(a.__xrReactiveStrength??1));managedAudioReactiveSmoothing.value=String(Number(a.__xrReactiveSmoothing??.7));refreshManagedAudioSpatialUI();managedAudioEditPanel.classList.remove("hidden");const section=managedAudioEditPanel.closest<HTMLDetailsElement>("details");if(section)section.open=true;managedAudioEditPanel.scrollIntoView({block:"start",behavior:"smooth"});}
 function applyManagedAudioConfig(id:string){const el=audioElements.get(id);const item=managedPlacedMedia.get(id);if(!el||!item)return;const a=el as any;a.__xrBaseVolume=Number(managedAudioVolume.value);el.loop=managedAudioLoop.checked;a.__xrSpatial=managedAudioSpatial.checked;a.__xrDistance=Number(managedAudioDistance.value);a.__xrReactiveAction=managedAudioReactiveAction.value as AudioReactiveAction;a.__xrReactiveStrength=Number(managedAudioReactiveStrength.value);a.__xrReactiveSmoothing=Number(managedAudioReactiveSmoothing.value);a.__xrReactiveRotation=0;a.__xrReactiveLevel=0;if(a.__xrReactiveBase){const b=a.__xrReactiveBase;item.entity.setPosition(b.position);item.entity.setEulerAngles(b.euler);item.entity.setLocalScale(b.scale);}a.__xrReactiveBase={position:item.entity.getPosition().clone(),euler:item.entity.getEulerAngles().clone(),scale:item.entity.getLocalScale().clone()};el.volume=Number(managedAudioVolume.value);const oldRef=currentAudioAssetRef(id);if(activeRoom&&oldRef){const u=new URL(oldRef,window.location.href);u.searchParams.set("volume",managedAudioVolume.value);u.searchParams.set("loop",managedAudioLoop.checked?"1":"0");u.searchParams.set("spatial",managedAudioSpatial.checked?"1":"0");u.searchParams.set("distance",managedAudioDistance.value);u.searchParams.set("reactive",managedAudioReactiveAction.value);u.searchParams.set("strength",managedAudioReactiveStrength.value);u.searchParams.set("smoothing",managedAudioReactiveSmoothing.value);const p=item.entity.getPosition(),r=item.entity.getEulerAngles(),sc=item.entity.getLocalScale();activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:sc.x,assetRef:u.toString()});}managedAudioEditPanel.classList.add("hidden");console.log("[0.16.1.3 AUDIO CONFIG APPLIED]",id);}
 managedAudioApply.addEventListener("click",()=>{if(selectedManagedMediaId)applyManagedAudioConfig(selectedManagedMediaId);});
 managedAudioCancel.addEventListener("click",()=>managedAudioEditPanel.classList.add("hidden"));
@@ -5108,10 +5111,30 @@ mediaManagerStyle.textContent = `
     text-align:left; padding:11px; border:1px solid #343d49; border-radius:11px;
     background:#111720; color:#fff;
   }
-  .media-manager-item.selected { outline:2px solid #2f8cff; background:#172334; }
+  .media-manager-item.selected,.media-manager-row.selected .media-manager-item { outline:2px solid #2f8cff; background:#172334; }
   .media-manager-kind { opacity:.62; font-size:10px; font-weight:800; }
   .media-manager-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   .media-manager-empty { opacity:.55; padding:18px 6px; text-align:center; font-size:12px; }
+  .selected-artwork-inspector { margin-top:14px;padding:12px;border:1px solid #526276;border-radius:14px;background:#0b1119; }
+  .selected-artwork-heading { margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12); }
+  .selected-artwork-heading div { min-width:0;display:grid;gap:3px; }
+  .selected-artwork-heading span { color:#6ed9ff;font-size:9px;font-weight:900;letter-spacing:.14em; }
+  .selected-artwork-heading strong { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px; }
+  .selected-artwork-heading small { color:#9caabc;font-size:9px; }
+  .selected-artwork-empty { display:none;padding:14px 4px;color:#9caabc;font-size:11px;line-height:1.5;text-align:center; }
+  .selected-artwork-inspector.no-selection .selected-artwork-empty { display:block; }
+  .selected-artwork-inspector.no-selection .artwork-inspector-section,
+  .selected-artwork-inspector.no-selection .media-manager-actions { display:none!important; }
+  .artwork-inspector-section { margin:8px 0;border:1px solid #344355;border-radius:11px;background:#101720;overflow:hidden; }
+  .artwork-inspector-section>summary { cursor:pointer;list-style:none;padding:12px 34px 12px 12px;position:relative;color:#fff;font-size:10px;font-weight:900;letter-spacing:.1em; }
+  .artwork-inspector-section>summary::-webkit-details-marker { display:none; }
+  .artwork-inspector-section>summary::after { content:"＋";position:absolute;right:12px;top:9px;color:#6ed9ff;font-size:16px; }
+  .artwork-inspector-section[open]>summary::after { content:"−"; }
+  .artwork-inspector-section-body { padding:0 10px 10px; }
+  .artwork-inspector-section .media-metadata-editor,
+  .artwork-inspector-section .behavior-editor,
+  .artwork-inspector-section #managedAudioEditPanel { margin:0!important;border:0!important;padding:8px 0 0!important;background:transparent!important; }
+  .artwork-inspector-section .behavior-editor-title { display:none; }
   .scene-manager { margin:0 0 12px;padding:12px;border:1px solid #4bc4d8;border-radius:12px;background:#0c1b22;display:grid;gap:8px; }
   .cue-manager { margin:0 0 12px;padding:12px;border:1px solid #ffb54a;border-radius:12px;background:#21170b;display:grid;gap:8px; }
   .cue-manager input,.cue-manager select { width:100%;min-width:0;box-sizing:border-box;padding:8px;border:1px solid #5f5140;border-radius:8px;background:#17130e;color:#fff; }
@@ -5702,7 +5725,7 @@ function refreshMediaManagerUI() {
         if(selectedManagedMediaId!==item.id)metadataEditorDirty=false;
         selectedManagedMediaId = item.id;
         refreshMediaManagerUI();
-        window.setTimeout(() => behaviorEditor.scrollIntoView({ block: "start", behavior: "smooth" }), 0);
+        window.setTimeout(() => selectedArtworkInspector?.scrollIntoView({ block: "start", behavior: "smooth" }), 0);
       });
       const actions=document.createElement("div");actions.className="media-row-actions";
       const visibility=document.createElement("button");visibility.type="button";visibility.className="media-row-visibility";
@@ -5718,6 +5741,17 @@ function refreshMediaManagerUI() {
   const hasSelection = !!selectedManagedMediaId && managedPlacedMedia.has(selectedManagedMediaId);
   editManagedMediaButton.disabled = !hasSelection;
   deleteManagedMediaButton.disabled = !hasSelection;
+  if(selectedArtworkInspector){
+    selectedArtworkInspector.classList.toggle("no-selection",!hasSelection);
+    selectedArtworkInspector.dataset.selection=hasSelection?String(selectedManagedMediaId):"none";
+  }
+  if(selectedArtworkInspectorTitle)selectedArtworkInspectorTitle.textContent=hasSelection?(managedPlacedMedia.get(selectedManagedMediaId!)?.title||"SELECTED ARTWORK"):"NO ARTWORK SELECTED";
+  if(selectedArtworkInspectorMeta){
+    const item=hasSelection?managedPlacedMedia.get(selectedManagedMediaId!):null;
+    selectedArtworkInspectorMeta.textContent=item?`${item.kind.toUpperCase()} · EDITING TARGET`:"Select an artwork from the list to edit its settings.";
+    const audioSection=document.getElementById("audioArtworkInspectorSection");
+    if(audioSection)audioSection.classList.toggle("hidden",item?.kind!=="audio");
+  }
   refreshMediaMetadataEditor();
   refreshCueTargetUI();
   refreshBehaviorEditorUI();
@@ -5855,6 +5889,35 @@ avatarFloatingHeader.querySelector("button")!.addEventListener("click",()=>{avat
 // controls are moved out of CREATE without recreating their listeners.
 const worldWorkspacePanel=document.createElement("section");worldWorkspacePanel.id="worldWorkspacePanel";worldWorkspacePanel.className="hidden";
 const mediaManagerHeading=mediaManagerPanel.querySelector<HTMLElement>(".media-manager-header strong");if(mediaManagerHeading)mediaManagerHeading.textContent="ARTWORK LIST";
+
+// Prototype 0.21.1.5 / ARTWORK HIERARCHY INSPECTOR
+// The collection stays first. Editors are children of the selected artwork.
+// Existing nodes are moved so their event listeners and input state survive.
+const mediaFilterBar=mediaManagerPanel.querySelector<HTMLElement>(".media-filter-bar")!;
+const mediaMetadataEditor=mediaManagerPanel.querySelector<HTMLElement>("#mediaMetadataEditor")!;
+const mediaManagerActions=mediaManagerPanel.querySelector<HTMLElement>(".media-manager-actions")!;
+selectedArtworkInspector=document.createElement("section");
+selectedArtworkInspector.id="selectedArtworkInspector";
+selectedArtworkInspector.className="selected-artwork-inspector no-selection";
+selectedArtworkInspector.innerHTML=`
+  <div class="selected-artwork-heading">
+    <div><span>SELECTED ARTWORK</span><strong id="selectedArtworkInspectorTitle">NO ARTWORK SELECTED</strong><small id="selectedArtworkInspectorMeta">Select an artwork from the list to edit its settings.</small></div>
+  </div>
+  <div class="selected-artwork-empty">Choose one artwork above. GROUP / TAG and INTERACTIVE BEHAVIOR will appear here.</div>`;
+selectedArtworkInspectorTitle=selectedArtworkInspector.querySelector<HTMLElement>("#selectedArtworkInspectorTitle");
+selectedArtworkInspectorMeta=selectedArtworkInspector.querySelector<HTMLElement>("#selectedArtworkInspectorMeta");
+function createArtworkInspectorSection(label:string,node:HTMLElement,open=false){
+  const details=document.createElement("details");details.className="artwork-inspector-section";details.open=open;
+  const summary=document.createElement("summary");summary.textContent=label;
+  const body=document.createElement("div");body.className="artwork-inspector-section-body";body.appendChild(node);
+  details.append(summary,body);return details;
+}
+const metadataInspectorSection=createArtworkInspectorSection("GROUP / TAG",mediaMetadataEditor,true);
+const behaviorInspectorSection=createArtworkInspectorSection("INTERACTIVE BEHAVIOR",behaviorEditor,false);
+const audioInspectorSection=createArtworkInspectorSection("AUDIO SETTINGS",managedAudioEditPanel,false);
+audioInspectorSection.id="audioArtworkInspectorSection";
+selectedArtworkInspector.append(metadataInspectorSection,behaviorInspectorSection,audioInspectorSection,mediaManagerActions);
+mediaManagerPanel.append(mediaFilterBar,mediaManagerList,selectedArtworkInspector);
 const worldWorkspaceHeader=document.createElement("div");worldWorkspaceHeader.className="world-workspace-header ui-drag-handle";
 worldWorkspaceHeader.innerHTML=`<div><strong>WORLD SETTINGS</strong><span>ENVIRONMENT · SCENES · IMPORT / EXPORT</span></div><button type="button" aria-label="Close World Settings">×</button>`;
 const worldWorkspaceBody=document.createElement("div");worldWorkspaceBody.className="world-workspace-body";
@@ -5874,7 +5937,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.4</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -5948,7 +6011,7 @@ function runFoundationAction(action:string){
   if(action==="photo"){setMobileFoundationPanel("photo");return;}
   if(action==="add"){openArtworkPanel();return;}
   if(action==="objects"){openMediaManagerAt(mediaManagerList);return;}
-  if(action==="groups"){openMediaManagerAt(mediaManagerPanel.querySelector<HTMLElement>("#mediaMetadataEditor")!);return;}
+  if(action==="groups"){openMediaManagerAt(selectedArtworkInspector||mediaManagerList);return;}
   if(action==="environment"){openWorldWorkspaceAt(environmentEditor);return;}
   if(action==="scenes"){openWorldWorkspaceAt(sceneManagerPanel);return;}
   if(action==="avatar"){avatarSettingsPanel.hidden=false;return;}

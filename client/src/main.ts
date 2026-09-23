@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.0.2 CUE CONTROL CONTRAST LOADED]");
+console.log("[PROTOTYPE 0.21.1 UI FOUNDATION LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -146,7 +146,7 @@ communicationControls.innerHTML=`<div id="messageComposer"><input id="avatarMess
 document.body.appendChild(communicationControls);
 const photoCountdown=document.createElement("div");photoCountdown.id="photoCountdown";photoCountdown.hidden=true;document.body.appendChild(photoCountdown);
 const mobileActionDock=document.createElement("div");mobileActionDock.id="mobileActionDock";
-mobileActionDock.innerHTML=`<button type="button" data-mobile-panel="tools">TOOLS</button><button type="button" data-mobile-panel="move">MOVE</button><button type="button" data-mobile-panel="emote">EMOTE</button><button type="button" data-mobile-panel="chat">CHAT</button><button type="button" data-mobile-panel="photo">PHOTO</button>`;
+mobileActionDock.innerHTML=`<button type="button" data-mobile-panel="move">MOVE</button><button type="button" data-mobile-panel="chat">TALK</button><button type="button" data-mobile-panel="actions">ACTION</button><button type="button" data-mobile-panel="menu">MENU</button>`;
 document.body.appendChild(mobileActionDock);
 const avatarStyleSheet=document.createElement("style");
 avatarStyleSheet.textContent=`
@@ -176,8 +176,8 @@ avatarStyleSheet.textContent=`
   #mobileActionDock {display:none}
   @media (pointer:coarse) {#flightControls.room-active {display:flex} #avatarControls {top:140px}}
   @media (max-width:640px), (pointer:coarse) {
-    body.mobile-compact #mobileActionDock.room-active {display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-auto-rows:38px;position:fixed;left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));z-index:70;gap:4px;padding:5px;box-sizing:border-box;border:1px solid rgba(120,160,195,.55);border-radius:12px;background:rgba(7,13,21,.9);backdrop-filter:blur(12px)}
-    body.mobile-compact #mobileActionDock button {min-width:0!important;width:auto!important;height:38px!important;min-height:38px!important;max-height:38px!important;margin:0!important;padding:0 2px!important;line-height:36px!important;border:1px solid #7893aa;border-radius:8px;background:#0b1420;color:#fff;font-size:9px!important;font-weight:900;letter-spacing:.03em;box-sizing:border-box}
+    body.mobile-compact #mobileActionDock.room-active {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));grid-auto-rows:44px;position:fixed;left:8px;right:8px;bottom:max(8px,env(safe-area-inset-bottom));z-index:70;gap:5px;padding:6px;box-sizing:border-box;border:1px solid rgba(120,160,195,.55);border-radius:15px;background:rgba(7,13,21,.94);backdrop-filter:blur(16px)}
+    body.mobile-compact #mobileActionDock button {min-width:0!important;width:auto!important;height:44px!important;min-height:44px!important;max-height:44px!important;margin:0!important;padding:0 3px!important;line-height:42px!important;border:1px solid #7893aa;border-radius:10px;background:#0b1420;color:#fff;font-size:10px!important;font-weight:900;letter-spacing:.06em;box-sizing:border-box}
     #mobileActionDock button.active {border-color:#52d7ff;color:#52d7ff;background:#102638}
     body.mobile-compact #flightControls.room-active,body.mobile-compact #emoteControls.room-active,body.mobile-compact #communicationControls.room-active {display:none!important}
     body.mobile-compact.mobile-panel-move #flightControls.room-active {display:flex!important;right:10px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));gap:4px}
@@ -203,7 +203,7 @@ avatarStyleSheet.textContent=`
 document.head.appendChild(avatarStyleSheet);
 const compactMobileQuery=window.matchMedia("(max-width: 640px), (pointer: coarse)");
 let activeMobilePanel="";
-const mobilePanelNames=["move","emote","chat","photo"];
+const mobilePanelNames=["move","emote","chat","photo","actions","menu"];
 function refreshCompactMobileMode() {
   document.body.classList.toggle("mobile-compact",compactMobileQuery.matches);
   if(!compactMobileQuery.matches) {
@@ -3716,6 +3716,7 @@ async function enterWorld() {
     emoteControls.classList.add("room-active");
     communicationControls.classList.add("room-active");
     mobileActionDock.classList.add("room-active");
+    uiFoundationRoot.classList.add("room-active");
     hud.querySelector<HTMLElement>(".controls")!.textContent=
       "WASD：移動 / SPACE：ジャンプ・上昇 / F：飛行 / SHIFT：下降";
   } catch (error) {
@@ -4742,6 +4743,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const environmentEditor=document.createElement("div");
+environmentEditor.id="environmentEditor";
 let environmentCanEdit=false;
 environmentEditor.style.cssText="border:1px solid #54718c;border-radius:12px;padding:12px;margin:12px 0;color:#e7f3ff";
 environmentEditor.innerHTML=`<strong>WORLD ENVIRONMENT</strong>
@@ -5223,6 +5225,10 @@ const directorParticipantList=directorPanel.querySelector<HTMLElement>("#directo
 const directorActionStatus=directorPanel.querySelector<HTMLElement>("#directorActionStatus")!;
 function refreshDirectorPanel(){
   directorButton.classList.toggle("hidden",!directorCanDirect&&!directorCanManage);
+  for(const button of uiFoundationRoot?.querySelectorAll<HTMLButtonElement>('[data-workspace="direct"]')||[]) {
+    button.disabled=!directorCanDirect&&!directorCanManage;
+    button.title=button.disabled?"DIRECTOR ACCESS REQUIRED":"";
+  }
   if(!directorCanDirect&&!directorCanManage)directorPanel.classList.add("hidden");
   directorRoleStatus.textContent=directorCanManage?"ROOM OWNER · DIRECTOR MANAGEMENT ENABLED":directorCanDirect?"DIRECTOR · LIVE CONTROL ENABLED":"VIEWER";
   directorCueGrid.innerHTML="";
@@ -5781,6 +5787,151 @@ mediaManagerButton.addEventListener("click", () => {
   }
 });
 closeMediaManagerButton.addEventListener("click", () => mediaManagerPanel.classList.add("hidden"));
+
+// =========================================================
+// Prototype 0.21.1 / UI FOUNDATION
+// Task-oriented workspaces for desktop and one-sheet-at-a-time navigation
+// for mobile. Existing feature panels remain the source of truth.
+// =========================================================
+type UIFoundationWorkspace="view"|"create"|"world"|"avatar"|"direct";
+let activeUIWorkspace:UIFoundationWorkspace="view";
+
+const uiFoundationRoot=document.createElement("div");
+uiFoundationRoot.id="uiFoundationRoot";
+uiFoundationRoot.innerHTML=`
+  <nav id="uiWorkspaceBar" aria-label="Workspace">
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1</span></div>
+    <div class="ui-workspace-tabs">
+      <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
+      <button type="button" data-workspace="create">CREATE<span>作品</span></button>
+      <button type="button" data-workspace="world">WORLD<span>環境</span></button>
+      <button type="button" data-workspace="avatar">AVATAR<span>自分</span></button>
+      <button type="button" data-workspace="direct">DIRECT<span>演出</span></button>
+    </div>
+    <div id="uiSaveState" role="status">READY</div>
+  </nav>
+  <aside id="uiContextRail" aria-label="Workspace actions">
+    <div class="ui-context-heading"><strong id="uiContextTitle">VIEW</strong><span id="uiContextSubtitle">EXPLORE & COMMUNICATE</span></div>
+    <div id="uiContextActions"></div>
+  </aside>
+  <section id="uiMobileActionSheet" class="ui-mobile-sheet" aria-label="Actions">
+    <div class="ui-mobile-sheet-handle"></div><strong>ACTIONS</strong>
+    <div class="ui-mobile-sheet-grid">
+      <button type="button" data-ui-action="emote">EMOTE</button>
+      <button type="button" data-ui-action="photo">PHOTO</button>
+      <button type="button" data-ui-action="flashlight">LIGHT</button>
+      <button type="button" data-ui-action="camera">CAMERA</button>
+    </div>
+  </section>
+  <section id="uiMobileMenuSheet" class="ui-mobile-sheet" aria-label="Menu">
+    <div class="ui-mobile-sheet-handle"></div><strong>WORKSPACE</strong>
+    <div class="ui-mobile-sheet-grid ui-mobile-workspaces">
+      <button type="button" data-workspace="view">VIEW<small>閲覧</small></button>
+      <button type="button" data-workspace="create">CREATE<small>作品</small></button>
+      <button type="button" data-workspace="world">WORLD<small>環境</small></button>
+      <button type="button" data-workspace="avatar">AVATAR<small>自分</small></button>
+      <button type="button" data-workspace="direct">DIRECT<small>演出</small></button>
+    </div>
+  </section>`;
+document.body.appendChild(uiFoundationRoot);
+
+const uiContextTitle=uiFoundationRoot.querySelector<HTMLElement>("#uiContextTitle")!;
+const uiContextSubtitle=uiFoundationRoot.querySelector<HTMLElement>("#uiContextSubtitle")!;
+const uiContextActions=uiFoundationRoot.querySelector<HTMLElement>("#uiContextActions")!;
+const uiSaveState=uiFoundationRoot.querySelector<HTMLElement>("#uiSaveState")!;
+
+const uiWorkspaceCopy:Record<UIFoundationWorkspace,{title:string;subtitle:string;actions:Array<[string,string]>}>={
+  view:{title:"VIEW",subtitle:"EXPLORE & COMMUNICATE",actions:[["camera","CAMERA VIEW"],["talk","VOICE / CHAT"],["photo","TAKE PHOTO"]]},
+  create:{title:"CREATE",subtitle:"ARTWORK & BEHAVIOR",actions:[["add","+ ADD ARTWORK"],["objects","ARTWORK LIST"],["groups","GROUP / TAG"]]},
+  world:{title:"WORLD",subtitle:"ROOM ENVIRONMENT",actions:[["environment","ENVIRONMENT"],["scenes","SCENES / BACKUP"]]},
+  avatar:{title:"AVATAR",subtitle:"IDENTITY & EXPRESSION",actions:[["avatar","AVATAR DESIGN"],["emote","EMOTES"],["flashlight","FLASHLIGHT"]]},
+  direct:{title:"DIRECT",subtitle:"LIVE PERFORMANCE",actions:[["director","DIRECTOR CONTROL"],["cue-editor","CUE EDITOR"]]}
+};
+
+function closeFoundationPanels(){
+  addArtworkPanel?.classList.add("hidden");
+  mediaManagerPanel.classList.add("hidden");
+  directorPanel.classList.add("hidden");
+  avatarSettingsPanel.hidden=true;
+}
+function openMediaManagerAt(target?:HTMLElement){
+  mediaManagerPanel.classList.remove("hidden");
+  refreshMediaManagerUI();
+  requestAnimationFrame(()=>target?.scrollIntoView({block:"start",behavior:"smooth"}));
+}
+function runFoundationAction(action:string){
+  if(action==="camera"){viewToggle.click();return;}
+  if(action==="talk"){setMobileFoundationPanel("chat");return;}
+  if(action==="photo"){setMobileFoundationPanel("photo");return;}
+  if(action==="add"){openArtworkPanel();return;}
+  if(action==="objects"){openMediaManagerAt(mediaManagerList);return;}
+  if(action==="groups"){openMediaManagerAt(mediaManagerPanel.querySelector<HTMLElement>("#mediaMetadataEditor")!);return;}
+  if(action==="environment"){openMediaManagerAt(environmentEditor);return;}
+  if(action==="scenes"){openMediaManagerAt(mediaManagerPanel.querySelector<HTMLElement>(".scene-manager")!);return;}
+  if(action==="avatar"){avatarSettingsPanel.hidden=false;return;}
+  if(action==="emote"){setMobileFoundationPanel("emote");return;}
+  if(action==="flashlight"){flashlightButton.click();return;}
+  if(action==="director"){directorPanel.classList.remove("hidden");refreshDirectorPanel();return;}
+  if(action==="cue-editor"){openMediaManagerAt(mediaManagerPanel.querySelector<HTMLElement>(".cue-manager")!);return;}
+}
+function renderFoundationContext(){
+  const copy=uiWorkspaceCopy[activeUIWorkspace];
+  uiContextTitle.textContent=copy.title;uiContextSubtitle.textContent=copy.subtitle;
+  uiContextActions.replaceChildren();
+  for(const [action,label] of copy.actions){const button=document.createElement("button");button.type="button";button.dataset.uiAction=action;button.textContent=label;uiContextActions.appendChild(button);}
+}
+function selectUIWorkspace(workspace:UIFoundationWorkspace){
+  if(workspace==="direct"&&!directorCanDirect&&!directorCanManage){uiSaveState.textContent="DIRECTOR ACCESS REQUIRED";return;}
+  activeUIWorkspace=workspace;document.body.dataset.uiWorkspace=workspace;closeFoundationPanels();renderFoundationContext();
+  for(const button of uiFoundationRoot.querySelectorAll<HTMLButtonElement>("[data-workspace]"))button.classList.toggle("active",button.dataset.workspace===workspace);
+  if(workspace==="create")openMediaManagerAt(mediaManagerList);
+  else if(workspace==="world")openMediaManagerAt(environmentEditor);
+  else if(workspace==="avatar")avatarSettingsPanel.hidden=false;
+  else if(workspace==="direct"){directorPanel.classList.remove("hidden");refreshDirectorPanel();}
+  uiSaveState.textContent=workspace.toUpperCase();
+  if(document.body.classList.contains("mobile-compact"))setMobileFoundationPanel("");
+}
+function setMobileFoundationPanel(panel:string){
+  activeMobilePanel=panel;
+  document.body.classList.remove(...mobilePanelNames.map(name=>`mobile-panel-${name}`));
+  if(panel)document.body.classList.add(`mobile-panel-${panel}`);
+  for(const item of mobileActionDock.querySelectorAll<HTMLButtonElement>("button"))item.classList.toggle("active",item.dataset.mobilePanel===panel);
+}
+
+uiFoundationRoot.addEventListener("click",event=>{
+  const workspaceButton=(event.target as HTMLElement).closest<HTMLButtonElement>("[data-workspace]");
+  if(workspaceButton){selectUIWorkspace(String(workspaceButton.dataset.workspace) as UIFoundationWorkspace);return;}
+  const actionButton=(event.target as HTMLElement).closest<HTMLButtonElement>("[data-ui-action]");
+  if(actionButton){runFoundationAction(String(actionButton.dataset.uiAction||""));setMobileFoundationPanel("");}
+});
+const uiFoundationStyle=document.createElement("style");
+uiFoundationStyle.textContent=`
+  #uiFoundationRoot{display:none;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff}
+  #uiFoundationRoot.room-active{display:block}
+  #uiWorkspaceBar{position:fixed;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:46;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:18px;width:min(850px,calc(100vw - 300px));min-height:52px;padding:6px 8px 6px 14px;box-sizing:border-box;border:1px solid rgba(130,157,180,.5);border-radius:15px;background:rgba(7,13,21,.9);backdrop-filter:blur(18px);box-shadow:0 12px 35px rgba(0,0,0,.2)}
+  .ui-foundation-brand{display:flex;flex-direction:column;font-size:11px;line-height:1.15;letter-spacing:.08em;white-space:nowrap}.ui-foundation-brand span{margin-top:3px;color:#8fa8bb;font-size:9px}
+  .ui-workspace-tabs{display:grid;grid-template-columns:repeat(5,minmax(70px,1fr));gap:4px}
+  .ui-workspace-tabs button{min-height:40px;padding:5px 8px;border:1px solid transparent;border-radius:9px;background:transparent;color:#c8d4de;font-size:10px;font-weight:900;letter-spacing:.07em}.ui-workspace-tabs button span{display:block;margin-top:2px;color:#8195a5;font-size:8px;font-weight:600;letter-spacing:0}.ui-workspace-tabs button:hover,.ui-workspace-tabs button.active{border-color:#52d7ff;background:#102638;color:#fff}.ui-workspace-tabs button.active span{color:#74ddff}
+  #uiSaveState{min-width:66px;padding:6px 8px;border-radius:8px;background:#13202b;color:#9ab0c1;font-size:8px;font-weight:800;text-align:center;letter-spacing:.06em}
+  #uiContextRail{position:fixed;top:84px;left:max(14px,env(safe-area-inset-left));z-index:39;width:206px;padding:13px;box-sizing:border-box;border:1px solid rgba(120,150,175,.46);border-radius:14px;background:rgba(7,13,21,.88);backdrop-filter:blur(15px)}
+  .ui-context-heading{display:flex;flex-direction:column;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12)}.ui-context-heading strong{font-size:13px;letter-spacing:.08em}.ui-context-heading span{margin-top:4px;color:#8ea5b7;font-size:8px;letter-spacing:.08em}
+  #uiContextActions{display:grid;gap:6px;margin-top:10px}#uiContextActions button{width:100%!important;min-height:38px;padding:8px 10px;border:1px solid #52697c;border-radius:9px;background:#0d1722;color:#fff;font-size:9px;font-weight:850;text-align:left;letter-spacing:.06em}#uiContextActions button:hover{border-color:#52d7ff;background:#132838}
+  body[data-ui-workspace] #addArtworkButton,body[data-ui-workspace] #mediaManagerButton,body[data-ui-workspace] #directorButton,body[data-ui-workspace] #avatarSettingsButton{display:none!important}
+  body[data-ui-workspace] #avatarControls{width:auto}body[data-ui-workspace] #flashlightButton{width:auto!important}
+  .ui-mobile-sheet{display:none}
+  @media (max-width:760px),(pointer:coarse){
+    #uiWorkspaceBar,#uiContextRail{display:none!important}
+    body.mobile-compact #avatarControls{display:none!important}
+    body.mobile-compact[data-ui-workspace="avatar"] #avatarControls{display:block!important;position:static;width:0;height:0}
+    body.mobile-compact[data-ui-workspace="avatar"] #avatarControls>#flashlightButton{display:none!important}
+    body.mobile-compact.mobile-panel-actions #uiMobileActionSheet,body.mobile-compact.mobile-panel-menu #uiMobileMenuSheet{display:block;position:fixed;left:8px;right:8px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));z-index:69;padding:10px 10px 12px;box-sizing:border-box;border:1px solid rgba(120,160,195,.55);border-radius:15px;background:rgba(7,13,21,.96);backdrop-filter:blur(18px)}
+    .ui-mobile-sheet-handle{width:38px;height:4px;margin:0 auto 10px;border-radius:4px;background:#667b8d}.ui-mobile-sheet>strong{display:block;margin:0 3px 9px;font-size:10px;letter-spacing:.1em}.ui-mobile-sheet-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.ui-mobile-sheet-grid button{min-height:48px!important;padding:7px 4px!important;border:1px solid #667f93!important;border-radius:10px!important;background:#0d1722!important;color:#fff!important;font-size:9px!important;font-weight:900!important}.ui-mobile-workspaces{grid-template-columns:repeat(3,1fr)}.ui-mobile-workspaces button.active{border-color:#52d7ff!important;background:#102638!important}.ui-mobile-workspaces small{display:block;margin-top:3px;color:#8fa8bb;font-size:8px}
+    body.mobile-compact #mediaManagerPanel,body.mobile-compact #directorPanel{top:max(10px,env(safe-area-inset-top));bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));max-height:none}
+    body.mobile-compact #avatarSettingsPanel{position:fixed;left:8px;right:8px;top:max(74px,calc(env(safe-area-inset-top) + 58px));bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));z-index:65;width:auto;max-height:none;margin:0;padding-bottom:calc(18px + env(safe-area-inset-bottom))}
+  }
+`;
+document.head.appendChild(uiFoundationStyle);
+document.body.dataset.uiWorkspace="view";renderFoundationContext();selectUIWorkspace("view");
 
 deleteManagedMediaButton.addEventListener("click", () => {
   if (!selectedManagedMediaId) return;

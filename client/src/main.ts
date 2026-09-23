@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.3 UNIFIED WORKSPACE UI LOADED]");
+console.log("[PROTOTYPE 0.21.1.4 WORKSPACE CONTENT SEPARATION LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -300,6 +300,10 @@ const artworkScale = document.querySelector<HTMLInputElement>("#artworkScale");
 const artworkRotationY = document.querySelector<HTMLInputElement>("#artworkRotationY");
 const cancelPlacementButton = document.querySelector<HTMLButtonElement>("#cancelPlacementButton");
 const placeArtworkButton = document.querySelector<HTMLButtonElement>("#placeArtworkButton");
+const artworkPlacementHeader=artworkPlacementPanel?.querySelector<HTMLElement>(".artwork-placement-header")||null;
+const closePlacementButton=document.createElement("button");closePlacementButton.id="closePlacementPanel";closePlacementButton.type="button";closePlacementButton.setAttribute("aria-label","Close Artwork Placement");closePlacementButton.textContent="×";
+artworkPlacementHeader?.appendChild(closePlacementButton);
+closePlacementButton.addEventListener("click",()=>cancelPlacementButton?.click());
 
 // 0.20.6 / Upgrade the original placement controls at runtime so existing
 // index.html deployments only need main.ts replaced.
@@ -2227,6 +2231,7 @@ async function ensureSharedMediaFromState(mediaId: string, media: any) {
   else if (sharedType === "glb") await createSharedGLBFromAsset(mediaId, media);
   else if (sharedType === "audio") await createSharedAudioFromAsset(mediaId, media);
   else console.warn("[MEDIA RECOVERY UNSUPPORTED TYPE]", mediaId, sharedType);
+  const loadedItem=managedPlacedMedia.get(mediaId);if(loadedItem)loadedItem.entity.enabled=media.visible!==false;
   // A live transform can arrive while the remote asset is being decoded.
   // Apply the newest such transform after its entity becomes available.
   const pending = pendingSharedMediaTransforms.get(mediaId);
@@ -2561,6 +2566,7 @@ function updateSharedSpritePlaceholder(mediaId: string, media: any) {
   applyMediaMetadata(mediaId,media);
   const item = managedPlacedMedia.get(mediaId);
   if (!item || editingManagedMediaId === mediaId) return;
+  item.entity.enabled=media.visible!==false;
   const values = [media.x,media.y,media.z,media.rotationX??(item.kind==="glb"||item.kind==="audio"?0:90),media.rotationY,media.rotationZ??0,media.scale].map(Number);
   if (!values.every(Number.isFinite)) return;
   const [x,y,z,rotationX,rotationY,rotationZ,scale] = values;
@@ -3461,6 +3467,11 @@ async function enterWorld() {
       const mediaId=String(payload?.id||""); const assetRef=String(payload?.assetRef||"");
       if(mediaId && assetRef) applyLiveAudioConfig(mediaId,assetRef);
     });
+    room.onMessage("media:visibility",(payload:any)=>{
+      const id=String(payload?.id||"");const item=managedPlacedMedia.get(id);
+      if(item)item.entity.enabled=payload?.visible!==false;
+      refreshMediaManagerUI();
+    });
 
     room.onMessage("media:metadata",(payload:any)=>{
       const id=String(payload?.id||"");if(id)applyMediaMetadata(id,payload);
@@ -3750,6 +3761,7 @@ nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") enterWorld
 
 function openArtworkPanel() {
   addArtworkPanel?.classList.remove("hidden");
+  if(addArtworkPanel)bringFloatingPanelToFront(addArtworkPanel);
 }
 
 function closeArtworkPanelUI() {
@@ -5678,9 +5690,8 @@ function refreshMediaManagerUI() {
     mediaManagerList.appendChild(empty);
   } else {
     objects.forEach((item, index) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "media-manager-item" + (item.id === selectedManagedMediaId ? " selected" : "");
+      const row=document.createElement("div");row.className="media-manager-row"+(item.id===selectedManagedMediaId?" selected":"");
+      const button = document.createElement("button");button.type="button";button.className="media-manager-item";
       button.innerHTML = `<span class="media-manager-kind">${String(index + 1).padStart(2, "0")} ${item.kind.toUpperCase()}</span><span class="media-manager-title-wrap"><span class="media-manager-title"></span><span class="media-manager-meta"></span></span>`;
       const title = button.querySelector<HTMLElement>(".media-manager-title");
       if (title) title.textContent = item.title;
@@ -5693,7 +5704,14 @@ function refreshMediaManagerUI() {
         refreshMediaManagerUI();
         window.setTimeout(() => behaviorEditor.scrollIntoView({ block: "start", behavior: "smooth" }), 0);
       });
-      mediaManagerList.appendChild(button);
+      const actions=document.createElement("div");actions.className="media-row-actions";
+      const visibility=document.createElement("button");visibility.type="button";visibility.className="media-row-visibility";
+      const authoritative:any=getAuthoritativeMediaMap()?.get?.(item.id);const isVisible=authoritative?.visible!==false;
+      visibility.textContent=isVisible?"👁 SHOW":"⊘ HIDDEN";visibility.setAttribute("aria-pressed",String(isVisible));
+      visibility.addEventListener("click",()=>setManagedMediaVisibility(item.id,!isVisible));
+      const edit=document.createElement("button");edit.type="button";edit.textContent="EDIT";edit.addEventListener("click",()=>{selectedManagedMediaId=item.id;refreshMediaManagerUI();editManagedMediaButton.click();});
+      const remove=document.createElement("button");remove.type="button";remove.textContent="DELETE";remove.className="danger";remove.addEventListener("click",()=>{selectedManagedMediaId=item.id;refreshMediaManagerUI();deleteManagedMediaButton.click();});
+      actions.append(visibility,edit,remove);row.append(button,actions);mediaManagerList.appendChild(row);
     });
   }
 
@@ -5703,6 +5721,13 @@ function refreshMediaManagerUI() {
   refreshMediaMetadataEditor();
   refreshCueTargetUI();
   refreshBehaviorEditorUI();
+}
+
+function setManagedMediaVisibility(id:string,visible:boolean){
+  const item=managedPlacedMedia.get(id),source:any=getAuthoritativeMediaMap()?.get?.(id);if(!item||!activeRoom)return;
+  item.entity.enabled=visible;
+  const position=item.entity.getPosition(),rotation=item.entity.getEulerAngles(),scale=item.entity.getLocalScale().x;
+  activeRoom.send("media:update",{id,x:Number(source?.x??position.x),y:Number(source?.y??position.y),z:Number(source?.z??position.z),rotationX:Number(source?.rotationX??rotation.x),rotationY:Number(source?.rotationY??rotation.y),rotationZ:Number(source?.rotationZ??rotation.z),scale:Number(source?.scale??scale),visible});
 }
 
 function disposePlacedRuntime(id: string) {
@@ -5826,6 +5851,17 @@ avatarFloatingHeader.innerHTML=`<div><strong>AVATAR DESIGN</strong><span>IDENTIT
 avatarSettingsPanel.prepend(avatarFloatingHeader);
 avatarFloatingHeader.querySelector("button")!.addEventListener("click",()=>{avatarSettingsPanel.hidden=true;});
 
+// WORLD owns environment, scene/backup and portable world I/O. These proven
+// controls are moved out of CREATE without recreating their listeners.
+const worldWorkspacePanel=document.createElement("section");worldWorkspacePanel.id="worldWorkspacePanel";worldWorkspacePanel.className="hidden";
+const mediaManagerHeading=mediaManagerPanel.querySelector<HTMLElement>(".media-manager-header strong");if(mediaManagerHeading)mediaManagerHeading.textContent="ARTWORK LIST";
+const worldWorkspaceHeader=document.createElement("div");worldWorkspaceHeader.className="world-workspace-header ui-drag-handle";
+worldWorkspaceHeader.innerHTML=`<div><strong>WORLD SETTINGS</strong><span>ENVIRONMENT · SCENES · IMPORT / EXPORT</span></div><button type="button" aria-label="Close World Settings">×</button>`;
+const worldWorkspaceBody=document.createElement("div");worldWorkspaceBody.className="world-workspace-body";
+const sceneManagerPanel=mediaManagerPanel.querySelector<HTMLElement>(".scene-manager")!;
+worldWorkspaceBody.append(worldManifestControls,sceneManagerPanel,environmentEditor);worldWorkspacePanel.append(worldWorkspaceHeader,worldWorkspaceBody);document.body.appendChild(worldWorkspacePanel);
+worldWorkspaceHeader.querySelector("button")!.addEventListener("click",()=>worldWorkspacePanel.classList.add("hidden"));
+
 // =========================================================
 // Prototype 0.21.1 / UI FOUNDATION
 // Task-oriented workspaces for desktop and one-sheet-at-a-time navigation
@@ -5838,7 +5874,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.3</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -5888,14 +5924,22 @@ const uiWorkspaceCopy:Record<UIFoundationWorkspace,{title:string;subtitle:string
 
 function closeFoundationPanels(){
   addArtworkPanel?.classList.add("hidden");
+  artworkPlacementPanel?.classList.add("hidden");
   mediaManagerPanel.classList.add("hidden");
+  worldWorkspacePanel.classList.add("hidden");
   directorPanel.classList.add("hidden");
   cueFloatingPanel.classList.add("hidden");
   avatarSettingsPanel.hidden=true;
 }
 function openMediaManagerAt(target?:HTMLElement){
   mediaManagerPanel.classList.remove("hidden");
+  bringFloatingPanelToFront(mediaManagerPanel);
   refreshMediaManagerUI();
+  requestAnimationFrame(()=>target?.scrollIntoView({block:"start",behavior:"smooth"}));
+}
+function openWorldWorkspaceAt(target?:HTMLElement){
+  worldWorkspacePanel.classList.remove("hidden");
+  bringFloatingPanelToFront(worldWorkspacePanel);
   requestAnimationFrame(()=>target?.scrollIntoView({block:"start",behavior:"smooth"}));
 }
 function runFoundationAction(action:string){
@@ -5905,8 +5949,8 @@ function runFoundationAction(action:string){
   if(action==="add"){openArtworkPanel();return;}
   if(action==="objects"){openMediaManagerAt(mediaManagerList);return;}
   if(action==="groups"){openMediaManagerAt(mediaManagerPanel.querySelector<HTMLElement>("#mediaMetadataEditor")!);return;}
-  if(action==="environment"){openMediaManagerAt(environmentEditor);return;}
-  if(action==="scenes"){openMediaManagerAt(mediaManagerPanel.querySelector<HTMLElement>(".scene-manager")!);return;}
+  if(action==="environment"){openWorldWorkspaceAt(environmentEditor);return;}
+  if(action==="scenes"){openWorldWorkspaceAt(sceneManagerPanel);return;}
   if(action==="avatar"){avatarSettingsPanel.hidden=false;return;}
   if(action==="emote"){setMobileFoundationPanel("emote");return;}
   if(action==="flashlight"){flashlightButton.click();return;}
@@ -5925,8 +5969,8 @@ function selectUIWorkspace(workspace:UIFoundationWorkspace){
   activeUIWorkspace=workspace;document.body.dataset.uiWorkspace=workspace;closeFoundationPanels();renderFoundationContext();
   for(const button of uiFoundationRoot.querySelectorAll<HTMLButtonElement>("[data-workspace]"))button.classList.toggle("active",button.dataset.workspace===workspace);
   if(workspace==="create")openMediaManagerAt(mediaManagerList);
-  else if(workspace==="world")openMediaManagerAt(environmentEditor);
-  else if(workspace==="avatar")avatarSettingsPanel.hidden=false;
+  else if(workspace==="world")openWorldWorkspaceAt(environmentEditor);
+  else if(workspace==="avatar"){avatarSettingsPanel.hidden=false;bringFloatingPanelToFront(avatarControls);}
   else if(workspace==="direct"){directorPanel.classList.remove("hidden");refreshDirectorPanel();}
   uiSaveState.textContent=workspace.toUpperCase();
   if(document.body.classList.contains("mobile-compact"))setMobileFoundationPanel("");
@@ -5967,6 +6011,9 @@ uiFoundationStyle.textContent=`
   #cueFloatingPanel.hidden{display:none!important}
   .cue-floating-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(20,14,7,.99);border-bottom:1px solid rgba(255,181,74,.28);cursor:grab;touch-action:none}.cue-floating-header:active,.director-header:active{cursor:grabbing}.cue-floating-header>div{display:flex;flex-direction:column}.cue-floating-header strong{font-size:12px;letter-spacing:.08em}.cue-floating-header span{margin-top:3px;color:#d6b27e;font-size:8px;letter-spacing:.08em}.cue-floating-header button{width:36px!important;height:36px!important;border-radius:10px!important}
   #cueFloatingPanel .cue-manager{margin:0!important}
+  #worldWorkspacePanel{position:fixed;z-index:81;width:min(390px,calc(100vw - 32px));max-height:calc(100vh - 100px);overflow:auto;box-sizing:border-box;padding:0 14px 14px;border:1px solid #54718c;border-radius:16px;background:rgba(9,13,19,.97);color:#fff;backdrop-filter:blur(16px);font-family:system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.3)}#worldWorkspacePanel.hidden{display:none!important}.world-workspace-header{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(9,13,19,.99);border-bottom:1px solid rgba(84,113,140,.55);cursor:grab;touch-action:none}.world-workspace-header>div{display:flex;flex-direction:column}.world-workspace-header strong{font-size:12px;letter-spacing:.08em}.world-workspace-header span{margin-top:3px;color:#8fa8bb;font-size:8px}.world-workspace-header button{width:36px!important;height:36px!important;border-radius:10px!important}.world-workspace-body{display:block}
+  .media-manager-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:stretch;padding:4px;border:1px solid #303b48;border-radius:12px;background:#0d141e}.media-manager-row.selected{outline:2px solid #2f8cff;background:#172334}.media-manager-row .media-manager-item{min-height:48px;border:0!important;background:transparent!important}.media-row-actions{display:grid;grid-template-columns:repeat(3,auto);gap:4px;align-items:center}.media-row-actions button{width:auto!important;min-width:52px!important;min-height:34px!important;padding:6px!important;font-size:8px!important}.media-row-actions .media-row-visibility{min-width:68px!important}.media-row-actions .danger{border-color:#7b3940!important;color:#ffd6d9!important}.media-manager-actions{display:none!important}
+  .artwork-panel-header,.artwork-placement-header{cursor:grab;touch-action:none}.artwork-placement-header{display:flex!important;align-items:center;justify-content:space-between}.artwork-placement-header #closePlacementPanel{width:36px!important;height:36px!important;margin:0!important;border-radius:10px!important}
   .director-header.ui-drag-handle{position:sticky;top:-14px;z-index:4;margin:-14px -14px 10px;padding:14px;background:rgba(20,14,7,.99);cursor:grab;touch-action:none}
   @media (min-width:761px) and (pointer:fine){
     body[data-ui-workspace="view"] #viewControlDock.room-active{display:grid;position:fixed;left:16px;right:16px;bottom:16px;z-index:45;grid-template-columns:minmax(78px,.65fr) minmax(0,2.1fr) minmax(0,1.55fr) minmax(0,1.75fr) minmax(0,1fr);gap:6px;padding:7px;overflow-x:auto;box-sizing:border-box;border:1px solid rgba(120,150,175,.56);border-radius:15px;background:rgba(7,13,21,.93);backdrop-filter:blur(18px);box-shadow:0 14px 38px rgba(0,0,0,.25)}
@@ -5980,6 +6027,8 @@ uiFoundationStyle.textContent=`
     body[data-ui-workspace="direct"] #cueFloatingPanel.ui-positioned{right:auto!important;bottom:auto!important}
     body[data-ui-workspace="create"] #mediaManagerPanel,body[data-ui-workspace="world"] #mediaManagerPanel{top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;max-height:none!important}
     body[data-ui-workspace="create"] #mediaManagerPanel.ui-positioned,body[data-ui-workspace="world"] #mediaManagerPanel.ui-positioned{bottom:auto!important;max-height:calc(100vh - 100px)!important}
+    body[data-ui-workspace="world"] #worldWorkspacePanel.ui-positioned{right:auto!important;bottom:auto!important}
+    #addArtworkPanel.ui-positioned,#artworkPlacementPanel.ui-positioned{right:auto!important;bottom:auto!important;transform:none!important;max-height:calc(100vh - 24px)!important;overflow:auto!important}
     .media-manager-header.ui-drag-handle{cursor:grab;touch-action:none}
   }
   .ui-mobile-sheet{display:none}
@@ -5995,6 +6044,8 @@ uiFoundationStyle.textContent=`
     .ui-mobile-sheet-handle{width:38px;height:4px;margin:0 auto 10px;border-radius:4px;background:#667b8d}.ui-mobile-sheet>strong{display:block;margin:0 3px 9px;font-size:10px;letter-spacing:.1em}.ui-mobile-sheet-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.ui-mobile-sheet-grid button{min-height:48px!important;padding:7px 4px!important;border:1px solid #667f93!important;border-radius:10px!important;background:#0d1722!important;color:#fff!important;font-size:9px!important;font-weight:900!important}.ui-mobile-workspaces{grid-template-columns:repeat(3,1fr)}.ui-mobile-workspaces button.active{border-color:#52d7ff!important;background:#102638!important}.ui-mobile-workspaces small{display:block;margin-top:3px;color:#8fa8bb;font-size:8px}
     body.mobile-compact #mediaManagerPanel,body.mobile-compact #directorPanel{top:max(10px,env(safe-area-inset-top));bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));max-height:none}
     body.mobile-compact #cueFloatingPanel{position:fixed!important;left:8px!important;right:8px!important;top:max(10px,env(safe-area-inset-top))!important;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px))!important;width:auto!important;max-height:none!important;padding-bottom:calc(18px + env(safe-area-inset-bottom))!important}
+    body.mobile-compact #worldWorkspacePanel{position:fixed!important;left:8px!important;right:8px!important;top:max(10px,env(safe-area-inset-top))!important;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px))!important;width:auto!important;max-height:none!important}
+    body.mobile-compact .media-manager-row{grid-template-columns:1fr}.media-row-actions{grid-template-columns:repeat(3,1fr)}.media-row-actions button{width:100%!important}
     body.mobile-compact .cue-floating-header{cursor:default}
     body.mobile-compact #avatarSettingsPanel{position:fixed;left:8px;right:8px;top:max(74px,calc(env(safe-area-inset-top) + 58px));bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));z-index:65;width:auto;max-height:none;margin:0;padding-bottom:calc(18px + env(safe-area-inset-bottom))}
   }
@@ -6006,13 +6057,13 @@ directorDragHeader.classList.add("ui-drag-handle");
 const FLOATING_PANEL_POSITION_KEY="shared-world-director-panel-layout-v1";
 let floatingPanelZ=82;
 type FloatingPosition={x:number;y:number};
-type FloatingLayout={director?:FloatingPosition;cue?:FloatingPosition;media?:FloatingPosition;avatar?:FloatingPosition};
+type FloatingLayout={director?:FloatingPosition;cue?:FloatingPosition;media?:FloatingPosition;avatar?:FloatingPosition;world?:FloatingPosition;add?:FloatingPosition;placement?:FloatingPosition};
 function bringFloatingPanelToFront(panel:HTMLElement){panel.style.zIndex=String(++floatingPanelZ);}
 function defaultFloatingLayout():FloatingLayout{
   const directorWidth=Math.min(390,Math.max(300,window.innerWidth-270));
   const cueWidth=Math.min(360,window.innerWidth-32);
   const directorX=Math.max(8,window.innerWidth-directorWidth-16);
-  return {director:{x:directorX,y:84},cue:{x:Math.max(222,directorX-cueWidth-12),y:84},media:{x:directorX,y:84},avatar:{x:directorX,y:84}};
+  return {director:{x:directorX,y:84},cue:{x:Math.max(222,directorX-cueWidth-12),y:84},media:{x:directorX,y:84},avatar:{x:directorX,y:84},world:{x:directorX,y:84},add:{x:Math.max(230,directorX-380),y:100},placement:{x:Math.max(230,directorX-380),y:100}};
 }
 function readFloatingLayout():FloatingLayout{
   try{return {...defaultFloatingLayout(),...JSON.parse(localStorage.getItem(FLOATING_PANEL_POSITION_KEY)||"{}")};}
@@ -6032,12 +6083,12 @@ function applyFloatingPosition(panel:HTMLElement,position:FloatingPosition){
 function saveFloatingPanelLayout(panel:HTMLElement){
   if(compactMobileQuery.matches)return;
   const layout=readFloatingLayout(),rect=panel.getBoundingClientRect(),position={x:rect.left,y:rect.top};
-  if(panel===directorPanel)layout.director=position;else if(panel===cueFloatingPanel)layout.cue=position;else if(panel===mediaManagerPanel)layout.media=position;else if(panel===avatarControls)layout.avatar=position;
+  if(panel===directorPanel)layout.director=position;else if(panel===cueFloatingPanel)layout.cue=position;else if(panel===mediaManagerPanel)layout.media=position;else if(panel===avatarControls)layout.avatar=position;else if(panel===worldWorkspacePanel)layout.world=position;else if(panel===addArtworkPanel)layout.add=position;else if(panel===artworkPlacementPanel)layout.placement=position;
   try{localStorage.setItem(FLOATING_PANEL_POSITION_KEY,JSON.stringify(layout));}catch{}
 }
 function restoreFloatingPanelLayout(){
   if(compactMobileQuery.matches)return;const layout=readFloatingLayout();
-  applyFloatingPosition(directorPanel,layout.director!);applyFloatingPosition(cueFloatingPanel,layout.cue!);applyFloatingPosition(mediaManagerPanel,layout.media!);applyFloatingPosition(avatarControls,layout.avatar!);
+  applyFloatingPosition(directorPanel,layout.director!);applyFloatingPosition(cueFloatingPanel,layout.cue!);applyFloatingPosition(mediaManagerPanel,layout.media!);applyFloatingPosition(avatarControls,layout.avatar!);applyFloatingPosition(worldWorkspacePanel,layout.world!);if(addArtworkPanel)applyFloatingPosition(addArtworkPanel,layout.add!);if(artworkPlacementPanel)applyFloatingPosition(artworkPlacementPanel,layout.placement!);
 }
 function resetDirectorPanelLayout(){
   try{localStorage.removeItem(FLOATING_PANEL_POSITION_KEY);}catch{}
@@ -6055,7 +6106,9 @@ function enableFloatingPanelDrag(panel:HTMLElement,handle:HTMLElement){
   panel.addEventListener("pointerdown",()=>bringFloatingPanelToFront(panel));
 }
 const mediaManagerDragHeader=mediaManagerPanel.querySelector<HTMLElement>(".media-manager-header")!;mediaManagerDragHeader.classList.add("ui-drag-handle");
-enableFloatingPanelDrag(directorPanel,directorDragHeader);enableFloatingPanelDrag(cueFloatingPanel,cueFloatingHeader);enableFloatingPanelDrag(mediaManagerPanel,mediaManagerDragHeader);enableFloatingPanelDrag(avatarControls,avatarFloatingHeader);
+const addArtworkDragHeader=addArtworkPanel?.querySelector<HTMLElement>(".artwork-panel-header")||null;addArtworkDragHeader?.classList.add("ui-drag-handle");artworkPlacementHeader?.classList.add("ui-drag-handle");
+enableFloatingPanelDrag(directorPanel,directorDragHeader);enableFloatingPanelDrag(cueFloatingPanel,cueFloatingHeader);enableFloatingPanelDrag(mediaManagerPanel,mediaManagerDragHeader);enableFloatingPanelDrag(avatarControls,avatarFloatingHeader);enableFloatingPanelDrag(worldWorkspacePanel,worldWorkspaceHeader);if(addArtworkPanel&&addArtworkDragHeader)enableFloatingPanelDrag(addArtworkPanel,addArtworkDragHeader);if(artworkPlacementPanel&&artworkPlacementHeader)enableFloatingPanelDrag(artworkPlacementPanel,artworkPlacementHeader);
+for(const panel of [addArtworkPanel,artworkPlacementPanel])if(panel)new MutationObserver(()=>{if(!panel.classList.contains("hidden"))bringFloatingPanelToFront(panel);}).observe(panel,{attributes:true,attributeFilter:["class"]});
 window.addEventListener("resize",()=>requestAnimationFrame(restoreFloatingPanelLayout));
 restoreFloatingPanelLayout();
 document.body.dataset.uiWorkspace="view";renderFoundationContext();selectUIWorkspace("view");

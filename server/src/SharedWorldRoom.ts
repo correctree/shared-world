@@ -19,10 +19,11 @@ type AddMediaPayload = {
   scale?: number;
   groupName?: string;
   tags?: string;
+  visible?: boolean;
 };
 
 type UpdateMediaPayload = {
-  id?: string; x?: number; y?: number; z?: number; rotationX?: number; rotationY?: number; rotationZ?: number; scale?: number; assetRef?: string;
+  id?: string; x?: number; y?: number; z?: number; rotationX?: number; rotationY?: number; rotationZ?: number; scale?: number; assetRef?: string; visible?: boolean;
 };
 type DeleteMediaPayload = { id?: string };
 type MediaActionPayload = {
@@ -33,7 +34,7 @@ type MediaActionPayload = {
 };
 type SceneMediaState = {
   x:number;y:number;z:number;rotationX:number;rotationY:number;rotationZ:number;scale:number;
-  groupName:string;tags:string;behavior:Record<string,unknown>|null;
+  groupName:string;tags:string;visible:boolean;behavior:Record<string,unknown>|null;
 };
 type SceneSnapshot = {
   id:string;name:string;updatedAt:number;environment:Record<string,unknown>;
@@ -136,7 +137,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     const media:Record<string,SceneMediaState>={};
     for(const [mediaId,item] of this.state.mediaObjects) media[mediaId]={
       x:item.x,y:item.y,z:item.z,rotationX:item.rotationX,rotationY:item.rotationY,rotationZ:item.rotationZ,scale:item.scale,
-      groupName:item.groupName,tags:item.tags,behavior:{...(this.mediaBehaviors.get(mediaId)||{})}
+      groupName:item.groupName,tags:item.tags,visible:item.visible,behavior:{...(this.mediaBehaviors.get(mediaId)||{})}
     };
     return {id,name,updatedAt:Date.now(),environment:{...this.environment},media};
   }
@@ -161,10 +162,12 @@ export class SharedWorldRoom extends Room<WorldState> {
       const media=this.state.mediaObjects.get(mediaId);if(!media)continue;
       media.x=saved.x;media.y=saved.y;media.z=saved.z;media.rotationX=saved.rotationX;
       media.rotationY=saved.rotationY;media.rotationZ=saved.rotationZ;media.scale=saved.scale;
+      media.visible=saved.visible!==false;
       media.groupName=saved.groupName;media.tags=saved.tags;
       if(saved.behavior)this.mediaBehaviors.set(mediaId,{...saved.behavior});
       this.broadcast("media:transform",{id:mediaId,x:media.x,y:media.y,z:media.z,rotationX:media.rotationX,rotationY:media.rotationY,rotationZ:media.rotationZ,scale:media.scale});
       this.broadcast("media:metadata",{id:mediaId,groupName:media.groupName,tags:media.tags});
+      this.broadcast("media:visibility",{id:mediaId,visible:media.visible});
       if(saved.behavior)this.broadcast("media:behavior",{id:mediaId,behavior:saved.behavior});
       count++;
     }
@@ -470,6 +473,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         ownerClientId: this.state.players.get(client.sessionId)?.clientId || "",
         groupName: this.cleanMediaGroup(payload?.groupName),
         tags: this.cleanMediaTags(payload?.tags),
+        visible: payload?.visible !== false,
         x: Math.max(-this.worldLimit(), Math.min(this.worldLimit(), x)),
         y: Math.max(-10, Math.min(20, y)),
         z: Math.max(-this.worldLimit(), Math.min(this.worldLimit(), z)),
@@ -665,9 +669,11 @@ export class SharedWorldRoom extends Room<WorldState> {
       media.rotationY=rotationY;
       media.rotationZ=rotationZ;
       media.scale=Math.max(0.05,Math.min(20,scale));
+      if(typeof payload?.visible==="boolean")media.visible=payload.visible;
       // Apply transforms to already-loaded clients without waiting for a state patch.
       this.broadcast("media:transform", {id, x:media.x, y:media.y, z:media.z,
         rotationX:media.rotationX, rotationY:media.rotationY, rotationZ:media.rotationZ, scale:media.scale});
+      if(typeof payload?.visible==="boolean")this.broadcast("media:visibility",{id,visible:media.visible});
       if (typeof payload?.assetRef === "string" && media.type === "audio") {
         media.assetRef=String(payload.assetRef).slice(0,240);
         // Prototype 0.16.1.4: state remains authoritative, while this explicit
@@ -748,7 +754,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           type: media.type,
           assetRef: media.assetRef,
           fallbackRef: media.fallbackRef,
-          groupName: media.groupName, tags: media.tags,
+          groupName: media.groupName, tags: media.tags, visible:media.visible,
           x: media.x, y: media.y, z: media.z,
           rotationX: media.rotationX, rotationY: media.rotationY, rotationZ: media.rotationZ, scale: media.scale,
           behavior: this.mediaBehaviors.get(id) || null
@@ -789,7 +795,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       const mediaObjects = Array.from(this.state.mediaObjects, ([id, media]) => ({
         id, title: media.title, type: media.type, assetRef: media.assetRef,
         fallbackRef: media.fallbackRef, x: media.x, y: media.y, z: media.z,
-        groupName:media.groupName, tags:media.tags,
+        groupName:media.groupName, tags:media.tags, visible:media.visible,
         rotationX: media.rotationX, rotationY: media.rotationY, rotationZ: media.rotationZ, scale: media.scale,
         behavior: this.mediaBehaviors.get(id) || null
       }));
@@ -853,7 +859,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           title:item.title, type:item.type, assetRef:item.assetRef,
           fallbackRef:item.fallbackRef, ownerSessionId:client.sessionId,
           ownerClientId:player.clientId,
-          groupName:this.cleanMediaGroup(item.groupName), tags:this.cleanMediaTags(item.tags),
+          groupName:this.cleanMediaGroup(item.groupName), tags:this.cleanMediaTags(item.tags), visible:item.visible!==false,
           x:bounded(x,0,-importLimit,importLimit), y:bounded(y,1.8,-10,20),
           z:bounded(z,-3,-importLimit,importLimit), rotationX, rotationY, rotationZ,
           scale:bounded(scale,1,.05,20)

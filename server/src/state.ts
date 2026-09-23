@@ -47,6 +47,7 @@ export const SharedMediaObject = schema({
   ownerClientId: t.string().default(""),
   groupName: t.string().default(""),
   tags: t.string().default(""),
+  visible: t.boolean().default(true),
   x: t.number().default(0),
   y: t.number().default(1.8),
   z: t.number().default(-3),

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.4 INPUT FOCUS AND OPTIMISTIC SOCIAL ACTION FIX LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.5 STABILITY RECOVERY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3514,18 +3514,34 @@ async function enterWorld() {
     });
 
     room.onMessage("media:metadata",(payload:any)=>{
-      const id=String(payload?.id||"");if(id)applyMediaMetadata(id,payload);
+      const id=String(payload?.id||"");if(!id)return;
+      const expected=mediaMetadata.get(id);
+      const received=normalizeMediaMetadata(payload);
+      const confirmsPending=pendingMetadataPrevious.has(id)&&!!expected&&
+        expected.groupName===received.groupName&&expected.tags.join("\u0000")===received.tags.join("\u0000");
+      applyMediaMetadata(id,received);
+      if(confirmsPending){
+        if(metadataSaveWatchdog!==null){window.clearTimeout(metadataSaveWatchdog);metadataSaveWatchdog=null;}
+        if(metadataRetryTimer!==null){window.clearTimeout(metadataRetryTimer);metadataRetryTimer=null;}
+        pendingMetadataPrevious.delete(id);metadataEditorDirty=false;
+        saveMediaMetadataButton.textContent="SAVED · ROOM + LOCAL";
+        requestLocalWorldSave("GROUP / TAG");
+      }
     });
     room.onMessage("media:metadata:result",(payload:any)=>{
       if(room!==activeRoom)return;
       if(metadataSaveWatchdog!==null){window.clearTimeout(metadataSaveWatchdog);metadataSaveWatchdog=null;}
+      if(metadataRetryTimer!==null){window.clearTimeout(metadataRetryTimer);metadataRetryTimer=null;}
       if(payload?.ok){
+        pendingMetadataPrevious.delete(String(payload.id||""));
         metadataEditorDirty=false;
         applyMediaMetadata(String(payload.id||""),payload);
         saveMediaMetadataButton.textContent="SAVED · ROOM + LOCAL";
         requestLocalWorldSave("GROUP / TAG");
         window.setTimeout(refreshMediaMetadataEditor,700);
       } else {
+        const id=String(payload?.id||"");const previous=pendingMetadataPrevious.get(id);
+        if(previous){pendingMetadataPrevious.delete(id);applyMediaMetadata(id,previous);}
         saveMediaMetadataButton.textContent=payload?.reason==="owner-locked"?"ROOM OWNER ONLY":"SAVE FAILED";
       }
     });
@@ -3612,13 +3628,21 @@ async function enterWorld() {
       else console.warn("[MEDIA EDIT SYNC REJECTED]", String(payload?.id || ""), String(payload?.reason || "unknown"));
     });
     room.onMessage("environment:state",(payload:any)=>{
-      if (room===activeRoom) applyWorldEnvironment(payload);
+      if(room!==activeRoom)return;
+      if(environmentApplyWatchdog!==null){window.clearTimeout(environmentApplyWatchdog);environmentApplyWatchdog=null;}
+      applyWorldEnvironment(payload);
+      environmentApplyButton.textContent="APPLIED";
+      window.setTimeout(()=>{
+        if(environmentApplyButton.textContent==="APPLIED")environmentApplyButton.textContent="APPLY TO ROOM";
+      },1000);
     });
     room.onMessage("environment:permissions",(payload:any)=>{
       if(room===activeRoom)applyEnvironmentPermissions(payload);
     });
     room.onMessage("environment:error",(payload:any)=>{
       if(room!==activeRoom)return;
+      if(environmentApplyWatchdog!==null){window.clearTimeout(environmentApplyWatchdog);environmentApplyWatchdog=null;}
+      environmentApplyButton.textContent="APPLY FAILED";
       applyEnvironmentPermissions({canEdit:false,locked:true,ownerPresent:true});
       if(payload?.reason==="owner-locked")window.alert("WORLD ENVIRONMENT is locked by its owner.");
     });
@@ -5016,6 +5040,8 @@ function refreshEnvironmentEditor() {
   colorStatus.style.paddingLeft="7px";
 }
 refreshEnvironmentEditor();
+const environmentApplyButton=environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!;
+let environmentApplyWatchdog:number|null=null;
 environmentEditor.addEventListener("input",(event)=>{
   const input=event.target as HTMLInputElement;
   const key=input?.getAttribute?.("data-env");
@@ -5034,7 +5060,7 @@ environmentEditor.querySelector<HTMLSelectElement>('[data-env="environmentPreset
     }
     environmentEditor.querySelector<HTMLSelectElement>('[data-env="skyMode"]')!.value="color";
   });
-environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEventListener("click",()=>{
+environmentApplyButton.addEventListener("click",()=>{
   if (!activeRoom||!environmentCanEdit) return;
   const payload:any={};
   for (const key of Object.keys(currentWorldEnvironment)) {
@@ -5062,6 +5088,15 @@ environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!.addEvent
   }
   environmentEditor.querySelector<HTMLElement>("[data-particle-color-status]")!.textContent=
     `SENDING: ${String(payload.particleColor).toUpperCase()} / ${String(payload.particles).toUpperCase()}`;
+  // Apply the same validated payload locally first. The server remains the
+  // source of truth and its environment:state message confirms synchronization.
+  applyWorldEnvironment(payload);
+  environmentApplyButton.textContent="APPLYING…";
+  if(environmentApplyWatchdog!==null)window.clearTimeout(environmentApplyWatchdog);
+  environmentApplyWatchdog=window.setTimeout(()=>{
+    environmentApplyWatchdog=null;
+    if(environmentApplyButton.textContent==="APPLYING…")environmentApplyButton.textContent="LOCAL PREVIEW · SERVER PENDING";
+  },5000);
   activeRoom.send("environment:set",payload);
 });
 environmentEditor.querySelector<HTMLButtonElement>("[data-fog-demo]")!.addEventListener("click",()=>{
@@ -5340,6 +5375,8 @@ const mediaTagFilter=mediaManagerPanel.querySelector<HTMLInputElement>("#mediaTa
 let metadataEditorDirty=false;
 let metadataEditorId:string|null=null;
 let metadataSaveWatchdog:number|null=null;
+let metadataRetryTimer:number|null=null;
+const pendingMetadataPrevious=new Map<string,MediaMetadata>();
 mediaGroupInput.addEventListener("input",()=>{metadataEditorDirty=true;});
 mediaTagsInput.addEventListener("input",()=>{metadataEditorDirty=true;});
 const sceneNameInput=mediaManagerPanel.querySelector<HTMLInputElement>("#sceneNameInput")!;
@@ -5470,13 +5507,23 @@ function refreshMediaMetadataEditor(){
 }
 saveMediaMetadataButton.addEventListener("click",()=>{
   if(!activeRoom||!selectedManagedMediaId||!environmentCanEdit)return;
+  const id=selectedManagedMediaId;
   const meta=normalizeMediaMetadata({groupName:mediaGroupInput.value,tags:mediaTagsInput.value});
-  activeRoom.send("media:metadata",{id:selectedManagedMediaId,groupName:meta.groupName,tags:meta.tags.join(",")});
+  if(!pendingMetadataPrevious.has(id))pendingMetadataPrevious.set(id,{...(mediaMetadata.get(id)||{groupName:"",tags:[]}),tags:[...(mediaMetadata.get(id)?.tags||[])]});
+  metadataEditorDirty=false;applyMediaMetadata(id,meta);
+  activeRoom.send("media:metadata",{id,groupName:meta.groupName,tags:meta.tags.join(",")});
   saveMediaMetadataButton.textContent="SAVING…";
+  if(metadataRetryTimer!==null)window.clearTimeout(metadataRetryTimer);
+  metadataRetryTimer=window.setTimeout(()=>{
+    metadataRetryTimer=null;
+    if(!activeRoom||saveMediaMetadataButton.textContent!=="SAVING…")return;
+    activeRoom.send("media:metadata",{id,groupName:meta.groupName,tags:meta.tags.join(",")});
+    saveMediaMetadataButton.textContent="RETRYING…";
+  },1600);
   if(metadataSaveWatchdog!==null)window.clearTimeout(metadataSaveWatchdog);
   metadataSaveWatchdog=window.setTimeout(()=>{
     metadataSaveWatchdog=null;
-    if(saveMediaMetadataButton.textContent==="SAVING…")saveMediaMetadataButton.textContent="SERVER TIMEOUT · RETRY";
+    if(["SAVING…","RETRYING…"].includes(saveMediaMetadataButton.textContent||""))saveMediaMetadataButton.textContent="LOCAL SAVED · SERVER PENDING";
   },5000);
 });
 mediaGroupFilter.addEventListener("change",refreshMediaManagerUI);
@@ -5929,9 +5976,6 @@ function createViewControlGroup(label:string,nodes:HTMLElement[]){
   const content=document.createElement("div");content.className="view-control-content";content.append(...nodes);
   group.append(heading,content);return group;
 }
-const dockView=document.createElement("button");dockView.type="button";dockView.className="dock-view";dockView.textContent=viewToggle.textContent||"3RD";
-dockView.addEventListener("click",()=>{viewToggle.click();dockView.textContent=viewToggle.textContent||"VIEW";dockView.classList.toggle("active",viewToggle.classList.contains("active"));dockView.blur();});
-
 const dockChat=document.createElement("div");dockChat.className="dock-chat";
 dockChat.innerHTML=`<input maxlength="48" placeholder="MESSAGE / EMOJI" aria-label="Message"><button type="button">SEND</button><div class="dock-quick"><button type="button">👋</button><button type="button">❤️</button><button type="button">✨</button><button type="button">😊</button></div>`;
 const dockChatInput=dockChat.querySelector<HTMLInputElement>("input")!;
@@ -5966,7 +6010,7 @@ dockActions.addEventListener("click",event=>{const button=(event.target as HTMLE
 const dockLight=document.createElement("button");dockLight.type="button";dockLight.className="dock-light";dockLight.textContent="FLASHLIGHT OFF";
 dockLight.addEventListener("click",()=>{flashlightButton.click();dockLight.textContent=flashlightButton.textContent||"FLASHLIGHT";dockLight.classList.toggle("active",flashlightButton.classList.contains("active"));dockLight.blur();});
 viewControlDock.append(
-  createViewControlGroup("VIEW",[dockView]),
+  createViewControlGroup("VIEW",[viewToggle]),
   createViewControlGroup("CHAT",[dockChat]),
   createViewControlGroup("VOICE",[dockVoice]),
   createViewControlGroup("PHOTO",[dockPhoto]),
@@ -6032,7 +6076,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.4</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.5</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -6160,7 +6204,7 @@ uiFoundationStyle.textContent=`
   .ui-context-heading{display:flex;flex-direction:column;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12)}.ui-context-heading strong{font-size:13px;letter-spacing:.08em}.ui-context-heading span{margin-top:4px;color:#8ea5b7;font-size:8px;letter-spacing:.08em}
   #uiContextActions{display:grid;gap:6px;margin-top:10px}#uiContextActions button{width:100%!important;min-height:38px;padding:8px 10px;border:1px solid #52697c;border-radius:9px;background:#0d1722;color:#fff;font-size:9px;font-weight:850;text-align:left;letter-spacing:.06em}#uiContextActions button:hover{border-color:#52d7ff;background:#132838}
   body[data-ui-workspace] #addArtworkButton,body[data-ui-workspace] #mediaManagerButton,body[data-ui-workspace] #directorButton,body[data-ui-workspace] #avatarSettingsButton{display:none!important}
-  body[data-ui-workspace] #avatarControls{width:auto}body[data-ui-workspace] #viewToggle,body[data-ui-workspace] #flashlightButton,body[data-ui-workspace] #emoteControls,body[data-ui-workspace] #communicationControls{display:none!important}
+  body[data-ui-workspace] #avatarControls{width:auto}body[data-ui-workspace] #flashlightButton,body[data-ui-workspace] #emoteControls,body[data-ui-workspace] #communicationControls{display:none!important}
   body[data-ui-workspace] #sharedStateDiagnosticPanel{display:none!important}
   #viewControlDock{display:none}
   .avatar-floating-header{position:sticky;top:-16px;z-index:4;display:flex;align-items:center;justify-content:space-between;margin:-16px -16px 12px;padding:13px 16px;background:rgba(9,15,24,.99);border-bottom:1px solid rgba(113,145,174,.45);cursor:grab;touch-action:none}.avatar-floating-header>div{display:flex;flex-direction:column}.avatar-floating-header strong{font-size:12px;letter-spacing:.08em}.avatar-floating-header span{margin-top:3px;color:#8fa8bb;font-size:8px;letter-spacing:.08em}.avatar-floating-header button{width:36px!important;height:36px!important;margin:0!important}
@@ -6176,6 +6220,7 @@ uiFoundationStyle.textContent=`
   @media (min-width:761px) and (pointer:fine){
     body[data-ui-workspace="view"] #viewControlDock.room-active{display:grid;position:fixed;left:16px;right:16px;bottom:16px;z-index:45;grid-template-columns:minmax(72px,.6fr) minmax(300px,2.1fr) minmax(220px,1.45fr) minmax(320px,1.9fr) minmax(190px,1.2fr) minmax(120px,.8fr);gap:6px;padding:7px;overflow-x:auto;box-sizing:border-box;border:1px solid rgba(120,150,175,.56);border-radius:15px;background:rgba(7,13,21,.93);backdrop-filter:blur(18px);box-shadow:0 14px 38px rgba(0,0,0,.25)}
     .view-control-group{min-width:0;padding:6px 8px 7px;border:1px solid rgba(100,128,150,.34);border-radius:10px;background:rgba(12,21,31,.72)}.view-control-label{display:block;margin:0 0 5px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}.view-control-content{display:flex;align-items:center;gap:5px;min-height:38px}.view-control-content button,.view-control-content select{min-height:36px!important;padding:7px 8px!important;white-space:nowrap}.dock-view,.dock-light{width:100%!important}.dock-chat,.dock-voice,.dock-photo,.dock-actions{width:100%;display:flex;align-items:center;gap:4px}.dock-chat>input{min-width:105px;flex:1;box-sizing:border-box;padding:9px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff}.dock-quick{display:flex;gap:3px}.dock-quick button{padding:6px!important}.dock-voice button{min-width:68px}.dock-voice select{min-width:0;flex:1}.dock-photo select{min-width:96px}.dock-actions button{flex:1;min-width:0}.dock-light.active{border-color:#ffe08a!important;color:#ffe08a!important;box-shadow:0 0 14px rgba(255,224,138,.35)}
+    .view-control-content #viewToggle{display:block!important;position:static!important;inset:auto!important;transform:none!important;width:100%!important}
     body[data-ui-workspace="avatar"] #avatarControls{display:block!important;position:fixed!important;top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;z-index:50!important;width:min(370px,calc(100vw - 270px))!important;height:auto!important}
     body[data-ui-workspace="avatar"] #avatarControls>#flashlightButton{display:none!important}
     body[data-ui-workspace="avatar"] #avatarSettingsPanel{display:block!important;width:100%!important;height:100%!important;max-height:none!important;margin:0!important;padding:16px!important;box-sizing:border-box!important;overflow-y:auto!important;overscroll-behavior:contain;border-color:#54718c!important;border-radius:16px!important;background:rgba(9,15,24,.96)!important;backdrop-filter:blur(16px)}

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.7 GROUP TAG MANAGEMENT LOADED]");
+console.log("[PROTOTYPE 0.20.8 SCENE SAVE RECALL LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3450,6 +3450,24 @@ async function enterWorld() {
         saveMediaMetadataButton.textContent=payload?.reason==="owner-locked"?"ROOM OWNER ONLY":"SAVE FAILED";
       }
     });
+    room.onMessage("scene:list",(payload:any)=>{
+      if(room!==activeRoom)return;
+      sceneSummaries=Array.isArray(payload?.scenes)?payload.scenes.map((scene:any)=>({
+        id:String(scene.id||""),name:String(scene.name||"Scene"),updatedAt:Number(scene.updatedAt)||0,objectCount:Number(scene.objectCount)||0
+      })).filter((scene:SceneSummary)=>!!scene.id):[];
+      refreshSceneUI();
+    });
+    room.onMessage("scene:result",(payload:any)=>{
+      if(room!==activeRoom)return;
+      if(!payload?.ok){sceneStatus.textContent=`Scene ${String(payload?.action||"")} failed: ${String(payload?.reason||"unknown")}`;return;}
+      sceneStatus.textContent=payload.action==="recall"?`Recalled ${String(payload.name||"scene")} · ${Number(payload.count)||0} objects`:
+        payload.action==="delete"?"Scene deleted.":`Saved ${String(payload.name||"scene")}`;
+      if(payload.action==="save"&&payload.id)sceneSelect.dataset.pendingSelection=String(payload.id);
+    });
+    room.onMessage("scene:recalled",(payload:any)=>{
+      if(room!==activeRoom)return;sceneStatus.textContent=`LIVE SCENE · ${String(payload?.name||"Scene")}`;
+      room.send("media:snapshot:request",{});
+    });
 
     room.onMessage("media:transform", (payload:any) => {
       const mediaId=String(payload?.id||"");
@@ -3492,6 +3510,7 @@ async function enterWorld() {
       if(payload?.reason==="owner-locked")window.alert("WORLD ENVIRONMENT is locked by its owner.");
     });
     room.send("environment:get",{});
+    room.send("scene:list:request",{});
     room.onMessage("world:export:result", (manifest:any) => {
       if (room === activeRoom && pendingWorldPackageExport) {
         pendingWorldPackageExport = false;
@@ -4126,17 +4145,15 @@ async function exportPortableWorld(manifest:any, room:Room) {
         zip.file(`assets/${name}`,blob);
       }
     }
-    for (const field of ["skyAssetRef","groundAssetRef","particleAssetRef"] as const) {
-      const ref=manifest.environment?.[field];
-      if (!ref) continue;
-      const name=portableAssetName(ref);
-      if(!name || !name.endsWith(".zip")) throw new Error(`Invalid ${field} URL`);
+    const sceneEnvironments=[manifest.environment,...(Array.isArray(manifest.scenes)?manifest.scenes.map((scene:any)=>scene?.environment):[])];
+    for(const environment of sceneEnvironments)for (const field of ["skyAssetRef","groundAssetRef","particleAssetRef"] as const) {
+      const ref=environment?.[field];if (!ref) continue;
+      const name=portableAssetName(ref);if(!name || !name.endsWith(".zip")) throw new Error(`Invalid ${field} URL`);
       if(names.has(name)) continue;
       const response=await fetch(new URL(`/assets/${name}`,SERVER_URL),{cache:"no-store"});
       if(!response.ok) throw new Error(`${field}: HTTP ${response.status}`);
       const blob=await response.blob();
-      if(!blob.size || blob.size>20*1024*1024 || total+blob.size>80*1024*1024)
-        throw new Error(`${field} asset too large`);
+      if(!blob.size || blob.size>20*1024*1024 || total+blob.size>80*1024*1024)throw new Error(`${field} asset too large`);
       names.add(name);total+=blob.size;zip.file(`assets/${name}`,blob);
     }
     if (room !== activeRoom) throw new Error("Room changed during export");
@@ -4208,23 +4225,19 @@ worldPackageInput.addEventListener("change",async()=>{
         media[field]=uploaded.get(name)!+settings;
       }
     }
-    for (const field of ["skyAssetRef","groundAssetRef","particleAssetRef"] as const) {
-      const ref=manifest.environment?.[field];
-      if(!ref) continue;
-      const name=portableAssetName(ref);
-      if(!name || !name.endsWith(".zip")) throw new Error(`Invalid ${field} URL`);
+    const sceneEnvironments=[manifest.environment,...(Array.isArray(manifest.scenes)?manifest.scenes.map((scene:any)=>scene?.environment):[])];
+    for(const environment of sceneEnvironments)for (const field of ["skyAssetRef","groundAssetRef","particleAssetRef"] as const) {
+      const ref=environment?.[field];if(!ref) continue;
+      const name=portableAssetName(ref);if(!name || !name.endsWith(".zip")) throw new Error(`Invalid ${field} URL`);
       if(!uploaded.has(name)) {
-        const entry=zip.file(`assets/${name}`);
-        if(!entry) throw new Error(`${field} image missing from ZIP`);
+        const entry=zip.file(`assets/${name}`);if(!entry) throw new Error(`${field} image missing from ZIP`);
         const blob=await entry.async("blob");
-        if(!blob.size || blob.size>20*1024*1024 || total+blob.size>80*1024*1024)
-          throw new Error(`${field} asset too large`);
+        if(!blob.size || blob.size>20*1024*1024 || total+blob.size>80*1024*1024)throw new Error(`${field} asset too large`);
         const url=sharedAssetURL(`${field}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,"zip");
-        const response=await fetch(url,{method:"PUT",body:blob});
-        if(!response.ok) throw new Error(`${field} upload HTTP ${response.status}`);
+        const response=await fetch(url,{method:"PUT",body:blob});if(!response.ok) throw new Error(`${field} upload HTTP ${response.status}`);
         uploaded.set(name,url);total+=blob.size;
       }
-      manifest.environment[field]=uploaded.get(name);
+      environment[field]=uploaded.get(name);
     }
     if (room !== activeRoom) throw new Error("Room changed during import");
     worldManifestStatus.textContent="Restoring artwork and behavior…";
@@ -4476,6 +4489,17 @@ mediaManagerPanel.innerHTML = `
     <strong>MEDIA OBJECTS</strong>
     <button id="closeMediaManagerButton" type="button">×</button>
   </div>
+  <div class="scene-manager">
+    <div class="behavior-editor-title">SCENES</div>
+    <input id="sceneNameInput" maxlength="32" placeholder="SCENE NAME">
+    <select id="sceneSelect"><option value="">NEW SCENE</option></select>
+    <div class="scene-actions">
+      <button id="sceneSaveButton" type="button">SAVE</button>
+      <button id="sceneRecallButton" type="button">RECALL</button>
+      <button id="sceneDeleteButton" type="button">DELETE</button>
+    </div>
+    <div id="sceneStatus">No scenes saved.</div>
+  </div>
   <div id="mediaMetadataEditor" class="media-metadata-editor">
     <div class="behavior-editor-title">GROUP / TAG</div>
     <div id="mediaMetadataStatus" class="behavior-editor-status">SELECT A MEDIA OBJECT</div>
@@ -4726,6 +4750,7 @@ function applyEnvironmentPermissions(payload:any) {
     control.disabled=!environmentCanEdit;
   environmentEditor.style.opacity=environmentCanEdit?"1":".72";
   refreshMediaMetadataEditor();
+  refreshSceneUI();
 }
 customParticleInput.addEventListener("change",async()=>{
   if(!environmentCanEdit)return;
@@ -4953,6 +4978,11 @@ mediaManagerStyle.textContent = `
   .media-manager-kind { opacity:.62; font-size:10px; font-weight:800; }
   .media-manager-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   .media-manager-empty { opacity:.55; padding:18px 6px; text-align:center; font-size:12px; }
+  .scene-manager { margin:0 0 12px;padding:12px;border:1px solid #4bc4d8;border-radius:12px;background:#0c1b22;display:grid;gap:8px; }
+  .scene-manager input,.scene-manager select { width:100%;min-width:0;box-sizing:border-box;padding:8px;border:1px solid #4a5260;border-radius:8px;background:#111720;color:#fff; }
+  .scene-actions { display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px; }
+  .scene-actions button { width:100%!important;min-width:0;padding:9px 4px;font-size:10px; }
+  #sceneStatus { min-height:14px;font-size:10px;color:#9ddce6; }
   .media-metadata-editor { margin:0 0 12px;padding:12px;border:1px solid #9a6ee8;border-radius:12px;background:#151124; }
   .media-metadata-editor .hidden { display:none!important; }
   .metadata-row { display:grid;grid-template-columns:58px 1fr;align-items:center;gap:8px;margin:8px 0;font-size:11px; }
@@ -5057,6 +5087,39 @@ const mediaTagsInput=mediaManagerPanel.querySelector<HTMLInputElement>("#mediaTa
 const saveMediaMetadataButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#saveMediaMetadataButton")!;
 const mediaGroupFilter=mediaManagerPanel.querySelector<HTMLSelectElement>("#mediaGroupFilter")!;
 const mediaTagFilter=mediaManagerPanel.querySelector<HTMLInputElement>("#mediaTagFilter")!;
+const sceneNameInput=mediaManagerPanel.querySelector<HTMLInputElement>("#sceneNameInput")!;
+const sceneSelect=mediaManagerPanel.querySelector<HTMLSelectElement>("#sceneSelect")!;
+const sceneSaveButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#sceneSaveButton")!;
+const sceneRecallButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#sceneRecallButton")!;
+const sceneDeleteButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#sceneDeleteButton")!;
+const sceneStatus=mediaManagerPanel.querySelector<HTMLElement>("#sceneStatus")!;
+type SceneSummary={id:string;name:string;updatedAt:number;objectCount:number};
+let sceneSummaries:SceneSummary[]=[];
+function refreshSceneUI(){
+  const selected=sceneSelect.dataset.pendingSelection||sceneSelect.value;delete sceneSelect.dataset.pendingSelection;
+  sceneSelect.innerHTML='<option value="">NEW SCENE</option>';
+  for(const scene of sceneSummaries){const option=document.createElement("option");option.value=scene.id;option.textContent=`${scene.name} (${scene.objectCount})`;sceneSelect.appendChild(option);}
+  if(sceneSummaries.some(scene=>scene.id===selected))sceneSelect.value=selected;
+  const has=!!sceneSelect.value;sceneRecallButton.disabled=!environmentCanEdit||!has;sceneDeleteButton.disabled=!environmentCanEdit||!has;
+  sceneSaveButton.disabled=!environmentCanEdit;
+  if(!environmentCanEdit)sceneStatus.textContent="ROOM OWNER ONLY";
+  else if(!sceneSummaries.length)sceneStatus.textContent="No scenes saved.";
+}
+sceneSelect.addEventListener("change",()=>{
+  const scene=sceneSummaries.find(item=>item.id===sceneSelect.value);if(scene)sceneNameInput.value=scene.name;
+  refreshSceneUI();
+});
+sceneSaveButton.addEventListener("click",()=>{
+  if(!activeRoom||!environmentCanEdit)return;const name=sceneNameInput.value.trim();
+  if(!name){sceneStatus.textContent="Enter a scene name.";return;}
+  activeRoom.send("scene:save",{id:sceneSelect.value,name});sceneStatus.textContent="Saving scene…";
+});
+sceneRecallButton.addEventListener("click",()=>{
+  if(activeRoom&&environmentCanEdit&&sceneSelect.value){activeRoom.send("scene:recall",{id:sceneSelect.value});sceneStatus.textContent="Recalling scene…";}
+});
+sceneDeleteButton.addEventListener("click",()=>{
+  if(activeRoom&&environmentCanEdit&&sceneSelect.value&&window.confirm("Delete this scene?"))activeRoom.send("scene:delete",{id:sceneSelect.value});
+});
 
 function refreshMediaMetadataEditor(){
   const id=selectedManagedMediaId;const has=!!id&&managedPlacedMedia.has(id);

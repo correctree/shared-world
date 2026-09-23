@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.1 RIGHT INSPECTOR LAYOUT LOADED]");
+console.log("[PROTOTYPE 0.21.1.2 DRAGGABLE DIRECTOR PANELS LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -5788,6 +5788,16 @@ mediaManagerButton.addEventListener("click", () => {
 });
 closeMediaManagerButton.addEventListener("click", () => mediaManagerPanel.classList.add("hidden"));
 
+// CUE SYSTEM becomes an independent surface after its controls/listeners have
+// been initialized. Moving the existing DOM preserves every proven cue event.
+const cueFloatingPanel=document.createElement("section");
+cueFloatingPanel.id="cueFloatingPanel";cueFloatingPanel.className="hidden";
+const cueFloatingHeader=document.createElement("div");cueFloatingHeader.className="cue-floating-header ui-drag-handle";
+cueFloatingHeader.innerHTML=`<div><strong>CUE EDITOR</strong><span>LIVE ACTION BUILDER</span></div><button id="closeCueFloatingPanel" type="button" aria-label="Close Cue Editor">×</button>`;
+const cueManagerSurface=mediaManagerPanel.querySelector<HTMLElement>(".cue-manager")!;
+cueFloatingPanel.append(cueFloatingHeader,cueManagerSurface);document.body.appendChild(cueFloatingPanel);
+cueFloatingHeader.querySelector<HTMLButtonElement>("#closeCueFloatingPanel")!.addEventListener("click",()=>cueFloatingPanel.classList.add("hidden"));
+
 // =========================================================
 // Prototype 0.21.1 / UI FOUNDATION
 // Task-oriented workspaces for desktop and one-sheet-at-a-time navigation
@@ -5800,7 +5810,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.1</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.2</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -5845,13 +5855,14 @@ const uiWorkspaceCopy:Record<UIFoundationWorkspace,{title:string;subtitle:string
   create:{title:"CREATE",subtitle:"ARTWORK & BEHAVIOR",actions:[["add","+ ADD ARTWORK"],["objects","ARTWORK LIST"],["groups","GROUP / TAG"]]},
   world:{title:"WORLD",subtitle:"ROOM ENVIRONMENT",actions:[["environment","ENVIRONMENT"],["scenes","SCENES / BACKUP"]]},
   avatar:{title:"AVATAR",subtitle:"IDENTITY & EXPRESSION",actions:[["avatar","AVATAR DESIGN"],["emote","EMOTES"],["flashlight","FLASHLIGHT"]]},
-  direct:{title:"DIRECT",subtitle:"LIVE PERFORMANCE",actions:[["director","DIRECTOR CONTROL"],["cue-editor","CUE EDITOR"]]}
+  direct:{title:"DIRECT",subtitle:"LIVE PERFORMANCE",actions:[["director","DIRECTOR CONTROL"],["cue-editor","CUE EDITOR"],["reset-layout","RESET LAYOUT"]]}
 };
 
 function closeFoundationPanels(){
   addArtworkPanel?.classList.add("hidden");
   mediaManagerPanel.classList.add("hidden");
   directorPanel.classList.add("hidden");
+  cueFloatingPanel.classList.add("hidden");
   avatarSettingsPanel.hidden=true;
 }
 function openMediaManagerAt(target?:HTMLElement){
@@ -5871,8 +5882,9 @@ function runFoundationAction(action:string){
   if(action==="avatar"){avatarSettingsPanel.hidden=false;return;}
   if(action==="emote"){setMobileFoundationPanel("emote");return;}
   if(action==="flashlight"){flashlightButton.click();return;}
-  if(action==="director"){directorPanel.classList.remove("hidden");refreshDirectorPanel();return;}
-  if(action==="cue-editor"){openMediaManagerAt(mediaManagerPanel.querySelector<HTMLElement>(".cue-manager")!);return;}
+  if(action==="director"){if(compactMobileQuery.matches)cueFloatingPanel.classList.add("hidden");directorPanel.classList.remove("hidden");refreshDirectorPanel();bringFloatingPanelToFront(directorPanel);return;}
+  if(action==="cue-editor"){if(compactMobileQuery.matches)directorPanel.classList.add("hidden");cueFloatingPanel.classList.remove("hidden");bringFloatingPanelToFront(cueFloatingPanel);return;}
+  if(action==="reset-layout"){resetDirectorPanelLayout();return;}
 }
 function renderFoundationContext(){
   const copy=uiWorkspaceCopy[activeUIWorkspace];
@@ -5918,11 +5930,18 @@ uiFoundationStyle.textContent=`
   #uiContextActions{display:grid;gap:6px;margin-top:10px}#uiContextActions button{width:100%!important;min-height:38px;padding:8px 10px;border:1px solid #52697c;border-radius:9px;background:#0d1722;color:#fff;font-size:9px;font-weight:850;text-align:left;letter-spacing:.06em}#uiContextActions button:hover{border-color:#52d7ff;background:#132838}
   body[data-ui-workspace] #addArtworkButton,body[data-ui-workspace] #mediaManagerButton,body[data-ui-workspace] #directorButton,body[data-ui-workspace] #avatarSettingsButton{display:none!important}
   body[data-ui-workspace] #avatarControls{width:auto}body[data-ui-workspace] #flashlightButton{width:auto!important}
+  #cueFloatingPanel{position:fixed;z-index:82;width:min(360px,calc(100vw - 32px));max-height:calc(100vh - 100px);overflow:auto;box-sizing:border-box;padding:0 14px 14px;border:1px solid #ffb54a;border-radius:16px;background:rgba(20,14,7,.97);color:#fff;backdrop-filter:blur(16px);font-family:system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.3)}
+  #cueFloatingPanel.hidden{display:none!important}
+  .cue-floating-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(20,14,7,.99);border-bottom:1px solid rgba(255,181,74,.28);cursor:grab;touch-action:none}.cue-floating-header:active,.director-header:active{cursor:grabbing}.cue-floating-header>div{display:flex;flex-direction:column}.cue-floating-header strong{font-size:12px;letter-spacing:.08em}.cue-floating-header span{margin-top:3px;color:#d6b27e;font-size:8px;letter-spacing:.08em}.cue-floating-header button{width:36px!important;height:36px!important;border-radius:10px!important}
+  #cueFloatingPanel .cue-manager{margin:0!important}
+  .director-header.ui-drag-handle{position:sticky;top:-14px;z-index:4;margin:-14px -14px 10px;padding:14px;background:rgba(20,14,7,.99);cursor:grab;touch-action:none}
   @media (min-width:761px) and (pointer:fine){
     body[data-ui-workspace="avatar"] #avatarControls{display:block!important;position:fixed!important;top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;z-index:50!important;width:min(370px,calc(100vw - 270px))!important;height:auto!important}
     body[data-ui-workspace="avatar"] #avatarControls>#flashlightButton{display:none!important}
     body[data-ui-workspace="avatar"] #avatarSettingsPanel{display:block!important;width:100%!important;height:100%!important;max-height:none!important;margin:0!important;padding:16px!important;box-sizing:border-box!important;overflow-y:auto!important;overscroll-behavior:contain;border-color:#54718c!important;border-radius:16px!important;background:rgba(9,15,24,.96)!important;backdrop-filter:blur(16px)}
     body[data-ui-workspace="direct"] #directorPanel{display:block;position:fixed!important;top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;width:min(390px,calc(100vw - 270px))!important;max-height:none!important;overflow-y:auto!important;box-sizing:border-box!important}
+    body[data-ui-workspace="direct"] #directorPanel.ui-positioned{bottom:auto!important;max-height:calc(100vh - 100px)!important}
+    body[data-ui-workspace="direct"] #cueFloatingPanel.ui-positioned{right:auto!important;bottom:auto!important}
     body[data-ui-workspace="create"] #mediaManagerPanel,body[data-ui-workspace="world"] #mediaManagerPanel{top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;max-height:none!important}
   }
   .ui-mobile-sheet{display:none}
@@ -5934,10 +5953,68 @@ uiFoundationStyle.textContent=`
     body.mobile-compact.mobile-panel-actions #uiMobileActionSheet,body.mobile-compact.mobile-panel-menu #uiMobileMenuSheet{display:block;position:fixed;left:8px;right:8px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));z-index:69;padding:10px 10px 12px;box-sizing:border-box;border:1px solid rgba(120,160,195,.55);border-radius:15px;background:rgba(7,13,21,.96);backdrop-filter:blur(18px)}
     .ui-mobile-sheet-handle{width:38px;height:4px;margin:0 auto 10px;border-radius:4px;background:#667b8d}.ui-mobile-sheet>strong{display:block;margin:0 3px 9px;font-size:10px;letter-spacing:.1em}.ui-mobile-sheet-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.ui-mobile-sheet-grid button{min-height:48px!important;padding:7px 4px!important;border:1px solid #667f93!important;border-radius:10px!important;background:#0d1722!important;color:#fff!important;font-size:9px!important;font-weight:900!important}.ui-mobile-workspaces{grid-template-columns:repeat(3,1fr)}.ui-mobile-workspaces button.active{border-color:#52d7ff!important;background:#102638!important}.ui-mobile-workspaces small{display:block;margin-top:3px;color:#8fa8bb;font-size:8px}
     body.mobile-compact #mediaManagerPanel,body.mobile-compact #directorPanel{top:max(10px,env(safe-area-inset-top));bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));max-height:none}
+    body.mobile-compact #cueFloatingPanel{position:fixed!important;left:8px!important;right:8px!important;top:max(10px,env(safe-area-inset-top))!important;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px))!important;width:auto!important;max-height:none!important;padding-bottom:calc(18px + env(safe-area-inset-bottom))!important}
+    body.mobile-compact .cue-floating-header{cursor:default}
     body.mobile-compact #avatarSettingsPanel{position:fixed;left:8px;right:8px;top:max(74px,calc(env(safe-area-inset-top) + 58px));bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));z-index:65;width:auto;max-height:none;margin:0;padding-bottom:calc(18px + env(safe-area-inset-bottom))}
   }
 `;
 document.head.appendChild(uiFoundationStyle);
+
+const directorDragHeader=directorPanel.querySelector<HTMLElement>(".director-header")!;
+directorDragHeader.classList.add("ui-drag-handle");
+const FLOATING_PANEL_POSITION_KEY="shared-world-director-panel-layout-v1";
+let floatingPanelZ=82;
+type FloatingPosition={x:number;y:number};
+type FloatingLayout={director?:FloatingPosition;cue?:FloatingPosition};
+function bringFloatingPanelToFront(panel:HTMLElement){panel.style.zIndex=String(++floatingPanelZ);}
+function defaultFloatingLayout():FloatingLayout{
+  const directorWidth=Math.min(390,Math.max(300,window.innerWidth-270));
+  const cueWidth=Math.min(360,window.innerWidth-32);
+  const directorX=Math.max(8,window.innerWidth-directorWidth-16);
+  return {director:{x:directorX,y:84},cue:{x:Math.max(222,directorX-cueWidth-12),y:84}};
+}
+function readFloatingLayout():FloatingLayout{
+  try{return {...defaultFloatingLayout(),...JSON.parse(localStorage.getItem(FLOATING_PANEL_POSITION_KEY)||"{}")};}
+  catch{return defaultFloatingLayout();}
+}
+function applyFloatingPosition(panel:HTMLElement,position:FloatingPosition){
+  const fallbackWidth=panel===directorPanel?390:360;
+  const width=panel.getBoundingClientRect().width||fallbackWidth;
+  const height=panel.getBoundingClientRect().height||320;
+  const x=pc.math.clamp(Number(position.x)||8,8,Math.max(8,window.innerWidth-width-8));
+  const y=pc.math.clamp(Number(position.y)||84,8,Math.max(8,window.innerHeight-Math.min(height,window.innerHeight-16)-8));
+  panel.classList.add("ui-positioned");
+  panel.style.setProperty("left",`${x}px`,"important");panel.style.setProperty("top",`${y}px`,"important");
+  panel.style.setProperty("right","auto","important");panel.style.setProperty("bottom","auto","important");
+}
+function saveFloatingPanelLayout(){
+  if(compactMobileQuery.matches)return;
+  const directorRect=directorPanel.getBoundingClientRect(),cueRect=cueFloatingPanel.getBoundingClientRect();
+  const layout:FloatingLayout={director:{x:directorRect.left,y:directorRect.top},cue:{x:cueRect.left,y:cueRect.top}};
+  try{localStorage.setItem(FLOATING_PANEL_POSITION_KEY,JSON.stringify(layout));}catch{}
+}
+function restoreFloatingPanelLayout(){
+  if(compactMobileQuery.matches)return;const layout=readFloatingLayout();
+  applyFloatingPosition(directorPanel,layout.director!);applyFloatingPosition(cueFloatingPanel,layout.cue!);
+}
+function resetDirectorPanelLayout(){
+  try{localStorage.removeItem(FLOATING_PANEL_POSITION_KEY);}catch{}
+  restoreFloatingPanelLayout();uiSaveState.textContent="LAYOUT RESET";
+}
+function enableFloatingPanelDrag(panel:HTMLElement,handle:HTMLElement){
+  handle.addEventListener("pointerdown",event=>{
+    if(compactMobileQuery.matches||event.button!==0||(event.target as HTMLElement).closest("button,input,select"))return;
+    event.preventDefault();bringFloatingPanelToFront(panel);handle.setPointerCapture(event.pointerId);
+    const rect=panel.getBoundingClientRect(),offsetX=event.clientX-rect.left,offsetY=event.clientY-rect.top;
+    const move=(moveEvent:PointerEvent)=>applyFloatingPosition(panel,{x:moveEvent.clientX-offsetX,y:moveEvent.clientY-offsetY});
+    const finish=()=>{handle.removeEventListener("pointermove",move);saveFloatingPanelLayout();};
+    handle.addEventListener("pointermove",move);handle.addEventListener("pointerup",finish,{once:true});handle.addEventListener("pointercancel",finish,{once:true});
+  });
+  panel.addEventListener("pointerdown",()=>bringFloatingPanelToFront(panel));
+}
+enableFloatingPanelDrag(directorPanel,directorDragHeader);enableFloatingPanelDrag(cueFloatingPanel,cueFloatingHeader);
+window.addEventListener("resize",()=>requestAnimationFrame(restoreFloatingPanelLayout));
+restoreFloatingPanelLayout();
 document.body.dataset.uiWorkspace="view";renderFoundationContext();selectUIWorkspace("view");
 
 deleteManagedMediaButton.addEventListener("click", () => {

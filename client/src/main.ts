@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1 UI FOUNDATION LOADED]");
+console.log("[PROTOTYPE 0.21.1.1 RIGHT INSPECTOR LAYOUT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -5800,7 +5800,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.1</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -5918,6 +5918,13 @@ uiFoundationStyle.textContent=`
   #uiContextActions{display:grid;gap:6px;margin-top:10px}#uiContextActions button{width:100%!important;min-height:38px;padding:8px 10px;border:1px solid #52697c;border-radius:9px;background:#0d1722;color:#fff;font-size:9px;font-weight:850;text-align:left;letter-spacing:.06em}#uiContextActions button:hover{border-color:#52d7ff;background:#132838}
   body[data-ui-workspace] #addArtworkButton,body[data-ui-workspace] #mediaManagerButton,body[data-ui-workspace] #directorButton,body[data-ui-workspace] #avatarSettingsButton{display:none!important}
   body[data-ui-workspace] #avatarControls{width:auto}body[data-ui-workspace] #flashlightButton{width:auto!important}
+  @media (min-width:761px) and (pointer:fine){
+    body[data-ui-workspace="avatar"] #avatarControls{display:block!important;position:fixed!important;top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;z-index:50!important;width:min(370px,calc(100vw - 270px))!important;height:auto!important}
+    body[data-ui-workspace="avatar"] #avatarControls>#flashlightButton{display:none!important}
+    body[data-ui-workspace="avatar"] #avatarSettingsPanel{display:block!important;width:100%!important;height:100%!important;max-height:none!important;margin:0!important;padding:16px!important;box-sizing:border-box!important;overflow-y:auto!important;overscroll-behavior:contain;border-color:#54718c!important;border-radius:16px!important;background:rgba(9,15,24,.96)!important;backdrop-filter:blur(16px)}
+    body[data-ui-workspace="direct"] #directorPanel{display:block;position:fixed!important;top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;width:min(390px,calc(100vw - 270px))!important;max-height:none!important;overflow-y:auto!important;box-sizing:border-box!important}
+    body[data-ui-workspace="create"] #mediaManagerPanel,body[data-ui-workspace="world"] #mediaManagerPanel{top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;max-height:none!important}
+  }
   .ui-mobile-sheet{display:none}
   @media (max-width:760px),(pointer:coarse){
     #uiWorkspaceBar,#uiContextRail{display:none!important}

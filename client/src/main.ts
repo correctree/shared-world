@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.9.2 SERVER CLASSIFICATION LIST LOADED]");
+console.log("[PROTOTYPE 0.20.9.3 CUE TARGET SELECTION MEMORY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -5198,12 +5198,16 @@ type CueSummary={id:string;name:string;targetType:"scene"|"group"|"tag";target:s
 let cueSummaries:CueSummary[]=[];
 let cueTargetGroups:string[]=[];
 let cueTargetTags:string[]=[];
+let selectedCueGroupTarget="";
+let selectedCueTagTarget="";
 function refreshCueTargetUI(){
   const sceneTarget=cueTargetType.value==="scene";cueSceneTarget.classList.toggle("hidden",!sceneTarget);
   cueTextTarget.classList.toggle("hidden",sceneTarget);cueAction.disabled=sceneTarget;
   if(sceneTarget)cueAction.value="play";
   else {
-    const selected=cueTextTarget.dataset.pendingTarget||cueTextTarget.value;delete cueTextTarget.dataset.pendingTarget;
+    const selected=cueTextTarget.dataset.pendingTarget||
+      (cueTargetType.value==="group"?selectedCueGroupTarget:selectedCueTagTarget);
+    delete cueTextTarget.dataset.pendingTarget;
     const localValues=cueTargetType.value==="group"
       ?Array.from(mediaMetadata.values()).map(meta=>meta.groupName).filter(Boolean)
       :Array.from(mediaMetadata.values()).flatMap(meta=>meta.tags).filter(Boolean);
@@ -5211,8 +5215,14 @@ function refreshCueTargetUI(){
     values.sort((a,b)=>a.localeCompare(b));cueTextTarget.innerHTML='<option value="">SELECT TARGET</option>';
     for(const value of values){const option=document.createElement("option");option.value=value;option.textContent=value;cueTextTarget.appendChild(option);}
     if(values.includes(selected))cueTextTarget.value=selected;
+    if(cueTargetType.value==="group")selectedCueGroupTarget=cueTextTarget.value;
+    else selectedCueTagTarget=cueTextTarget.value;
   }
 }
+cueTextTarget.addEventListener("change",()=>{
+  if(cueTargetType.value==="group")selectedCueGroupTarget=cueTextTarget.value;
+  else if(cueTargetType.value==="tag")selectedCueTagTarget=cueTextTarget.value;
+});
 function refreshCueUI(){
   const selected=cueSelect.dataset.pendingSelection||cueSelect.value;delete cueSelect.dataset.pendingSelection;
   cueSelect.innerHTML='<option value="">NEW CUE</option>';
@@ -5230,7 +5240,11 @@ cueTargetType.addEventListener("change",refreshCueTargetUI);
 cueSelect.addEventListener("change",()=>{
   const cue=cueSummaries.find(item=>item.id===cueSelect.value);if(cue){
     cueNameInput.value=cue.name;cueTargetType.value=cue.targetType;cueAction.value=cue.action==="recall"?"play":cue.action;
-    if(cue.targetType==="scene")cueSceneTarget.value=cue.target;else cueTextTarget.dataset.pendingTarget=cue.target;
+    if(cue.targetType==="scene")cueSceneTarget.value=cue.target;
+    else {
+      cueTextTarget.dataset.pendingTarget=cue.target;
+      if(cue.targetType==="group")selectedCueGroupTarget=cue.target;else selectedCueTagTarget=cue.target;
+    }
   }refreshCueUI();
 });
 cueSaveButton.addEventListener("click",()=>{

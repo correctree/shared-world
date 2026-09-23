@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.8.1 LOCAL SCENE METADATA PERSISTENCE LOADED]");
+console.log("[PROTOTYPE 0.20.8.2 METADATA INPUT STABILITY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3466,6 +3466,7 @@ async function enterWorld() {
     room.onMessage("media:metadata:result",(payload:any)=>{
       if(room!==activeRoom)return;
       if(payload?.ok){
+        metadataEditorDirty=false;
         applyMediaMetadata(String(payload.id||""),payload);
         saveMediaMetadataButton.textContent="SAVED · ROOM + LOCAL";
         requestLocalWorldSave("GROUP / TAG");
@@ -5130,6 +5131,10 @@ const mediaTagsInput=mediaManagerPanel.querySelector<HTMLInputElement>("#mediaTa
 const saveMediaMetadataButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#saveMediaMetadataButton")!;
 const mediaGroupFilter=mediaManagerPanel.querySelector<HTMLSelectElement>("#mediaGroupFilter")!;
 const mediaTagFilter=mediaManagerPanel.querySelector<HTMLInputElement>("#mediaTagFilter")!;
+let metadataEditorDirty=false;
+let metadataEditorId:string|null=null;
+mediaGroupInput.addEventListener("input",()=>{metadataEditorDirty=true;});
+mediaTagsInput.addEventListener("input",()=>{metadataEditorDirty=true;});
 const sceneNameInput=mediaManagerPanel.querySelector<HTMLInputElement>("#sceneNameInput")!;
 const sceneSelect=mediaManagerPanel.querySelector<HTMLSelectElement>("#sceneSelect")!;
 const sceneSaveButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#sceneSaveButton")!;
@@ -5177,9 +5182,10 @@ sceneDeleteButton.addEventListener("click",()=>{
 function refreshMediaMetadataEditor(){
   const id=selectedManagedMediaId;const has=!!id&&managedPlacedMedia.has(id);
   mediaMetadataStatus.classList.toggle("hidden",has);mediaMetadataControls.classList.toggle("hidden",!has);
-  if(!has){mediaMetadataStatus.textContent="SELECT A MEDIA OBJECT";return;}
+  if(!has){metadataEditorId=null;metadataEditorDirty=false;mediaMetadataStatus.textContent="SELECT A MEDIA OBJECT";return;}
+  if(metadataEditorId!==id){metadataEditorId=id;metadataEditorDirty=false;}
   const meta=mediaMetadata.get(id!)||{groupName:"",tags:[]};
-  mediaGroupInput.value=meta.groupName;mediaTagsInput.value=meta.tags.join(", ");
+  if(!metadataEditorDirty){mediaGroupInput.value=meta.groupName;mediaTagsInput.value=meta.tags.join(", ");}
   saveMediaMetadataButton.disabled=!environmentCanEdit;
   saveMediaMetadataButton.textContent=environmentCanEdit?"SAVE GROUP / TAG":"ROOM OWNER ONLY";
 }
@@ -5481,6 +5487,7 @@ function refreshMediaManagerUI() {
       const metaLabel=button.querySelector<HTMLElement>(".media-manager-meta");
       if(metaLabel)metaLabel.textContent=[meta.groupName?`GROUP ${meta.groupName}`:"",...meta.tags.map(tag=>`#${tag}`)].filter(Boolean).join("  ")||"UNGROUPED";
       button.addEventListener("click", () => {
+        if(selectedManagedMediaId!==item.id)metadataEditorDirty=false;
         selectedManagedMediaId = item.id;
         refreshMediaManagerUI();
         window.setTimeout(() => behaviorEditor.scrollIntoView({ block: "start", behavior: "smooth" }), 0);

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.2 VIEW DOCK AND EDITOR INPUT FIX LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.3 PROVEN CONTROL PROXY AND AVATAR COMMIT FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1056,6 +1056,16 @@ function savedAvatarStyle() {
     heartCount:3,heartMotion:"float",heartSpeed:1,assetRef:""};}
 }
 let selectedAvatarAssetRef=savedAvatarStyle().assetRef;
+let localAvatarAppearanceOverride:ReturnType<typeof savedAvatarStyle>|null=null;
+function applyLocalAvatarAppearance(avatar:Avatar,appearance:ReturnType<typeof savedAvatarStyle>){
+  applyAvatarStyle(avatar,appearance.color,appearance.accent,appearance.shape,appearance.assetRef,
+    appearance.size,appearance.labelVisible,appearance.labelColor,appearance.textureRepeat,
+    appearance.textureRotation,appearance.part,appearance.partColor,appearance.haloColor,
+    appearance.haloOpacity,appearance.haloSize,appearance.haloMotion,appearance.haloSpeed,
+    appearance.haloShape,appearance.haloGlow,appearance.haloRings);
+  applyHeartStyle(avatar,appearance.heartColor,appearance.heartSize,appearance.heartCount,
+    appearance.heartMotion,appearance.heartSpeed);
+}
 async function uploadAvatarImage(blob:Blob) {
   const archive=new JSZip();archive.file("avatar.jpg",blob);
   const body=await archive.generateAsync({type:"blob",compression:"STORE"});
@@ -1212,16 +1222,9 @@ avatarSaveButton.addEventListener("click",()=>{
     assetRef:selectedAvatarAssetRef
   };
   try {localStorage.setItem(AVATAR_STYLE_KEY,JSON.stringify(appearance));} catch {}
+  localAvatarAppearanceOverride=appearance;
   const localAvatar=avatars.get(currentSessionId);
-  if(localAvatar){
-    applyAvatarStyle(localAvatar,appearance.color,appearance.accent,appearance.shape,appearance.assetRef,
-      appearance.size,appearance.labelVisible,appearance.labelColor,appearance.textureRepeat,
-      appearance.textureRotation,appearance.part,appearance.partColor,appearance.haloColor,
-      appearance.haloOpacity,appearance.haloSize,appearance.haloMotion,appearance.haloSpeed,
-      appearance.haloShape,appearance.haloGlow,appearance.haloRings);
-    applyHeartStyle(localAvatar,appearance.heartColor,appearance.heartSize,appearance.heartCount,
-      appearance.heartMotion,appearance.heartSpeed);
-  }
+  if(localAvatar)applyLocalAvatarAppearance(localAvatar,appearance);
   void sendSavedAvatarStyle(false,appearance);
   avatarSaveButton.textContent="APPLIED";
   window.setTimeout(()=>{avatarSaveButton.textContent="APPLY AVATAR";},1200);
@@ -2261,14 +2264,17 @@ function reconcileWorldFromServerState() {
   const playersMap:any=(activeRoom.state as any).players;
   playersMap?.forEach?.((player:any,sessionId:string)=>{
     const avatar=avatars.get(sessionId);
-    if(avatar) applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
-      player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
-      player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
-      player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
-      player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed,
-      player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
-    if(avatar) applyHeartStyle(avatar,player.avatarHeartColor,player.avatarHeartSize,
-      player.avatarHeartCount,player.avatarHeartMotion,player.avatarHeartSpeed);
+    if(avatar&&sessionId===currentSessionId&&localAvatarAppearanceOverride)applyLocalAvatarAppearance(avatar,localAvatarAppearanceOverride);
+    else if(avatar){
+      applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
+        player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
+        player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
+        player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
+        player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed,
+        player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
+      applyHeartStyle(avatar,player.avatarHeartColor,player.avatarHeartSize,
+        player.avatarHeartCount,player.avatarHeartMotion,player.avatarHeartSpeed);
+    }
     if(avatar) avatar.flying=player.avatarFlying===true;
   });
   const mediaMap: any = (activeRoom.state as any).mediaObjects;
@@ -3417,14 +3423,17 @@ async function enterWorld() {
         avatar.name = player.name;
         avatar.名前ラベル.textContent = player.name;
         avatar.entity.setEulerAngles(0, player.rotationY ?? 0, 0);
-        applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
-          player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
-          player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
-          player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
-          player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed,
-          player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
-        applyHeartStyle(avatar,player.avatarHeartColor,player.avatarHeartSize,
-          player.avatarHeartCount,player.avatarHeartMotion,player.avatarHeartSpeed);
+        if(sessionId===currentSessionId&&localAvatarAppearanceOverride)applyLocalAvatarAppearance(avatar,localAvatarAppearanceOverride);
+        else {
+          applyAvatarStyle(avatar,player.avatarColor,player.avatarAccent,
+            player.avatarShape,player.avatarAssetRef,player.avatarSize,player.avatarLabelVisible,
+            player.avatarLabelColor,player.avatarTextureRepeat,player.avatarTextureRotation,
+            player.avatarPart,player.avatarPartColor,player.avatarHaloColor,player.avatarHaloOpacity,
+            player.avatarHaloSize,player.avatarHaloMotion,player.avatarHaloSpeed,
+            player.avatarHaloShape,player.avatarHaloGlow,player.avatarHaloRings);
+          applyHeartStyle(avatar,player.avatarHeartColor,player.avatarHeartSize,
+            player.avatarHeartCount,player.avatarHeartMotion,player.avatarHeartSpeed);
+        }
         applyFlashlightState(avatar,player.avatarFlashlightOn===true);
         avatar.flying=player.avatarFlying===true;
       });
@@ -5913,34 +5922,46 @@ function createViewControlGroup(label:string,nodes:HTMLElement[]){
   const content=document.createElement("div");content.className="view-control-content";content.append(...nodes);
   group.append(heading,content);return group;
 }
-const voiceControlsNode=communicationControls.querySelector<HTMLElement>("#voiceControls")!;
+const dockView=document.createElement("button");dockView.type="button";dockView.className="dock-view";dockView.textContent=viewToggle.textContent||"3RD";
+dockView.addEventListener("click",()=>{viewToggle.click();dockView.textContent=viewToggle.textContent||"VIEW";dockView.classList.toggle("active",viewToggle.classList.contains("active"));dockView.blur();});
+
 const dockChat=document.createElement("div");dockChat.className="dock-chat";
 dockChat.innerHTML=`<input maxlength="48" placeholder="MESSAGE / EMOJI" aria-label="Message"><button type="button">SEND</button><div class="dock-quick"><button type="button">👋</button><button type="button">❤️</button><button type="button">✨</button><button type="button">😊</button></div>`;
 const dockChatInput=dockChat.querySelector<HTMLInputElement>("input")!;
-const sendDockMessage=()=>{sendAvatarMessage(dockChatInput.value);dockChatInput.value="";dockChatInput.blur();};
+const sendDockMessage=()=>{avatarMessageInput.value=dockChatInput.value;sendAvatarMessageButton.click();dockChatInput.value="";dockChatInput.blur();};
 dockChat.querySelector<HTMLButtonElement>(":scope>button")!.addEventListener("click",sendDockMessage);
 dockChatInput.addEventListener("keydown",event=>{if(event.key==="Enter"&&!event.isComposing){event.preventDefault();sendDockMessage();}});
-dockChat.querySelector<HTMLElement>(".dock-quick")!.addEventListener("click",event=>{const button=(event.target as HTMLElement).closest("button");if(button)sendAvatarMessage(button.textContent||"");});
+dockChat.querySelector<HTMLElement>(".dock-quick")!.addEventListener("click",event=>{const button=(event.target as HTMLElement).closest("button");if(button){avatarMessageInput.value=button.textContent||"";sendAvatarMessageButton.click();}});
+
+const dockVoice=document.createElement("div");dockVoice.className="dock-voice";
+dockVoice.innerHTML=`<button type="button">MIC OFF</button><select aria-label="Voice effect"></select><select aria-label="Voice volume"></select>`;
+const dockVoiceButton=dockVoice.querySelector<HTMLButtonElement>("button")!;
+const dockVoiceSelects=dockVoice.querySelectorAll<HTMLSelectElement>("select");
+dockVoiceSelects[0].innerHTML=voiceEffectSelect.innerHTML;dockVoiceSelects[0].value=voiceEffectSelect.value;
+dockVoiceSelects[1].innerHTML=voiceVolumeSelect.innerHTML;dockVoiceSelects[1].value=voiceVolumeSelect.value;
+dockVoiceButton.addEventListener("click",()=>{voiceToggleButton.click();window.setTimeout(()=>{dockVoiceButton.textContent=voiceToggleButton.textContent||"MIC";dockVoiceButton.classList.toggle("active",voiceToggleButton.classList.contains("active"));},0);});
+dockVoiceSelects[0].addEventListener("change",()=>{voiceEffectSelect.value=dockVoiceSelects[0].value;voiceEffectSelect.dispatchEvent(new Event("change",{bubbles:true}));dockVoiceSelects[0].blur();});
+dockVoiceSelects[1].addEventListener("change",()=>{voiceVolumeSelect.value=dockVoiceSelects[1].value;voiceVolumeSelect.dispatchEvent(new Event("change",{bubbles:true}));dockVoiceSelects[1].blur();});
 
 const dockPhoto=document.createElement("div");dockPhoto.className="dock-photo";
 dockPhoto.innerHTML=`<button type="button" data-photo-mode="selfie">SELFIE</button><button type="button" data-photo-mode="group">GROUP</button><select aria-label="Photo timer"><option value="0">TIMER OFF</option><option value="3">3 SEC</option><option value="10">10 SEC</option></select><button type="button" data-take-photo>PHOTO</button>`;
 const dockSelfie=dockPhoto.querySelector<HTMLButtonElement>('[data-photo-mode="selfie"]')!;
 const dockGroup=dockPhoto.querySelector<HTMLButtonElement>('[data-photo-mode="group"]')!;
 const dockPhotoTimer=dockPhoto.querySelector<HTMLSelectElement>("select")!;
-function refreshDockPhotoMode(){dockSelfie.classList.toggle("active",photoCameraMode==="selfie");dockGroup.classList.toggle("active",photoCameraMode==="group");}
-dockSelfie.addEventListener("click",()=>{setPhotoCameraMode("selfie");refreshDockPhotoMode();dockSelfie.blur();});
-dockGroup.addEventListener("click",()=>{setPhotoCameraMode("group");refreshDockPhotoMode();dockGroup.blur();});
-dockPhoto.querySelector<HTMLButtonElement>("[data-take-photo]")!.addEventListener("click",()=>{photoTimerSelect.value=dockPhotoTimer.value;void takeWorldPhoto();});
+function refreshDockPhotoMode(){dockSelfie.classList.toggle("active",selfieModeButton.classList.contains("active"));dockGroup.classList.toggle("active",groupPhotoModeButton.classList.contains("active"));}
+dockSelfie.addEventListener("click",()=>{selfieModeButton.click();refreshDockPhotoMode();dockSelfie.blur();});
+dockGroup.addEventListener("click",()=>{groupPhotoModeButton.click();refreshDockPhotoMode();dockGroup.blur();});
+dockPhoto.querySelector<HTMLButtonElement>("[data-take-photo]")!.addEventListener("click",()=>{photoTimerSelect.value=dockPhotoTimer.value;takeWorldPhotoButton.click();});
 
 const dockActions=document.createElement("div");dockActions.className="dock-actions";
 dockActions.innerHTML=`<button type="button" data-emote="wave">WAVE</button><button type="button" data-emote="joy">JOY</button><button type="button" data-emote="spin">SPIN</button>`;
-dockActions.addEventListener("click",event=>{const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button[data-emote]");if(activeRoom&&button?.dataset.emote)activeRoom.send("avatar:emote",{type:button.dataset.emote});button?.blur();});
+dockActions.addEventListener("click",event=>{const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button[data-emote]");const original=button?.dataset.emote?emoteControls.querySelector<HTMLButtonElement>(`button[data-emote="${button.dataset.emote}"]`):null;original?.click();button?.blur();});
 const dockLight=document.createElement("button");dockLight.type="button";dockLight.className="dock-light";dockLight.textContent="FLASHLIGHT OFF";
 dockLight.addEventListener("click",()=>{flashlightButton.click();dockLight.textContent=flashlightButton.textContent||"FLASHLIGHT";dockLight.classList.toggle("active",flashlightButton.classList.contains("active"));dockLight.blur();});
 viewControlDock.append(
-  createViewControlGroup("VIEW",[viewToggle]),
+  createViewControlGroup("VIEW",[dockView]),
   createViewControlGroup("CHAT",[dockChat]),
-  createViewControlGroup("VOICE",[voiceControlsNode]),
+  createViewControlGroup("VOICE",[dockVoice]),
   createViewControlGroup("PHOTO",[dockPhoto]),
   createViewControlGroup("ACTION",[dockActions]),
   createViewControlGroup("LIGHT",[dockLight])
@@ -6004,7 +6025,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.2</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.3</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -6132,7 +6153,7 @@ uiFoundationStyle.textContent=`
   .ui-context-heading{display:flex;flex-direction:column;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12)}.ui-context-heading strong{font-size:13px;letter-spacing:.08em}.ui-context-heading span{margin-top:4px;color:#8ea5b7;font-size:8px;letter-spacing:.08em}
   #uiContextActions{display:grid;gap:6px;margin-top:10px}#uiContextActions button{width:100%!important;min-height:38px;padding:8px 10px;border:1px solid #52697c;border-radius:9px;background:#0d1722;color:#fff;font-size:9px;font-weight:850;text-align:left;letter-spacing:.06em}#uiContextActions button:hover{border-color:#52d7ff;background:#132838}
   body[data-ui-workspace] #addArtworkButton,body[data-ui-workspace] #mediaManagerButton,body[data-ui-workspace] #directorButton,body[data-ui-workspace] #avatarSettingsButton{display:none!important}
-  body[data-ui-workspace] #avatarControls{width:auto}body[data-ui-workspace] #flashlightButton,body[data-ui-workspace] #emoteControls,body[data-ui-workspace] #communicationControls{display:none!important}
+  body[data-ui-workspace] #avatarControls{width:auto}body[data-ui-workspace] #viewToggle,body[data-ui-workspace] #flashlightButton,body[data-ui-workspace] #emoteControls,body[data-ui-workspace] #communicationControls{display:none!important}
   body[data-ui-workspace] #sharedStateDiagnosticPanel{display:none!important}
   #viewControlDock{display:none}
   .avatar-floating-header{position:sticky;top:-16px;z-index:4;display:flex;align-items:center;justify-content:space-between;margin:-16px -16px 12px;padding:13px 16px;background:rgba(9,15,24,.99);border-bottom:1px solid rgba(113,145,174,.45);cursor:grab;touch-action:none}.avatar-floating-header>div{display:flex;flex-direction:column}.avatar-floating-header strong{font-size:12px;letter-spacing:.08em}.avatar-floating-header span{margin-top:3px;color:#8fa8bb;font-size:8px;letter-spacing:.08em}.avatar-floating-header button{width:36px!important;height:36px!important;margin:0!important}
@@ -6147,7 +6168,7 @@ uiFoundationStyle.textContent=`
   .director-header.ui-drag-handle{position:sticky;top:-14px;z-index:4;margin:-14px -14px 10px;padding:14px;background:rgba(20,14,7,.99);cursor:grab;touch-action:none}
   @media (min-width:761px) and (pointer:fine){
     body[data-ui-workspace="view"] #viewControlDock.room-active{display:grid;position:fixed;left:16px;right:16px;bottom:16px;z-index:45;grid-template-columns:minmax(72px,.6fr) minmax(300px,2.1fr) minmax(220px,1.45fr) minmax(320px,1.9fr) minmax(190px,1.2fr) minmax(120px,.8fr);gap:6px;padding:7px;overflow-x:auto;box-sizing:border-box;border:1px solid rgba(120,150,175,.56);border-radius:15px;background:rgba(7,13,21,.93);backdrop-filter:blur(18px);box-shadow:0 14px 38px rgba(0,0,0,.25)}
-    .view-control-group{min-width:0;padding:6px 8px 7px;border:1px solid rgba(100,128,150,.34);border-radius:10px;background:rgba(12,21,31,.72)}.view-control-label{display:block;margin:0 0 5px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}.view-control-content{display:flex;align-items:center;gap:5px;min-height:38px}.view-control-content #voiceControls{display:flex!important;position:static!important;inset:auto!important;gap:4px;transform:none!important}.view-control-content #viewToggle{display:block!important;position:static!important;inset:auto!important;transform:none!important;width:100%!important;min-height:38px!important}.view-control-content button,.view-control-content select{min-height:36px!important;padding:7px 8px!important;white-space:nowrap}.view-control-content #voiceStatus{display:none}.dock-chat,.dock-photo,.dock-actions{width:100%;display:flex;align-items:center;gap:4px}.dock-chat>input{min-width:105px;flex:1;box-sizing:border-box;padding:9px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff}.dock-quick{display:flex;gap:3px}.dock-quick button{padding:6px!important}.dock-photo select{min-width:96px}.dock-actions button{flex:1;min-width:0}.dock-light{width:100%!important}.dock-light.active{border-color:#ffe08a!important;color:#ffe08a!important;box-shadow:0 0 14px rgba(255,224,138,.35)}
+    .view-control-group{min-width:0;padding:6px 8px 7px;border:1px solid rgba(100,128,150,.34);border-radius:10px;background:rgba(12,21,31,.72)}.view-control-label{display:block;margin:0 0 5px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}.view-control-content{display:flex;align-items:center;gap:5px;min-height:38px}.view-control-content button,.view-control-content select{min-height:36px!important;padding:7px 8px!important;white-space:nowrap}.dock-view,.dock-light{width:100%!important}.dock-chat,.dock-voice,.dock-photo,.dock-actions{width:100%;display:flex;align-items:center;gap:4px}.dock-chat>input{min-width:105px;flex:1;box-sizing:border-box;padding:9px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff}.dock-quick{display:flex;gap:3px}.dock-quick button{padding:6px!important}.dock-voice button{min-width:68px}.dock-voice select{min-width:0;flex:1}.dock-photo select{min-width:96px}.dock-actions button{flex:1;min-width:0}.dock-light.active{border-color:#ffe08a!important;color:#ffe08a!important;box-shadow:0 0 14px rgba(255,224,138,.35)}
     body[data-ui-workspace="avatar"] #avatarControls{display:block!important;position:fixed!important;top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;z-index:50!important;width:min(370px,calc(100vw - 270px))!important;height:auto!important}
     body[data-ui-workspace="avatar"] #avatarControls>#flashlightButton{display:none!important}
     body[data-ui-workspace="avatar"] #avatarSettingsPanel{display:block!important;width:100%!important;height:100%!important;max-height:none!important;margin:0!important;padding:16px!important;box-sizing:border-box!important;overflow-y:auto!important;overscroll-behavior:contain;border-color:#54718c!important;border-radius:16px!important;background:rgba(9,15,24,.96)!important;backdrop-filter:blur(16px)}
@@ -6166,7 +6187,7 @@ uiFoundationStyle.textContent=`
     #uiWorkspaceBar,#uiContextRail{display:none!important}
     #viewControlDock{display:none}
     body.mobile-compact.mobile-panel-chat #viewControlDock,body.mobile-compact.mobile-panel-photo #viewControlDock,body.mobile-compact.mobile-panel-emote #viewControlDock{display:flex;position:fixed;left:8px;right:8px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));z-index:68;padding:7px;box-sizing:border-box;border:1px solid rgba(120,160,195,.55);border-radius:15px;background:rgba(7,13,21,.96);backdrop-filter:blur(18px)}
-    body.mobile-compact #viewControlDock .view-control-group{display:none;width:100%}body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(2),body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(3),body.mobile-compact.mobile-panel-photo #viewControlDock .view-control-group:nth-child(4),body.mobile-compact.mobile-panel-emote #viewControlDock .view-control-group:nth-child(5){display:block}.view-control-label{display:block;margin-bottom:6px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}body.mobile-compact #viewControlDock .view-control-content{display:flex;flex-wrap:wrap;gap:4px}body.mobile-compact #viewControlDock #voiceControls{display:flex!important;position:static!important;inset:auto!important;transform:none!important;flex-wrap:wrap}body.mobile-compact .dock-chat,body.mobile-compact .dock-photo,body.mobile-compact .dock-actions{display:flex;flex-wrap:wrap}
+    body.mobile-compact #viewControlDock .view-control-group{display:none;width:100%}body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(2),body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(3),body.mobile-compact.mobile-panel-photo #viewControlDock .view-control-group:nth-child(4),body.mobile-compact.mobile-panel-emote #viewControlDock .view-control-group:nth-child(5){display:block}.view-control-label{display:block;margin-bottom:6px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}body.mobile-compact #viewControlDock .view-control-content{display:flex;flex-wrap:wrap;gap:4px}body.mobile-compact .dock-chat,body.mobile-compact .dock-voice,body.mobile-compact .dock-photo,body.mobile-compact .dock-actions{display:flex;flex-wrap:wrap}
     body.mobile-compact #avatarControls{display:none!important}
     body.mobile-compact[data-ui-workspace="avatar"] #avatarControls{display:block!important;position:static;width:0;height:0}
     body.mobile-compact[data-ui-workspace="avatar"] #avatarControls>#flashlightButton{display:none!important}

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.9 CUE SYSTEM LOADED]");
+console.log("[PROTOTYPE 0.20.9.1 CUE TARGET MATCH FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4554,7 +4554,7 @@ mediaManagerPanel.innerHTML = `
     <input id="cueNameInput" maxlength="32" placeholder="CUE NAME">
     <select id="cueTargetType"><option value="scene">SCENE</option><option value="group">GROUP</option><option value="tag">TAG</option></select>
     <select id="cueSceneTarget"></select>
-    <input id="cueTextTarget" maxlength="32" class="hidden" placeholder="GROUP / TAG NAME">
+    <select id="cueTextTarget" class="hidden"><option value="">SELECT TARGET</option></select>
     <select id="cueAction"><option value="play">PLAY</option><option value="stop">STOP</option><option value="move">MOVE</option><option value="rotate">ROTATE</option><option value="scale">SCALE</option><option value="float">FLOAT</option><option value="orbit">ORBIT</option><option value="shake">SHAKE</option></select>
     <div class="cue-actions"><button id="cueSaveButton" type="button">SAVE</button><button id="cueFireButton" type="button">FIRE</button><button id="cueDeleteButton" type="button">DELETE</button></div>
     <div id="cueStatus">No cues saved.</div>
@@ -5186,7 +5186,7 @@ const cueSelect=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueSelect")
 const cueNameInput=mediaManagerPanel.querySelector<HTMLInputElement>("#cueNameInput")!;
 const cueTargetType=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueTargetType")!;
 const cueSceneTarget=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueSceneTarget")!;
-const cueTextTarget=mediaManagerPanel.querySelector<HTMLInputElement>("#cueTextTarget")!;
+const cueTextTarget=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueTextTarget")!;
 const cueAction=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueAction")!;
 const cueSaveButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueSaveButton")!;
 const cueFireButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueFireButton")!;
@@ -5198,6 +5198,15 @@ function refreshCueTargetUI(){
   const sceneTarget=cueTargetType.value==="scene";cueSceneTarget.classList.toggle("hidden",!sceneTarget);
   cueTextTarget.classList.toggle("hidden",sceneTarget);cueAction.disabled=sceneTarget;
   if(sceneTarget)cueAction.value="play";
+  else {
+    const selected=cueTextTarget.dataset.pendingTarget||cueTextTarget.value;delete cueTextTarget.dataset.pendingTarget;
+    const values=cueTargetType.value==="group"
+      ?Array.from(new Set(Array.from(mediaMetadata.values()).map(meta=>meta.groupName).filter(Boolean)))
+      :Array.from(new Set(Array.from(mediaMetadata.values()).flatMap(meta=>meta.tags).filter(Boolean)));
+    values.sort((a,b)=>a.localeCompare(b));cueTextTarget.innerHTML='<option value="">SELECT TARGET</option>';
+    for(const value of values){const option=document.createElement("option");option.value=value;option.textContent=value;cueTextTarget.appendChild(option);}
+    if(values.includes(selected))cueTextTarget.value=selected;
+  }
 }
 function refreshCueUI(){
   const selected=cueSelect.dataset.pendingSelection||cueSelect.value;delete cueSelect.dataset.pendingSelection;
@@ -5216,12 +5225,12 @@ cueTargetType.addEventListener("change",refreshCueTargetUI);
 cueSelect.addEventListener("change",()=>{
   const cue=cueSummaries.find(item=>item.id===cueSelect.value);if(cue){
     cueNameInput.value=cue.name;cueTargetType.value=cue.targetType;cueAction.value=cue.action==="recall"?"play":cue.action;
-    if(cue.targetType==="scene")cueSceneTarget.value=cue.target;else cueTextTarget.value=cue.target;
+    if(cue.targetType==="scene")cueSceneTarget.value=cue.target;else cueTextTarget.dataset.pendingTarget=cue.target;
   }refreshCueUI();
 });
 cueSaveButton.addEventListener("click",()=>{
   if(!activeRoom||!environmentCanEdit)return;const targetType=cueTargetType.value;
-  const target=targetType==="scene"?cueSceneTarget.value:cueTextTarget.value.trim();const name=cueNameInput.value.trim();
+  const target=targetType==="scene"?cueSceneTarget.value:cueTextTarget.value;const name=cueNameInput.value.trim();
   if(!name||!target){cueStatus.textContent="CUE name and target are required.";return;}
   activeRoom.send("cue:save",{id:cueSelect.value,name,targetType,target,action:cueAction.value});cueStatus.textContent="Saving cue…";
 });
@@ -5585,6 +5594,7 @@ function refreshMediaManagerUI() {
   editManagedMediaButton.disabled = !hasSelection;
   deleteManagedMediaButton.disabled = !hasSelection;
   refreshMediaMetadataEditor();
+  refreshCueTargetUI();
   refreshBehaviorEditorUI();
 }
 

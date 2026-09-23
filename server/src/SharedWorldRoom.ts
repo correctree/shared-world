@@ -521,6 +521,17 @@ export class SharedWorldRoom extends Room<WorldState> {
       let target=String(payload?.target||"").trim().slice(0,80);
       let action=String(payload?.action||"");
       if(targetType==="scene")action="recall";
+      if(targetType==="group"){
+        const requested=this.cleanMediaGroup(target).toLocaleLowerCase();
+        target=Array.from(this.state.mediaObjects.values()).map(media=>media.groupName)
+          .find(group=>!!group&&group.toLocaleLowerCase()===requested)||"";
+      } else if(targetType==="tag"){
+        const requested=this.cleanMediaTags(target).split(",")[0]?.toLocaleLowerCase()||"";
+        let canonical="";
+        for(const media of this.state.mediaObjects.values())for(const tag of media.tags.split(","))
+          if(tag.trim().toLocaleLowerCase()===requested){canonical=tag.trim();break;}
+        target=canonical;
+      }
       if(!name||!["scene","group","tag"].includes(targetType)||!target||
         (targetType==="scene"?!this.scenes.has(target):!validActions.includes(action))){
         client.send("cue:result",{ok:false,operation:"save",reason:"invalid-cue"});return;

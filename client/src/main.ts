@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5 ARTWORK HIERARCHY INSPECTOR LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.1 UI ACTION REGRESSION FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1210,8 +1210,19 @@ avatarSaveButton.addEventListener("click",()=>{
     assetRef:selectedAvatarAssetRef
   };
   try {localStorage.setItem(AVATAR_STYLE_KEY,JSON.stringify(appearance));} catch {}
+  const localAvatar=avatars.get(currentSessionId);
+  if(localAvatar){
+    applyAvatarStyle(localAvatar,appearance.color,appearance.accent,appearance.shape,appearance.assetRef,
+      appearance.size,appearance.labelVisible,appearance.labelColor,appearance.textureRepeat,
+      appearance.textureRotation,appearance.part,appearance.partColor,appearance.haloColor,
+      appearance.haloOpacity,appearance.haloSize,appearance.haloMotion,appearance.haloSpeed,
+      appearance.haloShape,appearance.haloGlow,appearance.haloRings);
+    applyHeartStyle(localAvatar,appearance.heartColor,appearance.heartSize,appearance.heartCount,
+      appearance.heartMotion,appearance.heartSpeed);
+  }
   void sendSavedAvatarStyle(false,appearance);
-  avatarSettingsPanel.hidden=true;
+  avatarSaveButton.textContent="APPLIED";
+  window.setTimeout(()=>{avatarSaveButton.textContent="APPLY AVATAR";},1200);
 });
 const flyButton=flightControls.querySelector<HTMLButtonElement>("#flyButton")!;
 function setFlightMode(enabled:boolean) {
@@ -3469,7 +3480,18 @@ async function enterWorld() {
     });
     room.onMessage("media:visibility",(payload:any)=>{
       const id=String(payload?.id||"");const item=managedPlacedMedia.get(id);
+      pendingMediaVisibility.delete(id);
       if(item)item.entity.enabled=payload?.visible!==false;
+      refreshMediaManagerUI();
+    });
+    room.onMessage("media:visibility:result",(payload:any)=>{
+      if(room!==activeRoom)return;
+      const id=String(payload?.id||"");
+      if(payload?.ok!==true){
+        pendingMediaVisibility.delete(id);
+        const item=managedPlacedMedia.get(id);if(item)item.entity.enabled=payload?.visible!==false;
+        console.warn("[MEDIA VISIBILITY REJECTED]",id,String(payload?.reason||"unknown"));
+      }
       refreshMediaManagerUI();
     });
 
@@ -4565,6 +4587,7 @@ let editingManagedMediaId: string | null = null;
 let selectedArtworkInspector: HTMLElement | null = null;
 let selectedArtworkInspectorTitle: HTMLElement | null = null;
 let selectedArtworkInspectorMeta: HTMLElement | null = null;
+const pendingMediaVisibility=new Map<string,boolean>();
 
 // Prototype 0.11 / Stage 3 / MEDIA OBJECT MANAGER
 // The panel is created at runtime so index.html/style.css do not need replacing.
@@ -5729,7 +5752,7 @@ function refreshMediaManagerUI() {
       });
       const actions=document.createElement("div");actions.className="media-row-actions";
       const visibility=document.createElement("button");visibility.type="button";visibility.className="media-row-visibility";
-      const authoritative:any=getAuthoritativeMediaMap()?.get?.(item.id);const isVisible=authoritative?.visible!==false;
+      const authoritative:any=getAuthoritativeMediaMap()?.get?.(item.id);const isVisible=pendingMediaVisibility.has(item.id)?pendingMediaVisibility.get(item.id)!:authoritative?.visible!==false;
       visibility.textContent=isVisible?"👁 SHOW":"⊘ HIDDEN";visibility.setAttribute("aria-pressed",String(isVisible));
       visibility.addEventListener("click",()=>setManagedMediaVisibility(item.id,!isVisible));
       const edit=document.createElement("button");edit.type="button";edit.textContent="EDIT";edit.addEventListener("click",()=>{selectedManagedMediaId=item.id;refreshMediaManagerUI();editManagedMediaButton.click();});
@@ -5758,10 +5781,11 @@ function refreshMediaManagerUI() {
 }
 
 function setManagedMediaVisibility(id:string,visible:boolean){
-  const item=managedPlacedMedia.get(id),source:any=getAuthoritativeMediaMap()?.get?.(id);if(!item||!activeRoom)return;
+  const item=managedPlacedMedia.get(id);if(!item||!activeRoom)return;
+  pendingMediaVisibility.set(id,visible);
   item.entity.enabled=visible;
-  const position=item.entity.getPosition(),rotation=item.entity.getEulerAngles(),scale=item.entity.getLocalScale().x;
-  activeRoom.send("media:update",{id,x:Number(source?.x??position.x),y:Number(source?.y??position.y),z:Number(source?.z??position.z),rotationX:Number(source?.rotationX??rotation.x),rotationY:Number(source?.rotationY??rotation.y),rotationZ:Number(source?.rotationZ??rotation.z),scale:Number(source?.scale??scale),visible});
+  activeRoom.send("media:visibility:set",{id,visible});
+  refreshMediaManagerUI();
 }
 
 function disposePlacedRuntime(id: string) {
@@ -5937,7 +5961,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.1</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -6014,7 +6038,7 @@ function runFoundationAction(action:string){
   if(action==="groups"){openMediaManagerAt(selectedArtworkInspector||mediaManagerList);return;}
   if(action==="environment"){openWorldWorkspaceAt(environmentEditor);return;}
   if(action==="scenes"){openWorldWorkspaceAt(sceneManagerPanel);return;}
-  if(action==="avatar"){avatarSettingsPanel.hidden=false;return;}
+  if(action==="avatar"){avatarSettingsPanel.hidden=false;avatarSettingsPanel.scrollTop=0;return;}
   if(action==="emote"){setMobileFoundationPanel("emote");return;}
   if(action==="flashlight"){flashlightButton.click();return;}
   if(action==="director"){if(compactMobileQuery.matches)cueFloatingPanel.classList.add("hidden");directorPanel.classList.remove("hidden");refreshDirectorPanel();bringFloatingPanelToFront(directorPanel);return;}
@@ -6033,7 +6057,7 @@ function selectUIWorkspace(workspace:UIFoundationWorkspace){
   for(const button of uiFoundationRoot.querySelectorAll<HTMLButtonElement>("[data-workspace]"))button.classList.toggle("active",button.dataset.workspace===workspace);
   if(workspace==="create")openMediaManagerAt(mediaManagerList);
   else if(workspace==="world")openWorldWorkspaceAt(environmentEditor);
-  else if(workspace==="avatar"){avatarSettingsPanel.hidden=false;bringFloatingPanelToFront(avatarControls);}
+  else if(workspace==="avatar"){avatarSettingsPanel.hidden=false;avatarSettingsPanel.scrollTop=0;bringFloatingPanelToFront(avatarControls);}
   else if(workspace==="direct"){directorPanel.classList.remove("hidden");refreshDirectorPanel();}
   uiSaveState.textContent=workspace.toUpperCase();
   if(document.body.classList.contains("mobile-compact"))setMobileFoundationPanel("");

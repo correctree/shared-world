@@ -642,6 +642,27 @@ export class SharedWorldRoom extends Room<WorldState> {
     });
 
 
+    // Prototype 0.21.1.5.1: visibility is a dedicated operation. It must not
+    // depend on transform validation, and the room owner may curate visibility
+    // even when an artwork was originally uploaded by another participant.
+    this.onMessage("media:visibility:set",(client:Client,payload:any)=>{
+      const id=String(payload?.id||"").trim().slice(0,80);
+      const media=this.state.mediaObjects.get(id);
+      const player=this.state.players.get(client.sessionId);
+      const ownsMedia=!!media&&(
+        media.ownerSessionId===client.sessionId||
+        (!!media.ownerClientId&&!!player?.clientId&&media.ownerClientId===player.clientId)
+      );
+      const authorized=ownsMedia||this.canEditEnvironment(client,false);
+      if(!media||!authorized){
+        client.send("media:visibility:result",{id,ok:false,visible:media?.visible!==false,reason:media?"not-authorized":"media-not-found"});
+        return;
+      }
+      media.visible=payload?.visible!==false;
+      this.broadcast("media:visibility",{id,visible:media.visible});
+      client.send("media:visibility:result",{id,ok:true,visible:media.visible});
+    });
+
     this.onMessage("media:update", (client: Client, payload: UpdateMediaPayload) => {
       const id = String(payload?.id || "").trim().slice(0, 80);
       const media = this.state.mediaObjects.get(id);

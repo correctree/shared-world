@@ -45,6 +45,8 @@ export const SharedMediaObject = schema({
   fallbackRef: t.string().default(""),
   ownerSessionId: t.string().default(""),
   ownerClientId: t.string().default(""),
+  groupName: t.string().default(""),
+  tags: t.string().default(""),
   x: t.number().default(0),
   y: t.number().default(1.8),
   z: t.number().default(-3),

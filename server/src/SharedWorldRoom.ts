@@ -17,6 +17,8 @@ type AddMediaPayload = {
   rotationY?: number;
   rotationZ?: number;
   scale?: number;
+  groupName?: string;
+  tags?: string;
 };
 
 type UpdateMediaPayload = {
@@ -73,6 +75,20 @@ export class SharedWorldRoom extends Room<WorldState> {
       canEdit:this.canEditEnvironment(item,false),
       ownerPresent
     });
+  }
+  private cleanMediaGroup(value:unknown) {
+    return String(value ?? "").trim().replace(/\s+/g," ").slice(0,32);
+  }
+  private cleanMediaTags(value:unknown) {
+    const source=Array.isArray(value)?value.join(","):String(value ?? "");
+    const seen=new Set<string>();const tags:string[]=[];
+    for(const raw of source.split(/[,，]/)) {
+      const tag=raw.trim().replace(/^#+/,"").replace(/\s+/g," ").slice(0,24);
+      const key=tag.toLocaleLowerCase();
+      if(tag&&!seen.has(key)){seen.add(key);tags.push(tag);}
+      if(tags.length>=8)break;
+    }
+    return tags.join(",").slice(0,199);
   }
   private cleanEnvironment(input:any) {
     if (!input || typeof input!=="object") return null;
@@ -372,6 +388,8 @@ export class SharedWorldRoom extends Room<WorldState> {
         fallbackRef: String(payload?.fallbackRef || "").slice(0, 240),
         ownerSessionId: client.sessionId,
         ownerClientId: this.state.players.get(client.sessionId)?.clientId || "",
+        groupName: this.cleanMediaGroup(payload?.groupName),
+        tags: this.cleanMediaTags(payload?.tags),
         x: Math.max(-this.worldLimit(), Math.min(this.worldLimit(), x)),
         y: Math.max(-10, Math.min(20, y)),
         z: Math.max(-this.worldLimit(), Math.min(this.worldLimit(), z)),
@@ -383,6 +401,24 @@ export class SharedWorldRoom extends Room<WorldState> {
 
       console.log("[media:add stored]", id, "total:", this.state.mediaObjects.size);
       this.mediaBehaviors.set(id, { trigger:"user-proximity", distance:3, enterAction:"play", leaveAction:"stop", enabled:true });
+    });
+
+    // 0.20.7 / GROUP + TAG metadata. The room environment owner curates the
+    // classification used by future CUE and external-control systems.
+    this.onMessage("media:metadata",(client:Client,payload:any)=>{
+      const id=String(payload?.id||"").trim().slice(0,80);
+      const media=this.state.mediaObjects.get(id);
+      if(!media){client.send("media:metadata:result",{id,ok:false,reason:"media-not-found"});return;}
+      if(!this.canEditEnvironment(client,true)){
+        client.send("media:metadata:result",{id,ok:false,reason:"owner-locked"});
+        this.sendEnvironmentPermissions(client);return;
+      }
+      media.groupName=this.cleanMediaGroup(payload?.groupName);
+      media.tags=this.cleanMediaTags(payload?.tags);
+      const metadata={id,groupName:media.groupName,tags:media.tags};
+      this.broadcast("media:metadata",metadata);
+      client.send("media:metadata:result",{...metadata,ok:true});
+      this.sendEnvironmentPermissions();
     });
 
     this.onMessage("media:behavior", (client: Client, payload: any) => {
@@ -527,6 +563,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           type: media.type,
           assetRef: media.assetRef,
           fallbackRef: media.fallbackRef,
+          groupName: media.groupName, tags: media.tags,
           x: media.x, y: media.y, z: media.z,
           rotationX: media.rotationX, rotationY: media.rotationY, rotationZ: media.rotationZ, scale: media.scale,
           behavior: this.mediaBehaviors.get(id) || null
@@ -567,6 +604,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       const mediaObjects = Array.from(this.state.mediaObjects, ([id, media]) => ({
         id, title: media.title, type: media.type, assetRef: media.assetRef,
         fallbackRef: media.fallbackRef, x: media.x, y: media.y, z: media.z,
+        groupName:media.groupName, tags:media.tags,
         rotationX: media.rotationX, rotationY: media.rotationY, rotationZ: media.rotationZ, scale: media.scale,
         behavior: this.mediaBehaviors.get(id) || null
       }));
@@ -629,6 +667,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           title:item.title, type:item.type, assetRef:item.assetRef,
           fallbackRef:item.fallbackRef, ownerSessionId:client.sessionId,
           ownerClientId:player.clientId,
+          groupName:this.cleanMediaGroup(item.groupName), tags:this.cleanMediaTags(item.tags),
           x:bounded(x,0,-importLimit,importLimit), y:bounded(y,1.8,-10,20),
           z:bounded(z,-3,-importLimit,importLimit), rotationX, rotationY, rotationZ,
           scale:bounded(scale,1,.05,20)

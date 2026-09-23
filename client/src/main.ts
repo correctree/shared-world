@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.20.6.1 MID-SLOPE EXIT RELEASE LOADED]");
+console.log("[PROTOTYPE 0.20.7 GROUP TAG MANAGEMENT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -2535,6 +2535,7 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
 }
 
 function updateSharedSpritePlaceholder(mediaId: string, media: any) {
+  applyMediaMetadata(mediaId,media);
   const item = managedPlacedMedia.get(mediaId);
   if (!item || editingManagedMediaId === mediaId) return;
   const values = [media.x,media.y,media.z,media.rotationX??(item.kind==="glb"||item.kind==="audio"?0:90),media.rotationY,media.rotationZ??0,media.scale].map(Number);
@@ -2600,6 +2601,7 @@ function removeSharedMediaLifecycle(mediaId: string, reason = "server-remove") {
   catch (error) { console.warn("[SHARED MEDIA XR UNREGISTER ERROR]", mediaId, error); }
 
   managedPlacedMedia.delete(mediaId);
+  mediaMetadata.delete(mediaId);
   sharedRemoteMediaIds.delete(mediaId);
   if (selectedManagedMediaId === mediaId) selectedManagedMediaId = null;
   refreshMediaManagerUI();
@@ -3394,6 +3396,7 @@ async function enterWorld() {
     const sharedMedia = $(room.state as any).mediaObjects;
 
     sharedMedia.onAdd((media: any, mediaId: string) => {
+      applyMediaMetadata(mediaId,media);
       sharedStateDiagnostic.onAdd += 1;
       sharedStateDiagnostic.lastMediaId = mediaId;
       refreshSharedStateDiagnosticPanel();
@@ -3432,6 +3435,20 @@ async function enterWorld() {
     room.onMessage("media:config", (payload:any) => {
       const mediaId=String(payload?.id||""); const assetRef=String(payload?.assetRef||"");
       if(mediaId && assetRef) applyLiveAudioConfig(mediaId,assetRef);
+    });
+
+    room.onMessage("media:metadata",(payload:any)=>{
+      const id=String(payload?.id||"");if(id)applyMediaMetadata(id,payload);
+    });
+    room.onMessage("media:metadata:result",(payload:any)=>{
+      if(room!==activeRoom)return;
+      if(payload?.ok){
+        applyMediaMetadata(String(payload.id||""),payload);
+        saveMediaMetadataButton.textContent="SAVED";
+        window.setTimeout(refreshMediaMetadataEditor,700);
+      } else {
+        saveMediaMetadataButton.textContent=payload?.reason==="owner-locked"?"ROOM OWNER ONLY":"SAVE FAILED";
+      }
     });
 
     room.onMessage("media:transform", (payload:any) => {
@@ -3518,6 +3535,7 @@ async function enterWorld() {
       for (const media of list) {
         const mediaId = String(media?.id || "");
         if (!mediaId) continue;
+        applyMediaMetadata(mediaId,media);
         authoritativeIds.add(mediaId);
         if (media?.behavior) applySharedBehavior(mediaId,media.behavior);
         if (!managedPlacedMedia.has(mediaId) && !sharedMediaLoadingIds.has(mediaId)) {
@@ -3991,6 +4009,25 @@ type ManagedPlacedMedia = {
   entity: pc.Entity;
 };
 
+type MediaMetadata = { groupName:string; tags:string[] };
+const mediaMetadata = new Map<string,MediaMetadata>();
+function normalizeMediaMetadata(source:any):MediaMetadata {
+  const groupName=String(source?.groupName??"").trim().replace(/\s+/g," ").slice(0,32);
+  const raw=Array.isArray(source?.tags)?source.tags.join(","):String(source?.tags??"");
+  const seen=new Set<string>();const tags:string[]=[];
+  for(const part of raw.split(/[,，]/)){
+    const tag=part.trim().replace(/^#+/,"").replace(/\s+/g," ").slice(0,24);
+    const key=tag.toLocaleLowerCase();
+    if(tag&&!seen.has(key)){seen.add(key);tags.push(tag);}
+    if(tags.length>=8)break;
+  }
+  return {groupName,tags};
+}
+function applyMediaMetadata(id:string,source:any) {
+  const next=normalizeMediaMetadata(source);mediaMetadata.set(id,next);
+  if(typeof refreshMediaManagerUI==="function")refreshMediaManagerUI();
+}
+
 // 0.17 / World manifest UI (server-authored export; additive import).
 const worldManifestControls = document.createElement("div");
 worldManifestControls.style.cssText = "display:flex;flex-wrap:wrap;gap:8px;margin:12px 0";
@@ -4439,6 +4476,20 @@ mediaManagerPanel.innerHTML = `
     <strong>MEDIA OBJECTS</strong>
     <button id="closeMediaManagerButton" type="button">×</button>
   </div>
+  <div id="mediaMetadataEditor" class="media-metadata-editor">
+    <div class="behavior-editor-title">GROUP / TAG</div>
+    <div id="mediaMetadataStatus" class="behavior-editor-status">SELECT A MEDIA OBJECT</div>
+    <div id="mediaMetadataControls" class="hidden">
+      <label class="metadata-row"><span>GROUP</span><input id="mediaGroupInput" maxlength="32" placeholder="e.g. MAIN STAGE"></label>
+      <label class="metadata-row"><span>TAG</span><input id="mediaTagsInput" maxlength="199" placeholder="light, sculpture, cue-a"></label>
+      <div class="metadata-help">Comma-separated · up to 8 tags</div>
+      <button id="saveMediaMetadataButton" type="button">SAVE GROUP / TAG</button>
+    </div>
+  </div>
+  <div class="media-filter-bar">
+    <select id="mediaGroupFilter"><option value="">ALL GROUPS</option></select>
+    <input id="mediaTagFilter" maxlength="24" placeholder="FILTER TAG">
+  </div>
   <div id="behaviorEditor" class="behavior-editor">
     <div class="behavior-editor-title">INTERACTIVE BEHAVIOR CORE</div>
     <div id="behaviorEditorStatus" class="behavior-editor-status">SELECT A MEDIA OBJECT</div>
@@ -4674,6 +4725,7 @@ function applyEnvironmentPermissions(payload:any) {
   for(const control of environmentEditor.querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLButtonElement>("input,select,button"))
     control.disabled=!environmentCanEdit;
   environmentEditor.style.opacity=environmentCanEdit?"1":".72";
+  refreshMediaMetadataEditor();
 }
 customParticleInput.addEventListener("change",async()=>{
   if(!environmentCanEdit)return;
@@ -4901,6 +4953,15 @@ mediaManagerStyle.textContent = `
   .media-manager-kind { opacity:.62; font-size:10px; font-weight:800; }
   .media-manager-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   .media-manager-empty { opacity:.55; padding:18px 6px; text-align:center; font-size:12px; }
+  .media-metadata-editor { margin:0 0 12px;padding:12px;border:1px solid #9a6ee8;border-radius:12px;background:#151124; }
+  .media-metadata-editor .hidden { display:none!important; }
+  .metadata-row { display:grid;grid-template-columns:58px 1fr;align-items:center;gap:8px;margin:8px 0;font-size:11px; }
+  .metadata-row input,.media-filter-bar input,.media-filter-bar select { min-width:0;box-sizing:border-box;padding:8px;border:1px solid #4a5260;border-radius:8px;background:#111720;color:#fff; }
+  .metadata-help { margin:4px 0 9px 66px;font-size:9px;opacity:.55; }
+  #saveMediaMetadataButton { width:100%!important;min-height:40px; }
+  .media-filter-bar { display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px; }
+  .media-manager-title-wrap { min-width:0;display:grid;gap:4px; }
+  .media-manager-meta { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:#ba9cff; }
   .behavior-editor {
     display:block !important; visibility:visible !important; opacity:1 !important;
     margin:0 0 12px; padding:12px; border:1px solid #3f6fa8; border-radius:12px;
@@ -4989,6 +5050,31 @@ const closeMediaManagerButton = mediaManagerPanel.querySelector<HTMLButtonElemen
 const mediaManagerList = mediaManagerPanel.querySelector<HTMLElement>("#mediaManagerList")!;
 const editManagedMediaButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#editManagedMediaButton")!;
 const deleteManagedMediaButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#deleteManagedMediaButton")!;
+const mediaMetadataStatus=mediaManagerPanel.querySelector<HTMLElement>("#mediaMetadataStatus")!;
+const mediaMetadataControls=mediaManagerPanel.querySelector<HTMLElement>("#mediaMetadataControls")!;
+const mediaGroupInput=mediaManagerPanel.querySelector<HTMLInputElement>("#mediaGroupInput")!;
+const mediaTagsInput=mediaManagerPanel.querySelector<HTMLInputElement>("#mediaTagsInput")!;
+const saveMediaMetadataButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#saveMediaMetadataButton")!;
+const mediaGroupFilter=mediaManagerPanel.querySelector<HTMLSelectElement>("#mediaGroupFilter")!;
+const mediaTagFilter=mediaManagerPanel.querySelector<HTMLInputElement>("#mediaTagFilter")!;
+
+function refreshMediaMetadataEditor(){
+  const id=selectedManagedMediaId;const has=!!id&&managedPlacedMedia.has(id);
+  mediaMetadataStatus.classList.toggle("hidden",has);mediaMetadataControls.classList.toggle("hidden",!has);
+  if(!has){mediaMetadataStatus.textContent="SELECT A MEDIA OBJECT";return;}
+  const meta=mediaMetadata.get(id!)||{groupName:"",tags:[]};
+  mediaGroupInput.value=meta.groupName;mediaTagsInput.value=meta.tags.join(", ");
+  saveMediaMetadataButton.disabled=!environmentCanEdit;
+  saveMediaMetadataButton.textContent=environmentCanEdit?"SAVE GROUP / TAG":"ROOM OWNER ONLY";
+}
+saveMediaMetadataButton.addEventListener("click",()=>{
+  if(!activeRoom||!selectedManagedMediaId||!environmentCanEdit)return;
+  const meta=normalizeMediaMetadata({groupName:mediaGroupInput.value,tags:mediaTagsInput.value});
+  activeRoom.send("media:metadata",{id:selectedManagedMediaId,groupName:meta.groupName,tags:meta.tags.join(",")});
+  saveMediaMetadataButton.textContent="SAVING…";
+});
+mediaGroupFilter.addEventListener("change",refreshMediaManagerUI);
+mediaTagFilter.addEventListener("input",refreshMediaManagerUI);
 
 // Prototype 0.12.3 / BEHAVIOR EDITOR
 const behaviorEditor = mediaManagerPanel.querySelector<HTMLElement>("#behaviorEditor")!;
@@ -5251,7 +5337,16 @@ behaviorTestLeave.addEventListener("click", (event) => {
 
 function refreshMediaManagerUI() {
   mediaManagerList.innerHTML = "";
-  const objects = Array.from(managedPlacedMedia.values());
+  const groups=Array.from(new Set(Array.from(mediaMetadata.values()).map(v=>v.groupName).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
+  const previousGroup=mediaGroupFilter.value;
+  mediaGroupFilter.innerHTML='<option value="">ALL GROUPS</option>';
+  for(const group of groups){const option=document.createElement("option");option.value=group;option.textContent=group;mediaGroupFilter.appendChild(option);}
+  if(groups.includes(previousGroup))mediaGroupFilter.value=previousGroup;
+  const groupFilter=mediaGroupFilter.value;const tagFilter=mediaTagFilter.value.trim().toLocaleLowerCase();
+  const objects = Array.from(managedPlacedMedia.values()).filter(item=>{
+    const meta=mediaMetadata.get(item.id)||{groupName:"",tags:[]};
+    return (!groupFilter||meta.groupName===groupFilter)&&(!tagFilter||meta.tags.some(tag=>tag.toLocaleLowerCase().includes(tagFilter)));
+  });
 
   if (objects.length === 0) {
     const empty = document.createElement("div");
@@ -5263,9 +5358,12 @@ function refreshMediaManagerUI() {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "media-manager-item" + (item.id === selectedManagedMediaId ? " selected" : "");
-      button.innerHTML = `<span class="media-manager-kind">${String(index + 1).padStart(2, "0")} ${item.kind.toUpperCase()}</span><span class="media-manager-title"></span>`;
+      button.innerHTML = `<span class="media-manager-kind">${String(index + 1).padStart(2, "0")} ${item.kind.toUpperCase()}</span><span class="media-manager-title-wrap"><span class="media-manager-title"></span><span class="media-manager-meta"></span></span>`;
       const title = button.querySelector<HTMLElement>(".media-manager-title");
       if (title) title.textContent = item.title;
+      const meta=mediaMetadata.get(item.id)||{groupName:"",tags:[]};
+      const metaLabel=button.querySelector<HTMLElement>(".media-manager-meta");
+      if(metaLabel)metaLabel.textContent=[meta.groupName?`GROUP ${meta.groupName}`:"",...meta.tags.map(tag=>`#${tag}`)].filter(Boolean).join("  ")||"UNGROUPED";
       button.addEventListener("click", () => {
         selectedManagedMediaId = item.id;
         refreshMediaManagerUI();
@@ -5278,6 +5376,7 @@ function refreshMediaManagerUI() {
   const hasSelection = !!selectedManagedMediaId && managedPlacedMedia.has(selectedManagedMediaId);
   editManagedMediaButton.disabled = !hasSelection;
   deleteManagedMediaButton.disabled = !hasSelection;
+  refreshMediaMetadataEditor();
   refreshBehaviorEditorUI();
 }
 

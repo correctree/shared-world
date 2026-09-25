@@ -518,11 +518,13 @@ export class SharedWorldRoom extends Room<WorldState> {
       const name=String(payload?.name||"").trim().replace(/\s+/g," ").slice(0,32);
       if(!name){client.send("scene:result",{ok:false,action:"save",reason:"name-required"});return;}
       let id=String(payload?.id||"").trim().slice(0,80);
-      if(id&&!this.scenes.has(id))id="";
+      if(id&&!this.scenes.has(id)&&!/^scene-client-[a-z0-9-]{8,64}$/.test(id))id="";
       if(!id&&this.scenes.size>=12){client.send("scene:result",{ok:false,action:"save",reason:"scene-limit"});return;}
       if(!id)id=`scene-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
-      this.scenes.set(id,this.captureScene(id,name));
-      client.send("scene:result",{ok:true,action:"save",id,name});this.sendSceneList();this.sendEnvironmentPermissions();
+      const scene=this.captureScene(id,name);this.scenes.set(id,scene);
+      client.send("scene:result",{ok:true,action:"save",id,name,updatedAt:scene.updatedAt,
+        objectCount:Object.keys(scene.media).length});
+      this.sendSceneList();this.sendEnvironmentPermissions();
     });
     this.onMessage("scene:recall",(client:Client,payload:any)=>{
       if(!this.canDirect(client)){

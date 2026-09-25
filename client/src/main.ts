@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.8 PROXIMITY ENTER LATCH LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.9 SCENE SAVE RECOVERY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3552,6 +3552,9 @@ async function enterWorld() {
       sceneSummaries=Array.isArray(payload?.scenes)?payload.scenes.map((scene:any)=>({
         id:String(scene.id||""),name:String(scene.name||"Scene"),updatedAt:Number(scene.updatedAt)||0,objectCount:Number(scene.objectCount)||0
       })).filter((scene:SceneSummary)=>!!scene.id):[];
+      if(pendingSceneSave&&sceneSummaries.some(scene=>scene.id===pendingSceneSave!.id)){
+        const confirmedName=pendingSceneSave.name;clearPendingSceneSave();sceneStatus.textContent=`SAVED · ${confirmedName}`;
+      }
       refreshSceneUI();
       refreshDirectorPanel();
     });
@@ -3601,10 +3604,16 @@ async function enterWorld() {
     });
     room.onMessage("scene:result",(payload:any)=>{
       if(room!==activeRoom)return;
+      if(payload?.action==="save")clearPendingSceneSave();
       if(!payload?.ok){sceneStatus.textContent=`Scene ${String(payload?.action||"")} failed: ${String(payload?.reason||"unknown")}`;return;}
       sceneStatus.textContent=payload.action==="recall"?`Recalled ${String(payload.name||"scene")} · ${Number(payload.count)||0} objects`:
         payload.action==="delete"?"Scene deleted.":`Saved ${String(payload.name||"scene")}`;
-      if(payload.action==="save"&&payload.id)sceneSelect.dataset.pendingSelection=String(payload.id);
+      if(payload.action==="save"&&payload.id){
+        const saved:SceneSummary={id:String(payload.id),name:String(payload.name||"Scene"),
+          updatedAt:Number(payload.updatedAt)||Date.now(),objectCount:Number.isFinite(Number(payload.objectCount))?Number(payload.objectCount):lastSnapshotMediaCount};
+        sceneSummaries=[saved,...sceneSummaries.filter(scene=>scene.id!==saved.id)];
+        sceneSelect.dataset.pendingSelection=saved.id;refreshSceneUI();refreshDirectorPanel();
+      }
       if(payload.action!=="recall")room.send("scene:list:request",{});
       requestLocalWorldSave(`SCENE ${String(payload.action||"").toUpperCase()}`);
     });
@@ -5513,6 +5522,15 @@ cueFireButton.addEventListener("click",()=>{if(activeRoom&&directorCanDirect&&cu
 cueDeleteButton.addEventListener("click",()=>{if(activeRoom&&environmentCanEdit&&cueSelect.value&&window.confirm("Delete this cue?"))activeRoom.send("cue:delete",{id:cueSelect.value});});
 type SceneSummary={id:string;name:string;updatedAt:number;objectCount:number};
 let sceneSummaries:SceneSummary[]=[];
+type PendingSceneSave={id:string;name:string};
+let pendingSceneSave:PendingSceneSave|null=null;
+let sceneSaveRetryTimer:number|null=null;
+let sceneSaveWatchdog:number|null=null;
+function clearPendingSceneSave(){
+  if(sceneSaveRetryTimer!==null){window.clearTimeout(sceneSaveRetryTimer);sceneSaveRetryTimer=null;}
+  if(sceneSaveWatchdog!==null){window.clearTimeout(sceneSaveWatchdog);sceneSaveWatchdog=null;}
+  pendingSceneSave=null;
+}
 function refreshSceneUI(){
   const selected=sceneSelect.dataset.pendingSelection||sceneSelect.value;delete sceneSelect.dataset.pendingSelection;
   sceneSelect.innerHTML='<option value="">NEW SCENE</option>';
@@ -5539,7 +5557,17 @@ sceneSelect.addEventListener("change",()=>{
 sceneSaveButton.addEventListener("click",()=>{
   if(!activeRoom||!environmentCanEdit)return;const name=sceneNameInput.value.trim();
   if(!name){sceneStatus.textContent="Enter a scene name.";return;}
-  activeRoom.send("scene:save",{id:sceneSelect.value,name});sceneStatus.textContent="Saving scene…";
+  clearPendingSceneSave();
+  pendingSceneSave={id:sceneSelect.value||`scene-client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,name};
+  activeRoom.send("scene:save",pendingSceneSave);sceneStatus.textContent="Saving scene…";
+  sceneSaveRetryTimer=window.setTimeout(()=>{
+    sceneSaveRetryTimer=null;if(!activeRoom||!pendingSceneSave)return;
+    activeRoom.send("scene:save",pendingSceneSave);sceneStatus.textContent="Retrying scene save…";
+  },1800);
+  sceneSaveWatchdog=window.setTimeout(()=>{
+    sceneSaveWatchdog=null;if(!activeRoom||!pendingSceneSave)return;
+    activeRoom.send("scene:list:request",{});sceneStatus.textContent="SERVER PENDING · CHECKING SCENE LIST";
+  },5000);
 });
 sceneRecallButton.addEventListener("click",()=>{
   if(activeRoom&&environmentCanEdit&&sceneSelect.value){activeRoom.send("scene:recall",{id:sceneSelect.value});sceneStatus.textContent="Recalling scene…";}
@@ -6130,7 +6158,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.8</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.9</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

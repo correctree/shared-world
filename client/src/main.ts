@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.10 ROOM CONNECTION RECOVERY LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.11 INPUT STATE RECOVERY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1600,6 +1600,25 @@ function resetJoystick() {
   joystickPointerId = null;
   joystickKnob.style.transform = "translate(-50%, -50%)";
 }
+
+// A pointer/key release can be lost while the lobby is closing, Safari changes
+// focus, or a room reconnect replaces the active socket. Always return every
+// continuous input to neutral before gameplay resumes.
+function resetContinuousInputState() {
+  keys.clear();
+  resetJoystick();
+  mobileAscend=false;
+  mobileDescend=false;
+  jumpRequested=false;
+  verticalVelocity=0;
+  cameraDragging=false;
+  cameraPointerId=null;
+}
+
+window.addEventListener("blur",resetContinuousInputState);
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden)resetContinuousInputState();
+});
 
 joystick.addEventListener("pointerdown", (e) => {
   joystickPointerId = e.pointerId;
@@ -3347,6 +3366,7 @@ function scheduleRoomRecovery(room:Room,reason:string){
 async function enterWorld() {
   if(worldJoinInProgress||pageIsLeaving)return;
   worldJoinInProgress=true;
+  resetContinuousInputState();
   if(roomRecoveryTimer!==null){window.clearTimeout(roomRecoveryTimer);roomRecoveryTimer=null;}
   if(voiceEnabled)disableVoice(false);
   directorCanDirect=false;directorCanManage=false;directorParticipants=[];directorPanel.classList.add("hidden");refreshDirectorPanel();
@@ -3402,6 +3422,7 @@ async function enterWorld() {
     latestMoveAck=0;
     lastSentMove={x:NaN,y:NaN,z:NaN,rotationY:NaN,flying:false};
     room.onMessage("move:ack",(ack:any) => {
+      if(room!==activeRoom)return;
       const seq=Number(ack?.seq);
       if (!Number.isSafeInteger(seq) || seq<=latestMoveAck) return;
       latestMoveAck=seq;
@@ -6199,7 +6220,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.10</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.11</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

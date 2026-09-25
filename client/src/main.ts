@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.11 INPUT STATE RECOVERY LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.12 TRUE IDLE STATE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -6220,7 +6220,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.11</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.12</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -8232,8 +8232,12 @@ app.on("update", (dt: number) => {
     const moving=speed>.08;
     const airborne=position.y>.72;
     const avatarFlying=sessionId===currentSessionId?flying:avatar.flying;
-    avatar.motionPhase+=dt*(moving?9:2.2);
-    const breath=1+Math.sin(avatar.motionPhase)*.018;
+    const emoteActive=avatar.emoteType!=="none";
+    const visibleMotion=moving||avatarFlying||emoteActive;
+    if(visibleMotion)avatar.motionPhase+=dt*(moving?9:2.2);
+    // A stopped avatar must be visually still. Previous builds continuously
+    // scaled the body and moved antenna parts even with no movement input.
+    const breath=visibleMotion?1+Math.sin(avatar.motionPhase)*.018:1;
     const bob=moving&&!airborne?Math.abs(Math.sin(avatar.motionPhase))*.055:0;
     const emoteDuration=avatar.emoteType==="wave"?1.4:avatar.emoteType==="joy"?1.05:1.15;
     let emoteProgress=(performance.now()-avatar.emoteStartedAt)/(emoteDuration*1000);
@@ -8246,7 +8250,7 @@ app.on("update", (dt: number) => {
     avatar.body.setLocalPosition(0,avatar.baseBodyY+bob+joyLift,0);
     avatar.body.setLocalScale(
       avatar.baseScale.x*breath*joyScale,
-      avatar.baseScale.y*(1+Math.sin(avatar.motionPhase)*.025)*joyScale,
+      avatar.baseScale.y*(visibleMotion?1+Math.sin(avatar.motionPhase)*.025:1)*joyScale,
       avatar.baseScale.z*breath*joyScale
     );
     const spinY=emote==="spin"?emoteProgress*360:0;
@@ -8281,9 +8285,9 @@ app.on("update", (dt: number) => {
       else if(part.name==="AvatarWingRight") part.setLocalEulerAngles(0,18,
         25+(avatarFlying||emote==="joy"?Math.sin(avatar.motionPhase*1.8)*18:0));
       else if(part.name==="AvatarAntennaStem") part.setLocalEulerAngles(0,0,
-        Math.sin(avatar.motionPhase)*4);
+        visibleMotion?Math.sin(avatar.motionPhase)*4:0);
       else if(part.name==="AvatarAntennaTip") part.setLocalPosition(
-        Math.sin(avatar.motionPhase)*.07,1.5,0);
+        visibleMotion?Math.sin(avatar.motionPhase)*.07:0,1.5,0);
     }
     avatar.lastMotionPosition.copy(position);
     if(sessionId!==currentSessionId)

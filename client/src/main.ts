@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.6 DIRECT AND BEHAVIOR RECOVERY LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.7 ENTER ACTION RECOVERY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -6128,7 +6128,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.6</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.7</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -7713,11 +7713,12 @@ function dispatchSharedXRBehaviorAction(object: any, action: string | undefined,
 
   const behavior = object.behavior?.[0];
   const params = getBehaviorTransformParams(behavior);
-  // Other triggers execute locally; proximity actions use the shared occupancy
-  // decision so one player's exit cannot stop another player's animation.
-  // Proximity PLAY/STOP is decided from all connected players on the server.
-  // A local leave must not stop a Sprite while another player remains nearby.
-  if (!activeRoom || !source.startsWith("user-proximity-"))
+  // Transform Enter Actions need immediate local feedback. PLAY / STOP remain
+  // server-arbitrated so one player's exit cannot stop media while another
+  // participant is still inside the proximity area.
+  const waitsForSharedOccupancy=source.startsWith("user-proximity-")&&
+    (actionId==="play"||actionId==="stop");
+  if (!activeRoom || !waitsForSharedOccupancy)
     runXRBehaviorAction(object, actionId, params);
 
   if (!activeRoom) return;
@@ -7762,11 +7763,15 @@ function updateSharedProximityBehaviors() {
 
     if (previous === undefined) {
       sharedProximityState.set(object.id, isInside);
+      if(isInside)dispatchSharedXRBehaviorAction(object,behavior.enterAction,"user-proximity-enter");
       continue;
     }
 
     if (isInside !== previous) {
       sharedProximityState.set(object.id, isInside);
+      dispatchSharedXRBehaviorAction(object,
+        isInside?behavior.enterAction:behavior.leaveAction,
+        isInside?"user-proximity-enter":"user-proximity-leave");
     }
   }
 }

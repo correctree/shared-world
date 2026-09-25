@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.12 TRUE IDLE STATE LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.13 ROOM SESSION STABILITY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3871,7 +3871,14 @@ async function enterWorld() {
     }, 250);
     sharedWorldReconcileTimer = window.setInterval(() => {
       if(room!==activeRoom)return;
-      if(Date.now()-lastRoomPongAt>12000){scheduleRoomRecovery(room,"ROOM HEARTBEAT TIMEOUT");return;}
+      // A missing application-level pong is diagnostic only. Colyseus already
+      // reports a real transport loss through onLeave/onError. Rejoining on a
+      // delayed pong created false leave/join cycles and random respawns.
+      if(Date.now()-lastRoomPongAt>12000){
+        sharedStateDiagnostic.connection="DEGRADED";
+        sharedStateDiagnostic.lastError="ROOM HEARTBEAT DELAYED";
+        refreshSharedStateDiagnosticPanel();
+      }
       room.send("room:ping",{at:Date.now()});
       reconcileWorldFromServerState();
       requestLiveMediaSnapshot();
@@ -6220,7 +6227,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.12</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.13</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

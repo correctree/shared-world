@@ -273,8 +273,8 @@ export class SharedWorldRoom extends Room<WorldState> {
     }
   }
   // Transport headroom is intentionally larger than the UI's logical 4-user target.
-  // It prevents a stale mobile WebSocket from forcing joinOrCreate() into a second room
-  // before the server can de-duplicate the returning client.
+  // Each transport session owns only its own player state. A new connection must
+  // never delete another live session merely because localStorage clientId matches.
   maxClients = 12;
   autoDispose = false;
   state = new WorldState();
@@ -995,19 +995,6 @@ export class SharedWorldRoom extends Room<WorldState> {
     const radius = 1.8 + Math.random() * 1.5;
     const safeName = String(options.name || "Guest").trim().slice(0, 16) || "Guest";
     const clientId = String(options.clientId || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
-
-    // Authoritative session replacement:
-    // a reload/re-entry from the same browser identity immediately removes
-    // the previous avatar state, even if Safari's old socket has not closed yet.
-    if (clientId) {
-      for (const [oldSessionId, oldPlayer] of this.state.players) {
-        if (oldSessionId !== client.sessionId && oldPlayer.clientId === clientId) {
-          this.leaveProximity(oldSessionId);
-          this.state.players.delete(oldSessionId);
-          console.log("[SESSION REPLACED]", clientId, oldSessionId, "->", client.sessionId);
-        }
-      }
-    }
 
     this.state.players.set(client.sessionId, new Player({
       name: safeName,

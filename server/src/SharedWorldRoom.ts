@@ -282,6 +282,12 @@ export class SharedWorldRoom extends Room<WorldState> {
   onCreate(options: { roomCode?: string }) {
     this.setMetadata({ roomCode: String(options.roomCode || "ART001").toUpperCase() });
 
+    // Lightweight application heartbeat. This detects a Render restart or a
+    // half-open browser socket before authoring commands silently time out.
+    this.onMessage("room:ping",(client:Client,payload:any)=>{
+      client.send("room:pong",{at:Number(payload?.at)||Date.now(),serverAt:Date.now()});
+    });
+
     // Prototype 0.14.7.1
     // Register messages explicitly so custom message types such as
     // "media:add" are guaranteed to reach this Room on Colyseus 0.18.

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.9 SCENE SAVE RECOVERY LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.10 ROOM CONNECTION RECOVERY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -968,6 +968,11 @@ function destroyResonancePair(key:string) {
 const keys = new Set<string>();
 let currentSessionId = "";
 let activeRoom: Room | null = null;
+let worldJoinInProgress=false;
+let intentionalRoomLeave=false;
+let pageIsLeaving=false;
+let roomRecoveryTimer:number|null=null;
+let lastRoomPongAt=0;
 const LOCAL_WORLD_BACKUP_PREFIX="shared-world-local-backup-v1:";
 let pendingLocalWorldSave=false;
 let pendingLocalWorldSaveReason="";
@@ -3325,7 +3330,24 @@ function resetClientWorldForReentry() {
 // ENTER WORLD
 // =========================================================
 
+function scheduleRoomRecovery(room:Room,reason:string){
+  if(pageIsLeaving||intentionalRoomLeave||activeRoom!==room)return;
+  console.warn("[ROOM CONNECTION RECOVERY]",reason,room.sessionId);
+  activeRoom=null;currentSessionId="";
+  sharedStateDiagnostic.connection="RECOVERING";sharedStateDiagnostic.lastError=reason;
+  refreshSharedStateDiagnosticPanel();
+  status.textContent="ROOM接続を回復しています…";
+  if(sharedWorldReconcileTimer!==null){window.clearInterval(sharedWorldReconcileTimer);sharedWorldReconcileTimer=null;}
+  if(roomRecoveryTimer!==null)window.clearTimeout(roomRecoveryTimer);
+  roomRecoveryTimer=window.setTimeout(()=>{
+    roomRecoveryTimer=null;if(!pageIsLeaving)void enterWorld();
+  },1200);
+}
+
 async function enterWorld() {
+  if(worldJoinInProgress||pageIsLeaving)return;
+  worldJoinInProgress=true;
+  if(roomRecoveryTimer!==null){window.clearTimeout(roomRecoveryTimer);roomRecoveryTimer=null;}
   if(voiceEnabled)disableVoice(false);
   directorCanDirect=false;directorCanManage=false;directorParticipants=[];directorPanel.classList.add("hidden");refreshDirectorPanel();
   applyEnvironmentPermissions({canEdit:false,locked:false,ownerPresent:false});
@@ -3334,6 +3356,7 @@ async function enterWorld() {
   status.textContent = "接続しています…";
 
   if (activeRoom) {
+    intentionalRoomLeave=true;
     try {
       console.log("[SESSION REENTRY] leaving previous room", activeRoom.sessionId);
       await activeRoom.leave(true);
@@ -3342,6 +3365,7 @@ async function enterWorld() {
     }
     activeRoom = null;
     currentSessionId = "";
+    intentionalRoomLeave=false;
   }
   resetClientWorldForReentry();
   setFlightMode(false);jumpRequested=false;
@@ -3362,6 +3386,17 @@ async function enterWorld() {
     const client = new Client(SERVER_URL);
     const room = await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
     activeRoom = room;
+    lastRoomPongAt=Date.now();
+    room.onMessage("room:pong",()=>{
+      if(room!==activeRoom)return;
+      lastRoomPongAt=Date.now();
+      if(sharedStateDiagnostic.connection!=="OPEN"){
+        sharedStateDiagnostic.connection="OPEN";sharedStateDiagnostic.lastError="-";refreshSharedStateDiagnosticPanel();
+      }
+    });
+    room.onLeave((code:number)=>scheduleRoomRecovery(room,`ROOM LEFT · ${code}`));
+    room.onError((code:number,message:string)=>scheduleRoomRecovery(room,`ROOM ERROR · ${code} · ${message}`));
+    room.send("room:ping",{at:Date.now()});
     localAutoRestoreAttempted=false;lastSnapshotMediaCount=-1;
     currentSessionId = room.sessionId;
     latestMoveAck=0;
@@ -3814,6 +3849,9 @@ async function enterWorld() {
       requestLiveMediaSnapshot();
     }, 250);
     sharedWorldReconcileTimer = window.setInterval(() => {
+      if(room!==activeRoom)return;
+      if(Date.now()-lastRoomPongAt>12000){scheduleRoomRecovery(room,"ROOM HEARTBEAT TIMEOUT");return;}
+      room.send("room:ping",{at:Date.now()});
       reconcileWorldFromServerState();
       requestLiveMediaSnapshot();
     }, 5000);
@@ -3835,10 +3873,13 @@ async function enterWorld() {
     console.error(error);
     status.textContent = `接続失敗: ${error instanceof Error ? error.message : String(error)}`;
     enterButton.disabled = false;
+  } finally {
+    worldJoinInProgress=false;
   }
 }
 
 window.addEventListener("pagehide", () => {
+  pageIsLeaving=true;
   sharedStateDiagnostic.connection = "CLOSED";
   refreshSharedStateDiagnosticPanel();
   if (sharedWorldReconcileTimer !== null) {
@@ -6158,7 +6199,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.9</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.10</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

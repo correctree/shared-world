@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.7 ENTER ACTION RECOVERY LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.8 PROXIMITY ENTER LATCH LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -2627,6 +2627,7 @@ function applySharedBehavior(mediaId:string, behavior:any) {
   object.behavior=[{id:"proximity-play",...behavior}];
   pendingSharedBehaviors.delete(mediaId);
   sharedProximityState.delete(mediaId);
+  proximityEnterLatched.delete(mediaId);
   if (selectedManagedMediaId===mediaId) refreshBehaviorEditorUI();
 }
 
@@ -2634,6 +2635,7 @@ function removeSharedMediaLifecycle(mediaId: string, reason = "server-remove") {
   pendingSharedMediaTransforms.delete(mediaId);
   pendingSharedBehaviors.delete(mediaId);
   appliedSharedBehaviorSignatures.delete(mediaId);
+  proximityEnterLatched.delete(mediaId);
   console.log("[SHARED MEDIA CLEANUP START]", mediaId, reason);
   bumpSharedMediaGeneration(mediaId);
   sharedMediaLoadingIds.delete(mediaId);
@@ -6128,7 +6130,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.7</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.8</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -7733,6 +7735,9 @@ function dispatchSharedXRBehaviorAction(object: any, action: string | undefined,
 }
 
 const sharedProximityState = new Map<string, boolean>();
+// Separate the action edge from the display state. Reconciliation and editor
+// refreshes may restore an ACTIVE display, but must never consume Enter Action.
+const proximityEnterLatched = new Map<string, boolean>();
 function updateSharedProximityBehaviors() {
   for (const object of xrMediaManager.list()) {
     const behavior = object.behavior?.find(
@@ -7740,6 +7745,7 @@ function updateSharedProximityBehaviors() {
     );
     if (!behavior || !object.entity || !object.entity.enabled) {
       sharedProximityState.delete(object.id);
+      proximityEnterLatched.delete(object.id);
       continue;
     }
 
@@ -7761,17 +7767,16 @@ function updateSharedProximityBehaviors() {
       behaviorStatus.textContent = isInside ? "PROXIMITY / ACTIVE" : "PROXIMITY / OUTSIDE";
     }
 
-    if (previous === undefined) {
-      sharedProximityState.set(object.id, isInside);
-      if(isInside)dispatchSharedXRBehaviorAction(object,behavior.enterAction,"user-proximity-enter");
-      continue;
-    }
-
-    if (isInside !== previous) {
-      sharedProximityState.set(object.id, isInside);
-      dispatchSharedXRBehaviorAction(object,
-        isInside?behavior.enterAction:behavior.leaveAction,
-        isInside?"user-proximity-enter":"user-proximity-leave");
+    sharedProximityState.set(object.id,isInside);
+    const enterWasExecuted=proximityEnterLatched.get(object.id)===true;
+    if(isInside&&!enterWasExecuted){
+      proximityEnterLatched.set(object.id,true);
+      dispatchSharedXRBehaviorAction(object,behavior.enterAction,"user-proximity-enter");
+      console.log("[PROXIMITY ENTER ACTION]",object.id,behavior.enterAction);
+    } else if(!isInside&&enterWasExecuted){
+      proximityEnterLatched.set(object.id,false);
+      dispatchSharedXRBehaviorAction(object,behavior.leaveAction,"user-proximity-leave");
+      console.log("[PROXIMITY LEAVE ACTION]",object.id,behavior.leaveAction);
     }
   }
 }

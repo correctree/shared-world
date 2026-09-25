@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.5 STABILITY RECOVERY LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.6 DIRECT AND BEHAVIOR RECOVERY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3560,14 +3560,27 @@ async function enterWorld() {
       cueSummaries=Array.isArray(payload?.cues)?payload.cues.map((cue:any)=>({
         id:String(cue.id||""),name:String(cue.name||"Cue"),targetType:String(cue.targetType||"scene") as CueSummary["targetType"],
         target:String(cue.target||""),action:String(cue.action||"play"),updatedAt:Number(cue.updatedAt)||0
-      })).filter((cue:CueSummary)=>!!cue.id):[];refreshCueUI();refreshDirectorPanel();
+      })).filter((cue:CueSummary)=>!!cue.id):[];
+      if(pendingCueSave&&cueSummaries.some(cue=>cue.name===pendingCueSave.name&&cue.targetType===pendingCueSave.targetType&&
+        cue.target===pendingCueSave.target&&cue.action===(pendingCueSave.targetType==="scene"?"recall":pendingCueSave.action))){
+        const confirmedName=pendingCueSave.name;clearPendingCueSave();cueStatus.textContent=`SAVED · ${confirmedName}`;
+      }
+      refreshCueUI();refreshDirectorPanel();
     });
     room.onMessage("cue:result",(payload:any)=>{
       if(room!==activeRoom)return;
+      if(payload?.operation==="save")clearPendingCueSave();
       if(!payload?.ok){cueStatus.textContent=`CUE ${String(payload?.operation||"")} failed: ${String(payload?.reason||"unknown")}`;return;}
       cueStatus.textContent=payload.operation==="fire"?`FIRED · ${String(payload.name||"CUE")} · ${Number(payload.count)||0} objects`:
         payload.operation==="delete"?"CUE deleted.":`SAVED · ${String(payload.name||"CUE")}`;
-      if(payload.operation==="save"&&payload.id)cueSelect.dataset.pendingSelection=String(payload.id);
+      if(payload.operation==="save"&&payload.id){
+        const saved:CueSummary={id:String(payload.id),name:String(payload.name||"Cue"),
+          targetType:String(payload.targetType||"scene") as CueSummary["targetType"],target:String(payload.target||""),
+          action:String(payload.action||"play"),updatedAt:Number(payload.updatedAt)||Date.now()};
+        cueSummaries=[saved,...cueSummaries.filter(cue=>cue.id!==saved.id)];
+        cueSelect.dataset.pendingSelection=saved.id;refreshCueUI();refreshDirectorPanel();
+        room.send("cue:list:request",{});
+      }
       if(payload.operation!=="fire")requestLocalWorldSave(`CUE ${String(payload.operation||"").toUpperCase()}`);
     });
     room.onMessage("cue:fired",(payload:any)=>{
@@ -3590,6 +3603,7 @@ async function enterWorld() {
       sceneStatus.textContent=payload.action==="recall"?`Recalled ${String(payload.name||"scene")} · ${Number(payload.count)||0} objects`:
         payload.action==="delete"?"Scene deleted.":`Saved ${String(payload.name||"scene")}`;
       if(payload.action==="save"&&payload.id)sceneSelect.dataset.pendingSelection=String(payload.id);
+      if(payload.action!=="recall")room.send("scene:list:request",{});
       requestLocalWorldSave(`SCENE ${String(payload.action||"").toUpperCase()}`);
     });
     room.onMessage("scene:recalled",(payload:any)=>{
@@ -3687,6 +3701,16 @@ async function enterWorld() {
     room.onMessage("media:behavior", (payload:any) => {
       const id=String(payload?.id||"");
       if (id) applySharedBehavior(id,payload?.behavior);
+    });
+    room.onMessage("media:behavior:result",(payload:any)=>{
+      if(room!==activeRoom)return;
+      const id=String(payload?.id||"");
+      if(payload?.ok){
+        if(id&&payload?.behavior)applySharedBehavior(id,payload.behavior);
+        if(id===selectedManagedMediaId)behaviorStatus.textContent="SAVED · ROOM + LOCAL";
+      } else if(id===selectedManagedMediaId) {
+        behaviorStatus.textContent=payload?.reason==="owner-locked"?"ROOM OWNER OR ARTWORK OWNER ONLY":"BEHAVIOR SAVE FAILED";
+      }
     });
 
     // Prototype 0.15.1.2 / LIVE MEDIA SNAPSHOT RECOVERY
@@ -5358,7 +5382,14 @@ function refreshDirectorPanel(){
     const button=document.createElement("button");button.type="button";button.disabled=person.isOwner;button.textContent=person.isOwner?"OWNER":person.isDirector?"REVOKE":"GRANT";
     button.addEventListener("click",()=>activeRoom?.send("director:grant",{sessionId:person.sessionId,enabled:!person.isDirector}));row.append(label,button);directorParticipantList.appendChild(row);}
 }
-directorButton.addEventListener("click",()=>{directorPanel.classList.toggle("hidden");refreshDirectorPanel();});
+let directorDataRequestAt=0;
+function requestDirectorData(force=false){
+  if(!activeRoom)return;
+  const now=Date.now();if(!force&&now-directorDataRequestAt<800)return;
+  directorDataRequestAt=now;
+  activeRoom.send("scene:list:request",{});activeRoom.send("cue:list:request",{});activeRoom.send("director:get",{});
+}
+directorButton.addEventListener("click",()=>{directorPanel.classList.toggle("hidden");requestDirectorData(true);refreshDirectorPanel();});
 closeDirectorButton.addEventListener("click",()=>directorPanel.classList.add("hidden"));
 
 const closeMediaManagerButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#closeMediaManagerButton")!;
@@ -5403,6 +5434,15 @@ let cueTargetGroups:string[]=[];
 let cueTargetTags:string[]=[];
 let selectedCueGroupTarget="";
 let selectedCueTagTarget="";
+type PendingCueSave={id:string;name:string;targetType:"scene"|"group"|"tag";target:string;action:string};
+let pendingCueSave:PendingCueSave|null=null;
+let cueSaveRetryTimer:number|null=null;
+let cueSaveWatchdog:number|null=null;
+function clearPendingCueSave(){
+  if(cueSaveRetryTimer!==null){window.clearTimeout(cueSaveRetryTimer);cueSaveRetryTimer=null;}
+  if(cueSaveWatchdog!==null){window.clearTimeout(cueSaveWatchdog);cueSaveWatchdog=null;}
+  pendingCueSave=null;
+}
 function refreshCueTargetUI(){
   const sceneTarget=cueTargetType.value==="scene";cueSceneTarget.classList.toggle("hidden",!sceneTarget);
   cueTextTarget.classList.toggle("hidden",sceneTarget);cueAction.disabled=sceneTarget;
@@ -5435,7 +5475,7 @@ function refreshCueUI(){
   for(const scene of sceneSummaries){const option=document.createElement("option");option.value=scene.id;option.textContent=scene.name;cueSceneTarget.appendChild(option);}
   if(sceneSummaries.some(scene=>scene.id===sceneSelected))cueSceneTarget.value=sceneSelected;
   const has=!!cueSelect.value;cueSaveButton.disabled=!environmentCanEdit;
-  cueFireButton.disabled=!environmentCanEdit||!has;cueDeleteButton.disabled=!environmentCanEdit||!has;
+  cueFireButton.disabled=!directorCanDirect||!has;cueDeleteButton.disabled=!environmentCanEdit||!has;
   if(!environmentCanEdit)cueStatus.textContent="ROOM OWNER ONLY";else if(!cueSummaries.length)cueStatus.textContent="No cues saved.";
   refreshCueTargetUI();
 }
@@ -5454,9 +5494,20 @@ cueSaveButton.addEventListener("click",()=>{
   if(!activeRoom||!environmentCanEdit)return;const targetType=cueTargetType.value;
   const target=targetType==="scene"?cueSceneTarget.value:cueTextTarget.value;const name=cueNameInput.value.trim();
   if(!name||!target){cueStatus.textContent="CUE name and target are required.";return;}
-  activeRoom.send("cue:save",{id:cueSelect.value,name,targetType,target,action:cueAction.value});cueStatus.textContent="Saving cue…";
+  clearPendingCueSave();
+  pendingCueSave={id:cueSelect.value||`cue-client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,
+    name,targetType:targetType as PendingCueSave["targetType"],target,action:cueAction.value};
+  activeRoom.send("cue:save",pendingCueSave);cueStatus.textContent="Saving cue…";
+  cueSaveRetryTimer=window.setTimeout(()=>{
+    cueSaveRetryTimer=null;if(!activeRoom||!pendingCueSave)return;
+    activeRoom.send("cue:save",pendingCueSave);cueStatus.textContent="Retrying cue save…";
+  },1800);
+  cueSaveWatchdog=window.setTimeout(()=>{
+    cueSaveWatchdog=null;if(!activeRoom||!pendingCueSave)return;
+    activeRoom.send("cue:list:request",{});cueStatus.textContent="SERVER PENDING · CHECKING CUE LIST";
+  },5000);
 });
-cueFireButton.addEventListener("click",()=>{if(activeRoom&&environmentCanEdit&&cueSelect.value){activeRoom.send("cue:fire",{id:cueSelect.value});cueStatus.textContent="Firing cue…";}});
+cueFireButton.addEventListener("click",()=>{if(activeRoom&&directorCanDirect&&cueSelect.value){activeRoom.send("cue:fire",{id:cueSelect.value});cueStatus.textContent="Firing cue…";}});
 cueDeleteButton.addEventListener("click",()=>{if(activeRoom&&environmentCanEdit&&cueSelect.value&&window.confirm("Delete this cue?"))activeRoom.send("cue:delete",{id:cueSelect.value});});
 type SceneSummary={id:string;name:string;updatedAt:number;objectCount:number};
 let sceneSummaries:SceneSummary[]=[];
@@ -5678,6 +5729,7 @@ function applyBehaviorEditorUI() {
     enabled: behavior.enabled
   });
   if (activeRoom && selectedManagedMediaId) {
+    behaviorStatus.textContent="SAVING…";
     activeRoom.send("media:behavior", {id:selectedManagedMediaId,behavior:{
       trigger:behavior.trigger, distance:behavior.distance, lookAngle:(behavior as any).lookAngle,
       touchMode:(behavior as any).touchMode, enterAction:behavior.enterAction,
@@ -6076,7 +6128,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.5</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.6</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -6156,8 +6208,8 @@ function runFoundationAction(action:string){
   if(action==="avatar"){avatarSettingsPanel.hidden=false;avatarSettingsPanel.scrollTop=0;return;}
   if(action==="emote"){setMobileFoundationPanel("emote");return;}
   if(action==="flashlight"){flashlightButton.click();return;}
-  if(action==="director"){if(compactMobileQuery.matches)cueFloatingPanel.classList.add("hidden");directorPanel.classList.remove("hidden");refreshDirectorPanel();bringFloatingPanelToFront(directorPanel);return;}
-  if(action==="cue-editor"){if(compactMobileQuery.matches)directorPanel.classList.add("hidden");cueFloatingPanel.classList.remove("hidden");bringFloatingPanelToFront(cueFloatingPanel);return;}
+  if(action==="director"){if(compactMobileQuery.matches)cueFloatingPanel.classList.add("hidden");directorPanel.classList.remove("hidden");requestDirectorData(true);refreshDirectorPanel();bringFloatingPanelToFront(directorPanel);return;}
+  if(action==="cue-editor"){if(compactMobileQuery.matches)directorPanel.classList.add("hidden");cueFloatingPanel.classList.remove("hidden");requestDirectorData(true);bringFloatingPanelToFront(cueFloatingPanel);return;}
   if(action==="reset-layout"){resetDirectorPanelLayout();return;}
 }
 function renderFoundationContext(){
@@ -6173,7 +6225,7 @@ function selectUIWorkspace(workspace:UIFoundationWorkspace){
   if(workspace==="create")openMediaManagerAt(mediaManagerList);
   else if(workspace==="world")openWorldWorkspaceAt(environmentEditor);
   else if(workspace==="avatar"){avatarSettingsPanel.hidden=false;avatarSettingsPanel.scrollTop=0;bringFloatingPanelToFront(avatarControls);}
-  else if(workspace==="direct"){directorPanel.classList.remove("hidden");refreshDirectorPanel();}
+  else if(workspace==="direct"){directorPanel.classList.remove("hidden");requestDirectorData(true);refreshDirectorPanel();}
   uiSaveState.textContent=workspace.toUpperCase();
   if(document.body.classList.contains("mobile-compact"))setMobileFoundationPanel("");
 }

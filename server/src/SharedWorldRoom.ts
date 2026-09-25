@@ -88,12 +88,15 @@ export class SharedWorldRoom extends Room<WorldState> {
     return this.canEditEnvironment(client,false)||this.directorClientIds.has(actorId);
   }
   private sendDirectorState(target?:Client) {
-    const participants=Array.from(this.state.players,([sessionId,player])=>({
-      sessionId,name:player.name,clientId:player.clientId,
-      isOwner:!!this.environmentOwnerClientId&&player.clientId===this.environmentOwnerClientId,
-      isDirector:this.directorClientIds.has(player.clientId)||
-        (!!this.environmentOwnerClientId&&player.clientId===this.environmentOwnerClientId)
-    }));
+    const participants=Array.from(this.state.players,([sessionId,player])=>{
+      const actorId=player.clientId||`session:${sessionId}`;
+      return {
+        sessionId,name:player.name,clientId:actorId,
+        isOwner:!!this.environmentOwnerClientId&&actorId===this.environmentOwnerClientId,
+        isDirector:this.directorClientIds.has(actorId)||
+          (!!this.environmentOwnerClientId&&actorId===this.environmentOwnerClientId)
+      };
+    });
     const recipients=target?[target]:this.clients;
     for(const item of recipients)item.send("director:state",{
       canDirect:this.canDirect(item),canManage:this.canEditEnvironment(item,false),participants
@@ -553,19 +556,20 @@ export class SharedWorldRoom extends Room<WorldState> {
       if(targetType==="group"){
         const requested=this.cleanMediaGroup(target).toLocaleLowerCase();
         target=Array.from(this.state.mediaObjects.values()).map(media=>media.groupName)
-          .find(group=>!!group&&group.toLocaleLowerCase()===requested)||"";
+          .find(group=>!!group&&group.toLocaleLowerCase()===requested)||this.cleanMediaGroup(target);
       } else if(targetType==="tag"){
         const requested=this.cleanMediaTags(target).split(",")[0]?.toLocaleLowerCase()||"";
         let canonical="";
         for(const media of this.state.mediaObjects.values())for(const tag of media.tags.split(","))
           if(tag.trim().toLocaleLowerCase()===requested){canonical=tag.trim();break;}
-        target=canonical;
+        target=canonical||this.cleanMediaTags(target).split(",")[0]||"";
       }
       if(!name||!["scene","group","tag"].includes(targetType)||!target||
         (targetType==="scene"?!this.scenes.has(target):!validActions.includes(action))){
         client.send("cue:result",{ok:false,operation:"save",reason:"invalid-cue"});return;
       }
-      let id=String(payload?.id||"").trim().slice(0,80);if(id&&!this.cues.has(id))id="";
+      let id=String(payload?.id||"").trim().slice(0,80);
+      if(id&&!this.cues.has(id)&&!/^cue-client-[a-z0-9-]{8,64}$/.test(id))id="";
       if(!id&&this.cues.size>=24){client.send("cue:result",{ok:false,operation:"save",reason:"cue-limit"});return;}
       if(!id)id=`cue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
       const cue={id,name,targetType:targetType as CueDefinition["targetType"],target,
@@ -603,10 +607,11 @@ export class SharedWorldRoom extends Room<WorldState> {
         client.send("director:result",{ok:false,reason:"owner-required"});this.sendDirectorState(client);return;
       }
       const sessionId=String(payload?.sessionId||"");const player=this.state.players.get(sessionId);
-      if(!player?.clientId){client.send("director:result",{ok:false,reason:"player-not-found"});return;}
+      if(!player){client.send("director:result",{ok:false,reason:"player-not-found"});return;}
+      const actorId=player.clientId||`session:${sessionId}`;
       const enabled=payload?.enabled===true;
-      if(player.clientId===this.environmentOwnerClientId&& !enabled){client.send("director:result",{ok:false,reason:"owner-is-director"});return;}
-      if(enabled)this.directorClientIds.add(player.clientId);else this.directorClientIds.delete(player.clientId);
+      if(actorId===this.environmentOwnerClientId&& !enabled){client.send("director:result",{ok:false,reason:"owner-is-director"});return;}
+      if(enabled)this.directorClientIds.add(actorId);else this.directorClientIds.delete(actorId);
       client.send("director:result",{ok:true,sessionId,enabled});this.sendDirectorState();this.sendEnvironmentPermissions();
     });
 
@@ -614,15 +619,22 @@ export class SharedWorldRoom extends Room<WorldState> {
       const id = String(payload?.id || "").trim().slice(0, 80);
       const media = this.state.mediaObjects.get(id);
       const player = this.state.players.get(client.sessionId);
-      if (!media || !(media.ownerSessionId === client.sessionId ||
-        (media.ownerClientId && player?.clientId && media.ownerClientId === player.clientId))) return;
+      if(!media){client.send("media:behavior:result",{id,ok:false,reason:"media-not-found"});return;}
+      const isUploader=media.ownerSessionId===client.sessionId||
+        !!(media.ownerClientId&&player?.clientId&&media.ownerClientId===player.clientId);
+      if(!isUploader&&!this.canEditEnvironment(client,false)){
+        client.send("media:behavior:result",{id,ok:false,reason:"owner-locked"});
+        this.sendEnvironmentPermissions(client);return;
+      }
       const input = payload?.behavior || {};
       const trigger = String(input.trigger || "");
       const enterAction = String(input.enterAction || "");
       const leaveAction = String(input.leaveAction || "");
       const triggers = ["user-proximity", "look-at", "touch"];
       const actions = ["play", "stop", "move", "rotate", "scale", "float", "orbit", "shake", "none"];
-      if (!triggers.includes(trigger) || !actions.includes(enterAction) || !actions.includes(leaveAction)) return;
+      if (!triggers.includes(trigger) || !actions.includes(enterAction) || !actions.includes(leaveAction)) {
+        client.send("media:behavior:result",{id,ok:false,reason:"invalid-behavior"});return;
+      }
       const bounded = (v:unknown, fallback:number, min:number, max:number) => {
         const n=Number(v); return Number.isFinite(n)?Math.min(max,Math.max(min,n)):fallback;
       };
@@ -639,6 +651,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.mediaBehaviors.set(id, behavior);
       this.proximityActors.delete(id);
       this.broadcast("media:behavior", {id, behavior});
+      client.send("media:behavior:result", {id,ok:true,behavior});
     });
 
 

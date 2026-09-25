@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.13 ROOM SESSION STABILITY LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.14 SESSION RESUME LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -972,6 +972,7 @@ let worldJoinInProgress=false;
 let intentionalRoomLeave=false;
 let pageIsLeaving=false;
 let roomRecoveryTimer:number|null=null;
+let pendingRoomReconnectionToken="";
 let lastRoomPongAt=0;
 const LOCAL_WORLD_BACKUP_PREFIX="shared-world-local-backup-v1:";
 let pendingLocalWorldSave=false;
@@ -3352,6 +3353,7 @@ function resetClientWorldForReentry() {
 function scheduleRoomRecovery(room:Room,reason:string){
   if(pageIsLeaving||intentionalRoomLeave||activeRoom!==room)return;
   console.warn("[ROOM CONNECTION RECOVERY]",reason,room.sessionId);
+  pendingRoomReconnectionToken=String((room as any).reconnectionToken||"");
   activeRoom=null;currentSessionId="";
   sharedStateDiagnostic.connection="RECOVERING";sharedStateDiagnostic.lastError=reason;
   refreshSharedStateDiagnosticPanel();
@@ -3376,6 +3378,7 @@ async function enterWorld() {
   status.textContent = "接続しています…";
 
   if (activeRoom) {
+    pendingRoomReconnectionToken="";
     intentionalRoomLeave=true;
     try {
       console.log("[SESSION REENTRY] leaving previous room", activeRoom.sessionId);
@@ -3404,7 +3407,21 @@ async function enterWorld() {
 
   try {
     const client = new Client(SERVER_URL);
-    const room = await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
+    let room:Room;
+    const resumeToken=pendingRoomReconnectionToken;
+    if(resumeToken) {
+      status.textContent="同じROOMセッションへ復帰しています…";
+      try {
+        room=await client.reconnect(resumeToken);
+        console.log("[ROOM SESSION RESUMED]",room.sessionId);
+      } catch(error) {
+        console.warn("[ROOM SESSION RESUME FAILED / FRESH JOIN]",error);
+        room=await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
+      }
+    } else {
+      room=await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
+    }
+    pendingRoomReconnectionToken="";
     activeRoom = room;
     lastRoomPongAt=Date.now();
     room.onMessage("room:pong",()=>{
@@ -6227,7 +6244,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.13</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.14</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

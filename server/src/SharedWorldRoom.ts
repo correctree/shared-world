@@ -1014,7 +1014,21 @@ export class SharedWorldRoom extends Room<WorldState> {
     });
   }
 
-  onLeave(client: Client, consented: boolean) {
+  async onLeave(client: Client, consented: boolean) {
+    // Keep the authoritative player/session alive across a short transport
+    // interruption. The returning browser reconnects with the Colyseus token,
+    // preserving sessionId, position and PLAYERS count instead of respawning.
+    if (!consented) {
+      try {
+        await this.allowReconnection(client, 20);
+        console.log("[SESSION RESUMED]", client.sessionId);
+        this.sendEnvironmentPermissions();
+        this.sendDirectorState();
+        return;
+      } catch (error) {
+        console.warn("[SESSION RESUME EXPIRED]", client.sessionId, error);
+      }
+    }
     this.leaveProximity(client.sessionId);
     this.broadcast("voice:leave",{sessionId:client.sessionId},{except:client});
     this.avatarEmoteLastAt.delete(client.sessionId);
@@ -1022,7 +1036,6 @@ export class SharedWorldRoom extends Room<WorldState> {
     const player = this.state.players.get(client.sessionId);
     const name = player?.name || "Guest";
 
-    // If this session was already replaced, deleting by its old sessionId is harmless.
     this.state.players.delete(client.sessionId);
     this.sendEnvironmentPermissions();
     this.sendDirectorState();

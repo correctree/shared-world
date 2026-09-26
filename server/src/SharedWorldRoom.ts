@@ -49,6 +49,7 @@ type CueDefinition = {
 export class SharedWorldRoom extends Room<WorldState> {
   private scenes = new Map<string,SceneSnapshot>();
   private cues = new Map<string,CueDefinition>();
+  private authoringRevision = 0;
   private directorClientIds = new Set<string>();
   private environmentOwnerClientId = "";
   private environment = {
@@ -145,6 +146,19 @@ export class SharedWorldRoom extends Room<WorldState> {
     return {id,name,updatedAt:Date.now(),environment:{...this.environment},media};
   }
   private cueList() {return Array.from(this.cues.values()).sort((a,b)=>b.updatedAt-a.updatedAt);}
+  private authoringState() {
+    const groups=new Set<string>(),tags=new Set<string>();
+    for(const media of this.state.mediaObjects.values()){
+      if(media.groupName.trim())groups.add(media.groupName.trim());
+      for(const tag of media.tags.split(",")){const value=tag.trim();if(value)tags.add(value);}
+    }
+    return {revision:this.authoringRevision,scenes:this.sceneList(),cues:this.cueList(),
+      groups:Array.from(groups).sort(),tags:Array.from(tags).sort()};
+  }
+  private sendAuthoringState(target?:Client) {
+    const payload=this.authoringState();
+    if(target)target.send("authoring:state",payload);else this.broadcast("authoring:state",payload);
+  }
   private sendCueList(target?:Client) {
     const groups=new Set<string>(),tags=new Set<string>();
     for(const media of this.state.mediaObjects.values()){
@@ -153,6 +167,59 @@ export class SharedWorldRoom extends Room<WorldState> {
     }
     const payload={cues:this.cueList(),groups:Array.from(groups).sort(),tags:Array.from(tags).sort()};
     if(target)target.send("cue:list",payload);else this.broadcast("cue:list",payload);
+  }
+  private saveScene(client:Client,payload:any,requestId="",modern=false) {
+    const fail=(reason:string)=>{
+      const result={ok:false,kind:"scene",operation:"save",requestId,reason};
+      if(modern)client.send("authoring:result",result);else client.send("scene:result",{ok:false,action:"save",reason});
+    };
+    if(!this.canEditEnvironment(client,true)){fail("owner-locked");return;}
+    const name=String(payload?.name||"").trim().replace(/\s+/g," ").slice(0,32);
+    if(!name){fail("name-required");return;}
+    let id=String(payload?.id||"").trim().slice(0,80);
+    if(id&&!this.scenes.has(id)&&!/^scene-client-[a-z0-9-]{8,64}$/.test(id))id="";
+    if((!id||!this.scenes.has(id))&&this.scenes.size>=12){fail("scene-limit");return;}
+    if(!id)id=`scene-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
+    const scene=this.captureScene(id,name);this.scenes.set(id,scene);this.authoringRevision++;
+    const saved={id,name,updatedAt:scene.updatedAt,objectCount:Object.keys(scene.media).length};
+    if(modern)client.send("authoring:result",{ok:true,kind:"scene",operation:"save",requestId,saved,state:this.authoringState()});
+    else client.send("scene:result",{ok:true,action:"save",...saved});
+    this.sendSceneList();this.sendAuthoringState();this.sendEnvironmentPermissions();
+    console.log("[authoring:scene saved]",{requestId,id,name,objects:saved.objectCount,revision:this.authoringRevision});
+  }
+  private saveCue(client:Client,payload:any,requestId="",modern=false) {
+    const fail=(reason:string)=>{
+      const result={ok:false,kind:"cue",operation:"save",requestId,reason};
+      if(modern)client.send("authoring:result",result);else client.send("cue:result",{ok:false,operation:"save",reason});
+    };
+    if(!this.canEditEnvironment(client,true)){fail("owner-locked");return;}
+    const name=String(payload?.name||"").trim().replace(/\s+/g," ").slice(0,32);
+    const targetType=String(payload?.targetType||"");const validActions=["play","stop","move","rotate","scale","float","orbit","shake"];
+    let target=String(payload?.target||"").trim().slice(0,80);let action=String(payload?.action||"");
+    if(targetType==="scene")action="recall";
+    if(targetType==="group"){
+      const requested=this.cleanMediaGroup(target).toLocaleLowerCase();
+      target=Array.from(this.state.mediaObjects.values()).map(media=>media.groupName)
+        .find(group=>!!group&&group.toLocaleLowerCase()===requested)||this.cleanMediaGroup(target);
+    } else if(targetType==="tag"){
+      const requested=this.cleanMediaTags(target).split(",")[0]?.toLocaleLowerCase()||"";let canonical="";
+      for(const media of this.state.mediaObjects.values())for(const tag of media.tags.split(","))
+        if(tag.trim().toLocaleLowerCase()===requested){canonical=tag.trim();break;}
+      target=canonical||this.cleanMediaTags(target).split(",")[0]||"";
+    }
+    if(!name||!["scene","group","tag"].includes(targetType)||!target||
+      (targetType==="scene"?!this.scenes.has(target):!validActions.includes(action))){fail("invalid-cue");return;}
+    let id=String(payload?.id||"").trim().slice(0,80);
+    if(id&&!this.cues.has(id)&&!/^cue-client-[a-z0-9-]{8,64}$/.test(id))id="";
+    if((!id||!this.cues.has(id))&&this.cues.size>=24){fail("cue-limit");return;}
+    if(!id)id=`cue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
+    const cue={id,name,targetType:targetType as CueDefinition["targetType"],target,
+      action:action as CueDefinition["action"],updatedAt:Date.now()};
+    this.cues.set(id,cue);this.authoringRevision++;
+    if(modern)client.send("authoring:result",{ok:true,kind:"cue",operation:"save",requestId,saved:cue,state:this.authoringState()});
+    else client.send("cue:result",{ok:true,operation:"save",...cue});
+    this.sendCueList();this.sendAuthoringState();this.sendEnvironmentPermissions();
+    console.log("[authoring:cue saved]",{requestId,id,name,targetType,target,revision:this.authoringRevision});
   }
   private recallScene(scene:SceneSnapshot) {
     const nextEnvironment=this.cleanEnvironment(scene.environment);
@@ -511,27 +578,20 @@ export class SharedWorldRoom extends Room<WorldState> {
       const metadata={id,groupName:media.groupName,tags:media.tags};
       this.broadcast("media:metadata",metadata);
       client.send("media:metadata:result",{...metadata,ok:true});
-      this.sendCueList();
+      this.sendCueList();this.sendAuthoringState();
       this.sendEnvironmentPermissions();
     });
 
     // 0.20.8 / Authoritative named scenes for later CUE control.
     this.onMessage("scene:list:request",(client:Client)=>this.sendSceneList(client));
-    this.onMessage("scene:save",(client:Client,payload:any)=>{
-      if(!this.canEditEnvironment(client,true)){
-        client.send("scene:result",{ok:false,action:"save",reason:"owner-locked"});return;
-      }
-      const name=String(payload?.name||"").trim().replace(/\s+/g," ").slice(0,32);
-      if(!name){client.send("scene:result",{ok:false,action:"save",reason:"name-required"});return;}
-      let id=String(payload?.id||"").trim().slice(0,80);
-      if(id&&!this.scenes.has(id)&&!/^scene-client-[a-z0-9-]{8,64}$/.test(id))id="";
-      if(!id&&this.scenes.size>=12){client.send("scene:result",{ok:false,action:"save",reason:"scene-limit"});return;}
-      if(!id)id=`scene-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
-      const scene=this.captureScene(id,name);this.scenes.set(id,scene);
-      client.send("scene:result",{ok:true,action:"save",id,name,updatedAt:scene.updatedAt,
-        objectCount:Object.keys(scene.media).length});
-      this.sendSceneList();this.sendEnvironmentPermissions();
-    });
+    this.onMessage("scene:save",(client:Client,payload:any)=>this.saveScene(client,payload));
+    // 0.21.1.5.17 / Transactional authoring channel. Each mutation returns its
+    // request id together with the complete current SCENE/CUE index.
+    this.onMessage("authoring:get",(client:Client)=>this.sendAuthoringState(client));
+    this.onMessage("authoring:scene:save",(client:Client,payload:any)=>
+      this.saveScene(client,payload,String(payload?.requestId||"").slice(0,80),true));
+    this.onMessage("authoring:cue:save",(client:Client,payload:any)=>
+      this.saveCue(client,payload,String(payload?.requestId||"").slice(0,80),true));
     this.onMessage("scene:recall",(client:Client,payload:any)=>{
       if(!this.canDirect(client)){
         client.send("scene:result",{ok:false,action:"recall",reason:"director-required"});return;
@@ -547,43 +607,13 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
       const id=String(payload?.id||"");
       if(!this.scenes.delete(id)){client.send("scene:result",{ok:false,action:"delete",reason:"scene-not-found"});return;}
-      client.send("scene:result",{ok:true,action:"delete",id});this.sendSceneList();
+      this.authoringRevision++;client.send("scene:result",{ok:true,action:"delete",id});this.sendSceneList();this.sendAuthoringState();
     });
 
     // 0.20.9 / CUE system. Cues are server-authoritative, owner-operated and
     // target a scene or all media sharing one GROUP / TAG classification.
     this.onMessage("cue:list:request",(client:Client)=>this.sendCueList(client));
-    this.onMessage("cue:save",(client:Client,payload:any)=>{
-      if(!this.canEditEnvironment(client,true)){client.send("cue:result",{ok:false,operation:"save",reason:"owner-locked"});return;}
-      const name=String(payload?.name||"").trim().replace(/\s+/g," ").slice(0,32);
-      const targetType=String(payload?.targetType||"");
-      const validActions=["play","stop","move","rotate","scale","float","orbit","shake"];
-      let target=String(payload?.target||"").trim().slice(0,80);
-      let action=String(payload?.action||"");
-      if(targetType==="scene")action="recall";
-      if(targetType==="group"){
-        const requested=this.cleanMediaGroup(target).toLocaleLowerCase();
-        target=Array.from(this.state.mediaObjects.values()).map(media=>media.groupName)
-          .find(group=>!!group&&group.toLocaleLowerCase()===requested)||this.cleanMediaGroup(target);
-      } else if(targetType==="tag"){
-        const requested=this.cleanMediaTags(target).split(",")[0]?.toLocaleLowerCase()||"";
-        let canonical="";
-        for(const media of this.state.mediaObjects.values())for(const tag of media.tags.split(","))
-          if(tag.trim().toLocaleLowerCase()===requested){canonical=tag.trim();break;}
-        target=canonical||this.cleanMediaTags(target).split(",")[0]||"";
-      }
-      if(!name||!["scene","group","tag"].includes(targetType)||!target||
-        (targetType==="scene"?!this.scenes.has(target):!validActions.includes(action))){
-        client.send("cue:result",{ok:false,operation:"save",reason:"invalid-cue"});return;
-      }
-      let id=String(payload?.id||"").trim().slice(0,80);
-      if(id&&!this.cues.has(id)&&!/^cue-client-[a-z0-9-]{8,64}$/.test(id))id="";
-      if(!id&&this.cues.size>=24){client.send("cue:result",{ok:false,operation:"save",reason:"cue-limit"});return;}
-      if(!id)id=`cue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
-      const cue={id,name,targetType:targetType as CueDefinition["targetType"],target,
-        action:action as CueDefinition["action"],updatedAt:Date.now()};
-      this.cues.set(id,cue);client.send("cue:result",{ok:true,operation:"save",...cue});this.sendCueList();this.sendEnvironmentPermissions();
-    });
+    this.onMessage("cue:save",(client:Client,payload:any)=>this.saveCue(client,payload));
     this.onMessage("cue:fire",(client:Client,payload:any)=>{
       if(!this.canDirect(client)){client.send("cue:result",{ok:false,operation:"fire",reason:"director-required"});return;}
       const id=String(payload?.id||"");const cue=this.cues.get(id);
@@ -607,7 +637,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.onMessage("cue:delete",(client:Client,payload:any)=>{
       if(!this.canEditEnvironment(client,false)){client.send("cue:result",{ok:false,operation:"delete",reason:"owner-locked"});return;}
       const id=String(payload?.id||"");if(!this.cues.delete(id)){client.send("cue:result",{ok:false,operation:"delete",reason:"cue-not-found"});return;}
-      client.send("cue:result",{ok:true,operation:"delete",id});this.sendCueList();
+      this.authoringRevision++;client.send("cue:result",{ok:true,operation:"delete",id});this.sendCueList();this.sendAuthoringState();
     });
     this.onMessage("director:get",(client:Client)=>this.sendDirectorState(client));
     this.onMessage("director:grant",(client:Client,payload:any)=>{
@@ -941,13 +971,15 @@ export class SharedWorldRoom extends Room<WorldState> {
             const [x,y,z,rotationX,rotationY,rotationZ,scale]=values;
             media[newId]={x:bounded(x,0,-importLimit,importLimit),y:bounded(y,1.8,-10,20),z:bounded(z,-3,-importLimit,importLimit),
               rotationX,rotationY,rotationZ,scale:bounded(scale,1,.05,20),groupName:this.cleanMediaGroup(raw.groupName),
-              tags:this.cleanMediaTags(raw.tags),behavior:raw.behavior&&typeof raw.behavior==="object"?{...raw.behavior}:null};
+              tags:this.cleanMediaTags(raw.tags),visible:raw.visible!==false,
+              behavior:raw.behavior&&typeof raw.behavior==="object"?{...raw.behavior}:null};
           }
           const id=`scene-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
           this.scenes.set(id,{id,name,updatedAt:Date.now(),environment:sceneEnvironment,media});
           importedSceneIds.set(String(rawScene?.id||""),id);
         }
         this.sendSceneList();
+        this.authoringRevision++;
       }
       if(Array.isArray(payload.cues)){
         const validCueActions=["play","stop","move","rotate","scale","float","orbit","shake"];
@@ -962,7 +994,9 @@ export class SharedWorldRoom extends Room<WorldState> {
             action:action as CueDefinition["action"],updatedAt:Date.now()});
         }
         this.sendCueList();
+        this.authoringRevision++;
       }
+      this.sendAuthoringState();
       client.send("world:import:result", {ok:true, count:entries.length});
     });
 

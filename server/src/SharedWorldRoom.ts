@@ -1,4 +1,5 @@
 import { Room, type Client } from "colyseus";
+import { loadWorld, saveWorld, storageInfo, type SavedWorldV2 } from "./persistence.js";
 import { Player, SharedMediaObject, WorldState } from "./state.js";
 
 const MAX_STEP = 0.75;
@@ -47,6 +48,11 @@ type CueDefinition = {
 };
 
 export class SharedWorldRoom extends Room<WorldState> {
+  private roomCode = "ART001";
+  private persistenceTimer: ReturnType<typeof setTimeout> | null = null;
+  private persistenceRevision = 0;
+  private lastSavedAt = "";
+  private lastSaveError = "";
   private scenes = new Map<string,SceneSnapshot>();
   private cues = new Map<string,CueDefinition>();
   private authoringRevision = 0;
@@ -63,6 +69,98 @@ export class SharedWorldRoom extends Room<WorldState> {
     fogEnabled:false,fogColor:"#b8cbd9",fogDensity:0.75,fogDistance:12,
     groundRepeat:1,groundRotation:0
   };
+  private buildPersistentSnapshot(): SavedWorldV2 {
+    const mediaObjects = Array.from(this.state.mediaObjects, ([id, media]) => ({
+      id, title:media.title, type:media.type, assetRef:media.assetRef, fallbackRef:media.fallbackRef,
+      ownerClientId:media.ownerClientId, groupName:media.groupName, tags:media.tags, visible:media.visible,
+      x:media.x, y:media.y, z:media.z, rotationX:media.rotationX, rotationY:media.rotationY,
+      rotationZ:media.rotationZ, scale:media.scale, behavior:this.mediaBehaviors.get(id)||null
+    }));
+    return {
+      format:"shared-world-room", version:2, roomCode:this.roomCode,
+      revision:this.persistenceRevision, savedAt:new Date().toISOString(),
+      environment:{...this.environment},
+      environmentOwnerClientId:this.environmentOwnerClientId.startsWith("session:")?"":this.environmentOwnerClientId,
+      directorClientIds:Array.from(this.directorClientIds).filter(id=>!id.startsWith("session:")), mediaObjects,
+      scenes:Array.from(this.scenes.values(),scene=>({...scene})),
+      cues:Array.from(this.cues.values(),cue=>({...cue}))
+    };
+  }
+  private persistenceState() {
+    const storage=storageInfo();
+    return {revision:this.persistenceRevision,lastSavedAt:this.lastSavedAt,error:this.lastSaveError,
+      persistentConfigured:storage.persistentConfigured,mode:storage.persistentConfigured?"persistent-disk":"ephemeral-local"};
+  }
+  private sendPersistenceState(target?:Client) {
+    const payload=this.persistenceState();
+    if(target)target.send("persistence:state",payload);else this.broadcast("persistence:state",payload);
+  }
+  private persistNow(reason:string) {
+    if(this.persistenceTimer){clearTimeout(this.persistenceTimer);this.persistenceTimer=null;}
+    try {
+      this.persistenceRevision++;
+      const snapshot=this.buildPersistentSnapshot();
+      saveWorld(this.roomCode,snapshot);
+      this.lastSavedAt=snapshot.savedAt;this.lastSaveError="";
+      console.log("[ROOM SAVED]",{roomCode:this.roomCode,reason,revision:this.persistenceRevision,savedAt:this.lastSavedAt,
+        media:snapshot.mediaObjects.length,scenes:snapshot.scenes.length,cues:snapshot.cues.length});
+    } catch(error) {
+      this.persistenceRevision=Math.max(0,this.persistenceRevision-1);
+      this.lastSaveError=error instanceof Error?error.message:String(error);
+      console.error("[ROOM SAVE FAILED]",{roomCode:this.roomCode,reason,error:this.lastSaveError});
+    }
+    this.sendPersistenceState();
+  }
+  private schedulePersistence(reason:string) {
+    if(this.persistenceTimer)clearTimeout(this.persistenceTimer);
+    this.persistenceTimer=setTimeout(()=>this.persistNow(reason),250);
+  }
+  private restorePersistentWorld() {
+    const loaded=loadWorld(this.roomCode);
+    const saved=loaded.world;
+    if(!saved)return;
+    const restoredEnvironment=this.cleanEnvironment(saved.environment);
+    if(restoredEnvironment)this.environment=restoredEnvironment;
+    this.environmentOwnerClientId=String(saved.environmentOwnerClientId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
+    this.directorClientIds=new Set(saved.directorClientIds.map(value=>
+      String(value||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80)).filter(Boolean).slice(0,12));
+    for(const raw of saved.mediaObjects){
+      const id=String(raw.id||"").slice(0,80);const type=String(raw.type||"");
+      const values=[raw.x,raw.y,raw.z,raw.rotationX,raw.rotationY,raw.rotationZ,raw.scale].map(Number);
+      if(!/^[a-zA-Z0-9_-]{1,80}$/.test(id)||!["sprite","glb","webm","audio"].includes(type)||!values.every(Number.isFinite))continue;
+      const [x,y,z,rotationX,rotationY,rotationZ,scale]=values;
+      this.state.mediaObjects.set(id,new SharedMediaObject({
+        title:String(raw.title||"Shared Artwork").slice(0,80),type,
+        assetRef:String(raw.assetRef||"").slice(0,240),fallbackRef:String(raw.fallbackRef||"").slice(0,240),
+        ownerSessionId:"",ownerClientId:String(raw.ownerClientId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80),
+        groupName:this.cleanMediaGroup(raw.groupName),tags:this.cleanMediaTags(raw.tags),visible:raw.visible!==false,
+        x,y,z,rotationX,rotationY,rotationZ,scale:Math.max(.05,Math.min(20,scale))
+      }));
+      if(raw.behavior&&typeof raw.behavior==="object")this.mediaBehaviors.set(id,{...(raw.behavior as Record<string,unknown>)});
+    }
+    for(const raw of saved.scenes){
+      const id=String(raw.id||"").slice(0,80),name=String(raw.name||"").trim().slice(0,32);
+      const environment=this.cleanEnvironment(raw.environment);const media=raw.media;
+      if(!id||!name||!environment||!media||typeof media!=="object")continue;
+      this.scenes.set(id,{id,name,updatedAt:Number(raw.updatedAt)||Date.now(),environment,
+        media:media as Record<string,SceneMediaState>});
+    }
+    for(const raw of saved.cues){
+      const id=String(raw.id||"").slice(0,80),name=String(raw.name||"").trim().slice(0,32);
+      const targetType=String(raw.targetType||""),target=String(raw.target||"").slice(0,80),action=String(raw.action||"");
+      if(!id||!name||!["scene","group","tag"].includes(targetType)||!target||
+        !["recall","play","stop","move","rotate","scale","float","orbit","shake"].includes(action))continue;
+      this.cues.set(id,{id,name,targetType:targetType as CueDefinition["targetType"],target,
+        action:action as CueDefinition["action"],updatedAt:Number(raw.updatedAt)||Date.now()});
+    }
+    this.persistenceRevision=Math.max(0,Number(saved.revision)||0);
+    this.authoringRevision=this.persistenceRevision;
+    this.lastSavedAt=String(saved.savedAt||"");
+    this.scheduleParticleEnd();
+    console.log(loaded.recovered?"[ROOM RESTORED LAST STABLE]":"[ROOM RESTORED]",{
+      roomCode:this.roomCode,revision:this.persistenceRevision,media:this.state.mediaObjects.size,
+      scenes:this.scenes.size,cues:this.cues.size,savedAt:this.lastSavedAt});
+  }
   private particleEndTimer:ReturnType<typeof setTimeout>|null=null;
   private scheduleParticleEnd() {
     if(this.particleEndTimer) clearTimeout(this.particleEndTimer);
@@ -72,6 +170,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.particleEndTimer=null;
       this.environment={...this.environment,particles:"off"};
       this.broadcast("environment:state",this.environment);
+      this.schedulePersistence("particle-duration-ended");
     },this.environment.particleDuration*1000);
   }
   private worldLimit(size:number=this.environment.groundSize) { return Math.max(6.5,size/2-1); }
@@ -181,6 +280,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     if((!id||!this.scenes.has(id))&&this.scenes.size>=12){fail("scene-limit");return;}
     if(!id)id=`scene-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
     const scene=this.captureScene(id,name);this.scenes.set(id,scene);this.authoringRevision++;
+    this.schedulePersistence("scene-save");
     const saved={id,name,updatedAt:scene.updatedAt,objectCount:Object.keys(scene.media).length};
     if(modern)client.send("authoring:result",{ok:true,kind:"scene",operation:"save",requestId,saved,state:this.authoringState()});
     else client.send("scene:result",{ok:true,action:"save",...saved});
@@ -216,6 +316,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     const cue={id,name,targetType:targetType as CueDefinition["targetType"],target,
       action:action as CueDefinition["action"],updatedAt:Date.now()};
     this.cues.set(id,cue);this.authoringRevision++;
+    this.schedulePersistence("cue-save");
     if(modern)client.send("authoring:result",{ok:true,kind:"cue",operation:"save",requestId,saved:cue,state:this.authoringState()});
     else client.send("cue:result",{ok:true,operation:"save",...cue});
     this.sendCueList();this.sendAuthoringState();this.sendEnvironmentPermissions();
@@ -241,7 +342,8 @@ export class SharedWorldRoom extends Room<WorldState> {
       if(saved.behavior)this.broadcast("media:behavior",{id:mediaId,behavior:saved.behavior});
       count++;
     }
-    this.broadcast("scene:recalled",{id:scene.id,name:scene.name,count});return count;
+    this.broadcast("scene:recalled",{id:scene.id,name:scene.name,count});
+    this.schedulePersistence("scene-recall");return count;
   }
   private cleanEnvironment(input:any) {
     if (!input || typeof input!=="object") return null;
@@ -347,12 +449,24 @@ export class SharedWorldRoom extends Room<WorldState> {
   state = new WorldState();
 
   onCreate(options: { roomCode?: string }) {
-    this.setMetadata({ roomCode: String(options.roomCode || "ART001").toUpperCase() });
+    this.roomCode=String(options.roomCode||"ART001").toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16)||"ART001";
+    this.setMetadata({ roomCode:this.roomCode });
+    try { this.restorePersistentWorld(); }
+    catch(error) {
+      this.lastSaveError=error instanceof Error?error.message:String(error);
+      console.error("[ROOM RESTORE FAILED / STARTING EMPTY]",this.roomCode,this.lastSaveError);
+    }
 
     // Lightweight application heartbeat. This detects a Render restart or a
     // half-open browser socket before authoring commands silently time out.
     this.onMessage("room:ping",(client:Client,payload:any)=>{
       client.send("room:pong",{at:Number(payload?.at)||Date.now(),serverAt:Date.now()});
+    });
+    this.onMessage("persistence:get",(client:Client)=>this.sendPersistenceState(client));
+    this.onMessage("persistence:save",(client:Client)=>{
+      if(!this.canEditEnvironment(client,false)){client.send("persistence:result",{ok:false,reason:"owner-required"});return;}
+      this.persistNow("manual-save");
+      client.send("persistence:result",{ok:!this.lastSaveError,...this.persistenceState()});
     });
 
     // Prototype 0.14.7.1
@@ -561,6 +675,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
       console.log("[media:add stored]", id, "total:", this.state.mediaObjects.size);
       this.mediaBehaviors.set(id, { trigger:"user-proximity", distance:3, enterAction:"play", leaveAction:"stop", enabled:true });
+      this.schedulePersistence("media-add");
     });
 
     // 0.20.7 / GROUP + TAG metadata. The room environment owner curates the
@@ -580,6 +695,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       client.send("media:metadata:result",{...metadata,ok:true});
       this.sendCueList();this.sendAuthoringState();
       this.sendEnvironmentPermissions();
+      this.schedulePersistence("media-metadata");
     });
 
     // 0.20.8 / Authoritative named scenes for later CUE control.
@@ -608,6 +724,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       const id=String(payload?.id||"");
       if(!this.scenes.delete(id)){client.send("scene:result",{ok:false,action:"delete",reason:"scene-not-found"});return;}
       this.authoringRevision++;client.send("scene:result",{ok:true,action:"delete",id});this.sendSceneList();this.sendAuthoringState();
+      this.schedulePersistence("scene-delete");
     });
 
     // 0.20.9 / CUE system. Cues are server-authoritative, owner-operated and
@@ -638,6 +755,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       if(!this.canEditEnvironment(client,false)){client.send("cue:result",{ok:false,operation:"delete",reason:"owner-locked"});return;}
       const id=String(payload?.id||"");if(!this.cues.delete(id)){client.send("cue:result",{ok:false,operation:"delete",reason:"cue-not-found"});return;}
       this.authoringRevision++;client.send("cue:result",{ok:true,operation:"delete",id});this.sendCueList();this.sendAuthoringState();
+      this.schedulePersistence("cue-delete");
     });
     this.onMessage("director:get",(client:Client)=>this.sendDirectorState(client));
     this.onMessage("director:grant",(client:Client,payload:any)=>{
@@ -651,6 +769,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       if(actorId===this.environmentOwnerClientId&& !enabled){client.send("director:result",{ok:false,reason:"owner-is-director"});return;}
       if(enabled)this.directorClientIds.add(actorId);else this.directorClientIds.delete(actorId);
       client.send("director:result",{ok:true,sessionId,enabled});this.sendDirectorState();this.sendEnvironmentPermissions();
+      this.schedulePersistence("director-grant");
     });
 
     this.onMessage("media:behavior", (client: Client, payload: any) => {
@@ -690,6 +809,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.proximityActors.delete(id);
       this.broadcast("media:behavior", {id, behavior});
       client.send("media:behavior:result", {id,ok:true,behavior});
+      this.schedulePersistence("media-behavior");
     });
 
 
@@ -712,6 +832,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       media.visible=payload?.visible!==false;
       this.broadcast("media:visibility",{id,visible:media.visible});
       client.send("media:visibility:result",{id,ok:true,visible:media.visible});
+      this.schedulePersistence("media-visibility");
     });
 
     this.onMessage("media:update", (client: Client, payload: UpdateMediaPayload) => {
@@ -755,6 +876,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
       console.log("[media:update stored]", id);
       client.send("media:update:result", {id, ok:true});
+      this.schedulePersistence("media-update");
     });
 
     // Prototype 0.15.1 / SHARED ACTION EVENT CORE
@@ -861,6 +983,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.broadcast("environment:state",next);
       client.send("environment:state",next);
       this.sendEnvironmentPermissions();
+      this.schedulePersistence("environment-set");
     });
 
     this.onMessage("world:export", (client: Client) => {
@@ -998,6 +1121,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
       this.sendAuthoringState();
       client.send("world:import:result", {ok:true, count:entries.length});
+      this.schedulePersistence("world-import");
     });
 
     this.onMessage("media:delete", (client: Client, payload: DeleteMediaPayload) => {
@@ -1019,6 +1143,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.sendCueList();
       console.log("[media:delete stored]", id, "total:", this.state.mediaObjects.size);
       client.send("media:delete:result", {id, ok:true});
+      this.schedulePersistence("media-delete");
     });
 
     console.log("[room:create] message handlers ready");
@@ -1040,6 +1165,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
     this.sendEnvironmentPermissions();
     this.sendDirectorState();
+    this.sendPersistenceState(client);
 
     console.log(`[join] ${safeName} / ${client.sessionId} / client:${clientId || "legacy"}`);
     console.log("[AUTHORITATIVE SNAPSHOT]", {
@@ -1074,6 +1200,11 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.sendEnvironmentPermissions();
     this.sendDirectorState();
     console.log("[SESSION CLEANUP]", name, client.sessionId, { code, players: this.state.players.size });
+  }
+
+  onDispose() {
+    if(this.particleEndTimer)clearTimeout(this.particleEndTimer);
+    this.persistNow("room-dispose");
   }
 
 }

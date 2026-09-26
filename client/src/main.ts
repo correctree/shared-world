@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.17 AUTHORING TRANSACTION LOADED]");
+console.log("[PROTOTYPE 0.21.2 ROOM PERSISTENCE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3426,6 +3426,25 @@ async function enterWorld() {
         sharedStateDiagnostic.connection="OPEN";sharedStateDiagnostic.lastError="-";refreshSharedStateDiagnosticPanel();
       }
     });
+    room.onMessage("persistence:state",(payload:any)=>{
+      if(room!==activeRoom)return;
+      const element=document.getElementById("room-persistence-status");
+      const configured=payload?.persistentConfigured===true;
+      const failed=Boolean(payload?.error);
+      if(element){
+        element.textContent=failed?"SAVE FAILED":configured?(payload?.lastSavedAt?"ROOM SAVED":"PERSISTENCE READY"):"DISK NOT CONFIGURED";
+        element.dataset.state=failed?"error":configured?"ok":"warning";
+        element.title=failed?String(payload.error):configured?
+          `Persistent disk · ${String(payload.lastSavedAt||"waiting for first save")}`:
+          "SHARED_WORLD_DATA_DIR is not configured; Render restart recovery is not guaranteed.";
+      }
+      if(failed)console.error("[ROOM PERSISTENCE ERROR]",payload.error);
+      else console.log("[ROOM PERSISTENCE]",payload);
+    });
+    room.onMessage("persistence:result",(payload:any)=>{
+      if(room!==activeRoom)return;
+      if(payload?.ok!==true)console.warn("[ROOM MANUAL SAVE REJECTED]",payload?.reason||payload?.error||"unknown");
+    });
     // Colyseus SDK 0.18 owns transient reconnection. Keep this Room instance,
     // its listeners and its state tree alive while the SDK retries.
     room.onDrop((code:number,reason:string)=>{
@@ -3464,6 +3483,7 @@ async function enterWorld() {
       console.error("[ROOM ERROR]",code,message);
     });
     room.send("room:ping",{at:Date.now()});
+    room.send("persistence:get",{});
     localAutoRestoreAttempted=false;lastSnapshotMediaCount=-1;
     currentSessionId = room.sessionId;
     latestMoveAck=0;
@@ -6303,7 +6323,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.17</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -6423,6 +6443,7 @@ uiFoundationStyle.textContent=`
   #uiFoundationRoot.room-active{display:block}
   #uiWorkspaceBar{position:fixed;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:46;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:18px;width:min(850px,calc(100vw - 300px));min-height:52px;padding:6px 8px 6px 14px;box-sizing:border-box;border:1px solid rgba(130,157,180,.5);border-radius:15px;background:rgba(7,13,21,.9);backdrop-filter:blur(18px);box-shadow:0 12px 35px rgba(0,0,0,.2)}
   .ui-foundation-brand{display:flex;flex-direction:column;font-size:11px;line-height:1.15;letter-spacing:.08em;white-space:nowrap}.ui-foundation-brand span{margin-top:3px;color:#8fa8bb;font-size:9px}
+  #room-persistence-status[data-state="ok"]{color:#75d6a3}#room-persistence-status[data-state="warning"]{color:#f2bd63}#room-persistence-status[data-state="error"]{color:#ff7d7d}
   .ui-workspace-tabs{display:grid;grid-template-columns:repeat(5,minmax(70px,1fr));gap:4px}
   .ui-workspace-tabs button{min-height:40px;padding:5px 8px;border:1px solid transparent;border-radius:9px;background:transparent;color:#c8d4de;font-size:10px;font-weight:900;letter-spacing:.07em}.ui-workspace-tabs button span{display:block;margin-top:2px;color:#8195a5;font-size:8px;font-weight:600;letter-spacing:0}.ui-workspace-tabs button:hover,.ui-workspace-tabs button.active{border-color:#52d7ff;background:#102638;color:#fff}.ui-workspace-tabs button.active span{color:#74ddff}
   #uiSaveState{min-width:66px;padding:6px 8px;border-radius:8px;background:#13202b;color:#9ab0c1;font-size:8px;font-weight:800;text-align:center;letter-spacing:.06em}

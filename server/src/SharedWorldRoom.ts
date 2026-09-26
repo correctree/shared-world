@@ -1014,21 +1014,21 @@ export class SharedWorldRoom extends Room<WorldState> {
     });
   }
 
-  async onLeave(client: Client, consented: boolean) {
-    // Keep the authoritative player/session alive across a short transport
-    // interruption. The returning browser reconnects with the Colyseus token,
-    // preserving sessionId, position and PLAYERS count instead of respawning.
-    if (!consented) {
-      try {
-        await this.allowReconnection(client, 20);
-        console.log("[SESSION RESUMED]", client.sessionId);
-        this.sendEnvironmentPermissions();
-        this.sendDirectorState();
-        return;
-      } catch (error) {
-        console.warn("[SESSION RESUME EXPIRED]", client.sessionId, error);
-      }
-    }
+  // Colyseus 0.18 lifecycle: a temporary transport loss is onDrop, not
+  // onLeave. Hold the same seat and state while the SDK retries automatically.
+  onDrop(client:Client,code:number) {
+    console.warn("[SESSION DROP / HOLD SEAT]",client.sessionId,{code});
+    this.allowReconnection(client,30);
+  }
+
+  onReconnect(client:Client) {
+    console.log("[SESSION RECONNECTED]",client.sessionId);
+    this.sendEnvironmentPermissions();
+    this.sendDirectorState();
+  }
+
+  // Called only after a consented leave or reconnection failure/timeout.
+  onLeave(client: Client, code: number) {
     this.leaveProximity(client.sessionId);
     this.broadcast("voice:leave",{sessionId:client.sessionId},{except:client});
     this.avatarEmoteLastAt.delete(client.sessionId);
@@ -1039,7 +1039,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.state.players.delete(client.sessionId);
     this.sendEnvironmentPermissions();
     this.sendDirectorState();
-    console.log("[SESSION CLEANUP]", name, client.sessionId, { consented, players: this.state.players.size });
+    console.log("[SESSION CLEANUP]", name, client.sessionId, { code, players: this.state.players.size });
   }
 
 }

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.14 SESSION RESUME LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.15 COLYSEUS 0.18 LIFECYCLE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -971,8 +971,6 @@ let activeRoom: Room | null = null;
 let worldJoinInProgress=false;
 let intentionalRoomLeave=false;
 let pageIsLeaving=false;
-let roomRecoveryTimer:number|null=null;
-let pendingRoomReconnectionToken="";
 let lastRoomPongAt=0;
 const LOCAL_WORLD_BACKUP_PREFIX="shared-world-local-backup-v1:";
 let pendingLocalWorldSave=false;
@@ -3350,26 +3348,10 @@ function resetClientWorldForReentry() {
 // ENTER WORLD
 // =========================================================
 
-function scheduleRoomRecovery(room:Room,reason:string){
-  if(pageIsLeaving||intentionalRoomLeave||activeRoom!==room)return;
-  console.warn("[ROOM CONNECTION RECOVERY]",reason,room.sessionId);
-  pendingRoomReconnectionToken=String((room as any).reconnectionToken||"");
-  activeRoom=null;currentSessionId="";
-  sharedStateDiagnostic.connection="RECOVERING";sharedStateDiagnostic.lastError=reason;
-  refreshSharedStateDiagnosticPanel();
-  status.textContent="ROOM接続を回復しています…";
-  if(sharedWorldReconcileTimer!==null){window.clearInterval(sharedWorldReconcileTimer);sharedWorldReconcileTimer=null;}
-  if(roomRecoveryTimer!==null)window.clearTimeout(roomRecoveryTimer);
-  roomRecoveryTimer=window.setTimeout(()=>{
-    roomRecoveryTimer=null;if(!pageIsLeaving)void enterWorld();
-  },1200);
-}
-
 async function enterWorld() {
   if(worldJoinInProgress||pageIsLeaving)return;
   worldJoinInProgress=true;
   resetContinuousInputState();
-  if(roomRecoveryTimer!==null){window.clearTimeout(roomRecoveryTimer);roomRecoveryTimer=null;}
   if(voiceEnabled)disableVoice(false);
   directorCanDirect=false;directorCanManage=false;directorParticipants=[];directorPanel.classList.add("hidden");refreshDirectorPanel();
   applyEnvironmentPermissions({canEdit:false,locked:false,ownerPresent:false});
@@ -3378,7 +3360,6 @@ async function enterWorld() {
   status.textContent = "接続しています…";
 
   if (activeRoom) {
-    pendingRoomReconnectionToken="";
     intentionalRoomLeave=true;
     try {
       console.log("[SESSION REENTRY] leaving previous room", activeRoom.sessionId);
@@ -3407,21 +3388,7 @@ async function enterWorld() {
 
   try {
     const client = new Client(SERVER_URL);
-    let room:Room;
-    const resumeToken=pendingRoomReconnectionToken;
-    if(resumeToken) {
-      status.textContent="同じROOMセッションへ復帰しています…";
-      try {
-        room=await client.reconnect(resumeToken);
-        console.log("[ROOM SESSION RESUMED]",room.sessionId);
-      } catch(error) {
-        console.warn("[ROOM SESSION RESUME FAILED / FRESH JOIN]",error);
-        room=await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
-      }
-    } else {
-      room=await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
-    }
-    pendingRoomReconnectionToken="";
+    const room=await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
     activeRoom = room;
     lastRoomPongAt=Date.now();
     room.onMessage("room:pong",()=>{
@@ -3431,8 +3398,43 @@ async function enterWorld() {
         sharedStateDiagnostic.connection="OPEN";sharedStateDiagnostic.lastError="-";refreshSharedStateDiagnosticPanel();
       }
     });
-    room.onLeave((code:number)=>scheduleRoomRecovery(room,`ROOM LEFT · ${code}`));
-    room.onError((code:number,message:string)=>scheduleRoomRecovery(room,`ROOM ERROR · ${code} · ${message}`));
+    // Colyseus SDK 0.18 owns transient reconnection. Keep this Room instance,
+    // its listeners and its state tree alive while the SDK retries.
+    room.onDrop((code:number,reason:string)=>{
+      if(room!==activeRoom||pageIsLeaving||intentionalRoomLeave)return;
+      resetContinuousInputState();
+      sharedStateDiagnostic.connection="RECOVERING";
+      sharedStateDiagnostic.lastError=`ROOM DROP · ${code} · ${reason||"network"}`;
+      refreshSharedStateDiagnosticPanel();
+      status.textContent="通信を再接続しています…";
+      console.warn("[ROOM DROP / SDK AUTO-RECONNECT]",code,reason,room.sessionId);
+    });
+    room.onReconnect(()=>{
+      if(room!==activeRoom)return;
+      lastRoomPongAt=Date.now();
+      sharedStateDiagnostic.connection="OPEN";sharedStateDiagnostic.lastError="-";
+      refreshSharedStateDiagnosticPanel();
+      status.textContent="接続を回復しました";
+      console.log("[ROOM RECONNECTED]",room.sessionId);
+    });
+    room.onLeave((code:number,reason:string)=>{
+      if(room!==activeRoom)return;
+      console.warn("[ROOM PERMANENT LEAVE]",code,reason,room.sessionId);
+      activeRoom=null;currentSessionId="";
+      if(sharedWorldReconcileTimer!==null){window.clearInterval(sharedWorldReconcileTimer);sharedWorldReconcileTimer=null;}
+      sharedStateDiagnostic.connection="CLOSED";
+      sharedStateDiagnostic.lastError=`ROOM LEFT · ${code} · ${reason||"closed"}`;
+      refreshSharedStateDiagnosticPanel();
+      status.textContent="接続が終了しました。再入室してください。";
+      enterButton.disabled=false;
+      lobby.classList.remove("hidden");
+    });
+    room.onError((code:number,message:string)=>{
+      if(room!==activeRoom)return;
+      sharedStateDiagnostic.lastError=`ROOM ERROR · ${code} · ${message}`;
+      refreshSharedStateDiagnosticPanel();
+      console.error("[ROOM ERROR]",code,message);
+    });
     room.send("room:ping",{at:Date.now()});
     localAutoRestoreAttempted=false;lastSnapshotMediaCount=-1;
     currentSessionId = room.sessionId;
@@ -3888,9 +3890,9 @@ async function enterWorld() {
     }, 250);
     sharedWorldReconcileTimer = window.setInterval(() => {
       if(room!==activeRoom)return;
-      // A missing application-level pong is diagnostic only. Colyseus already
-      // reports a real transport loss through onLeave/onError. Rejoining on a
-      // delayed pong created false leave/join cycles and random respawns.
+      // A missing application-level pong is diagnostic only. Colyseus 0.18
+      // reports a transient loss through onDrop and owns the automatic retry.
+      // Rejoining here would create a competing room session.
       if(Date.now()-lastRoomPongAt>12000){
         sharedStateDiagnostic.connection="DEGRADED";
         sharedStateDiagnostic.lastError="ROOM HEARTBEAT DELAYED";
@@ -6244,7 +6246,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.14</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.15</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

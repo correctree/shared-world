@@ -879,6 +879,35 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.schedulePersistence("media-update");
     });
 
+    // 0.21.2.3 / Restore lost binary references without replacing or duplicating
+    // the authoritative ROOM objects. Environment editors may repair imported
+    // legacy objects whose IDs and upload filenames were rewritten.
+    this.onMessage("media:asset-relink",(client:Client,payload:any)=>{
+      const id=String(payload?.id||"").trim().slice(0,80);
+      const media=this.state.mediaObjects.get(id);
+      const player=this.state.players.get(client.sessionId);
+      const ownsMedia=!!media&&(
+        media.ownerSessionId===client.sessionId||
+        (!!media.ownerClientId&&!!player?.clientId&&media.ownerClientId===player.clientId)
+      );
+      if(!media||(!ownsMedia&&!this.canEditEnvironment(client,false))){
+        client.send("media:asset-relink:result",{id,ok:false,reason:media?"not-authorized":"media-not-found"});return;
+      }
+      const assetRef=String(payload?.assetRef||"").slice(0,240);
+      const fallbackRef=String(payload?.fallbackRef||"").slice(0,240);
+      const validRef=(value:string)=>!value||/^https?:\/\/[^\s]+\/assets\/[a-zA-Z0-9_-]{1,80}\.(zip|glb|webm|mp3|wav)(?:\?[^\s#]{0,180})?$/i.test(value);
+      const expected=media.type==="sprite"?/\.zip(?:\?|$)/i:media.type==="glb"?/\.glb(?:\?|$)/i:
+        media.type==="webm"?/\.webm(?:\?|$)/i:media.type==="audio"?/\.(mp3|wav)(?:\?|$)/i:null;
+      if(!assetRef||!validRef(assetRef)||!validRef(fallbackRef)||!expected||!expected.test(assetRef)){
+        client.send("media:asset-relink:result",{id,ok:false,reason:"invalid-asset-reference"});return;
+      }
+      media.assetRef=assetRef;media.fallbackRef=fallbackRef;
+      this.broadcast("media:asset-relinked",{id,assetRef,fallbackRef});
+      client.send("media:asset-relink:result",{id,ok:true});
+      console.log("[media:asset-relink stored]",id,media.type);
+      this.schedulePersistence("media-asset-relink");
+    });
+
     // Prototype 0.15.1 / SHARED ACTION EVENT CORE
     // PLAY/STOP are transient interaction events, so they are broadcast rather
     // than stored in WorldState. Any connected participant may interact with

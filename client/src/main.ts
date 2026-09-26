@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.2.2 ASSET NAME REHYDRATION LOADED]");
+console.log("[PROTOTYPE 0.21.2.3 ASSET RELINK REHYDRATION LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3794,6 +3794,16 @@ async function enterWorld() {
       if (payload?.ok) console.log("[MEDIA EDIT SYNC ACCEPTED]", String(payload.id || ""));
       else console.warn("[MEDIA EDIT SYNC REJECTED]", String(payload?.id || ""), String(payload?.reason || "unknown"));
     });
+    room.onMessage("media:asset-relinked",(payload:any)=>{
+      if(room!==activeRoom)return;const id=String(payload?.id||"");if(!id)return;
+      removeSharedMediaLifecycle(id,"asset-relinked-broadcast");
+      window.setTimeout(()=>{if(room!==activeRoom)return;const map:any=getAuthoritativeMediaMap();const media=map?.get?.(id);
+        if(media)void ensureSharedMediaFromState(id,media);else room.send("media:snapshot:request",{});},180);
+    });
+    room.onMessage("media:asset-relink:result",(payload:any)=>{
+      if(room!==activeRoom||payload?.ok)return;
+      worldManifestStatus.textContent=`ASSET RELINK REJECTED · ${String(payload?.id||"")} · ${String(payload?.reason||"unknown")}`;
+    });
     room.onMessage("environment:state",(payload:any)=>{
       if(room!==activeRoom)return;
       if(environmentApplyWatchdog!==null){window.clearTimeout(environmentApplyWatchdog);environmentApplyWatchdog=null;}
@@ -4556,8 +4566,12 @@ worldAssetRehydrateInput.addEventListener("change",async()=>{
     if(packageRoomCode&&activeRoomCode&&packageRoomCode!==activeRoomCode)
       throw new Error(`ROOM mismatch: package ${packageRoomCode} / current ${activeRoomCode}. No files were written.`);
     const map:any=getAuthoritativeMediaMap();
-    const currentMedia:Array<{id:string;assetRef:string;fallbackRef:string}>=[];
-    try{for(const [id,media] of map||[])currentMedia.push({id:String(id),assetRef:String(media?.assetRef||""),fallbackRef:String(media?.fallbackRef||"")});}catch{}
+    const currentMedia:Array<{id:string;title:string;type:string;assetRef:string;fallbackRef:string;x:number;y:number;z:number;scale:number}>=[];
+    try{for(const [id,media] of map||[])currentMedia.push({
+      id:String(id),title:String(media?.title||""),type:String(media?.type||""),
+      assetRef:String(media?.assetRef||""),fallbackRef:String(media?.fallbackRef||""),
+      x:Number(media?.x)||0,y:Number(media?.y)||0,z:Number(media?.z)||0,scale:Number(media?.scale)||1
+    });}catch{}
     const required=new Map<string,{entry:any;contentType:string}>();
     const addRequired=(ref:unknown)=>{
       if(!ref)return;const name=portableAssetName(ref);if(!name)throw new Error("Unsupported asset URL in ZIP manifest");
@@ -4571,12 +4585,41 @@ worldAssetRehydrateInput.addEventListener("change",async()=>{
     const environments=[manifest.environment,...(Array.isArray(manifest.scenes)?manifest.scenes.map((scene:any)=>scene?.environment):[])];
     for(const environment of environments)for(const field of ["skyAssetRef","groundAssetRef","particleAssetRef"])
       addRequired(environment?.[field]);
-    const matchedCurrentIds=new Set<string>();
-    for(const media of currentMedia)for(const ref of [media.assetRef,media.fallbackRef]){
-      const name=portableAssetName(ref);if(name&&required.has(name))matchedCurrentIds.add(media.id);
+    type RelinkPair={current:(typeof currentMedia)[number];source:any};
+    const pairs:RelinkPair[]=[];const usedCurrent=new Set<string>();const usedSource=new Set<any>();
+    // Keep exact filename matches when they still exist.
+    for(const source of manifest.mediaObjects){
+      const sourceNames=[portableAssetName(source?.assetRef),portableAssetName(source?.fallbackRef)].filter(Boolean);
+      const current=currentMedia.find(media=>!usedCurrent.has(media.id)&&[media.assetRef,media.fallbackRef]
+        .some(ref=>{const name=portableAssetName(ref);return !!name&&sourceNames.includes(name);}));
+      if(current){pairs.push({current,source});usedCurrent.add(current.id);usedSource.add(source);}
     }
-    if(manifest.mediaObjects.length&&matchedCurrentIds.size===0)
-      throw new Error("No current ROOM asset filenames match this package. No files were written.");
+    // Old additive imports changed both IDs and asset filenames. Relink the remaining
+    // objects by stable semantic/transform data, while requiring an unambiguous 1:1 type count.
+    const normalizeTitle=(value:unknown)=>String(value||"").trim().replace(/\s*\[SHARED\]\s*$/i,"").toLocaleLowerCase();
+    const remainingSources=manifest.mediaObjects.filter((source:any)=>!usedSource.has(source));
+    for(const type of new Set(remainingSources.map((source:any)=>String(source?.type||"")))){
+      const sources=remainingSources.filter((source:any)=>String(source?.type||"")===type);
+      const currents=currentMedia.filter(media=>!usedCurrent.has(media.id)&&media.type===type);
+      if(currents.length!==sources.length)throw new Error(`Cannot safely relink ${type}: package ${sources.length} / current ${currents.length}. No files were written.`);
+      const candidates:Array<{current:(typeof currentMedia)[number];source:any;score:number}>=[];
+      for(const source of sources)for(const current of currents){
+        const dx=current.x-(Number(source?.x)||0),dy=current.y-(Number(source?.y)||0),dz=current.z-(Number(source?.z)||0);
+        const ds=current.scale-(Number(source?.scale)||1);
+        const titlePenalty=normalizeTitle(current.title)===normalizeTitle(source?.title)?0:10000;
+        candidates.push({current,source,score:titlePenalty+dx*dx+dy*dy+dz*dz+ds*ds});
+      }
+      candidates.sort((a,b)=>a.score-b.score);
+      const chosenCurrent=new Set<string>(),chosenSource=new Set<any>();
+      for(const candidate of candidates)if(!chosenCurrent.has(candidate.current.id)&&!chosenSource.has(candidate.source)){
+        pairs.push({current:candidate.current,source:candidate.source});
+        chosenCurrent.add(candidate.current.id);chosenSource.add(candidate.source);
+        usedCurrent.add(candidate.current.id);usedSource.add(candidate.source);
+      }
+      if(chosenSource.size!==sources.length)throw new Error(`Cannot safely pair ${type} objects. No files were written.`);
+    }
+    if(manifest.mediaObjects.length&&pairs.length!==manifest.mediaObjects.length)
+      throw new Error(`Relink incomplete: ${pairs.length}/${manifest.mediaObjects.length}. No files were written.`);
     let restored=0,alreadyPresent=0,total=0,index=0;
     for(const [name,item] of required){
       if(room!==activeRoom)throw new Error("Room changed during asset recovery");index++;
@@ -4594,11 +4637,15 @@ worldAssetRehydrateInput.addEventListener("change",async()=>{
       const verify=await fetch(url,{cache:"no-store"});if(!verify.ok)throw new Error(`Verify ${name}: HTTP ${verify.status}`);
       restored++;
     }
-    for(const id of matchedCurrentIds)removeSharedMediaLifecycle(id,"asset-rehydration");
+    for(const pair of pairs){
+      room.send("media:asset-relink",{id:pair.current.id,assetRef:String(pair.source?.assetRef||""),fallbackRef:String(pair.source?.fallbackRef||"")});
+      removeSharedMediaLifecycle(pair.current.id,"asset-relink-rehydration");
+    }
     room.send("media:snapshot:request",{});
-    window.setTimeout(()=>{if(room===activeRoom)room.send("media:snapshot:request",{});},900);
-    worldManifestStatus.textContent=`ASSETS RESTORED · ${restored} uploaded · ${alreadyPresent} already present · ${matchedCurrentIds.size} existing objects reloaded · 0 duplicated`;
-    console.log("[ASSET REHYDRATION COMPLETE]",{restored,alreadyPresent,reloaded:matchedCurrentIds.size});
+    window.setTimeout(()=>{if(room===activeRoom)room.send("media:snapshot:request",{});},1200);
+    window.setTimeout(()=>{if(room===activeRoom)room.send("media:snapshot:request",{});},2600);
+    worldManifestStatus.textContent=`ASSETS RESTORED + RELINKED · ${restored} uploaded · ${alreadyPresent} already present · ${pairs.length} existing objects relinked · 0 duplicated`;
+    console.log("[ASSET RELINK REHYDRATION COMPLETE]",{restored,alreadyPresent,relinked:pairs.length});
   }catch(error){
     worldManifestStatus.textContent=`ASSET REHYDRATION FAILED · ${String(error)}`;
     console.error("[ASSET REHYDRATION FAILED]",error);
@@ -6401,7 +6448,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.2.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.2.3</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

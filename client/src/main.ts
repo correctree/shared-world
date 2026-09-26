@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.2 ROOM PERSISTENCE LOADED]");
+console.log("[PROTOTYPE 0.21.2.1 ASSET REHYDRATION LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4437,11 +4437,19 @@ worldPackageExportButton.textContent = "EXPORT WORLD + ASSETS ZIP";
 const worldPackageImportButton = document.createElement("button");
 worldPackageImportButton.type = "button";
 worldPackageImportButton.textContent = "IMPORT WORLD ZIP";
+const worldAssetRehydrateButton = document.createElement("button");
+worldAssetRehydrateButton.type = "button";
+worldAssetRehydrateButton.textContent = "REHYDRATE MISSING ASSETS";
 const worldPackageInput = document.createElement("input");
 worldPackageInput.type = "file";
 worldPackageInput.accept = ".zip,application/zip";
 worldPackageInput.hidden = true;
-worldManifestControls.append(worldPackageExportButton,worldPackageImportButton,worldPackageInput);
+const worldAssetRehydrateInput = document.createElement("input");
+worldAssetRehydrateInput.type = "file";
+worldAssetRehydrateInput.accept = ".zip,application/zip";
+worldAssetRehydrateInput.hidden = true;
+worldManifestControls.append(worldPackageExportButton,worldPackageImportButton,
+  worldAssetRehydrateButton,worldPackageInput,worldAssetRehydrateInput);
 const assetNamePattern = /^[a-zA-Z0-9_-]{1,80}\.(zip|glb|webm|mp3|wav)$/i;
 function portableAssetName(value:unknown):string|null {
   if (typeof value !== "string" || !value) return null;
@@ -4525,6 +4533,68 @@ worldPackageExportButton.addEventListener("click",()=>{
 worldPackageImportButton.addEventListener("click",()=>{
   if (!activeRoom || worldPackageBusy) return;
   worldPackageInput.click();
+});
+worldAssetRehydrateButton.addEventListener("click",()=>{
+  if (!activeRoom || worldPackageBusy) return;
+  worldAssetRehydrateInput.click();
+});
+worldAssetRehydrateInput.addEventListener("change",async()=>{
+  const file=worldAssetRehydrateInput.files?.[0];worldAssetRehydrateInput.value="";
+  if(!file||!activeRoom||worldPackageBusy)return;
+  worldPackageBusy=true;const room=activeRoom;
+  try{
+    if(file.size>90*1024*1024)throw new Error("ZIP exceeds 90 MB");
+    const zip=await JSZip.loadAsync(file);
+    if(Object.keys(zip.files).length>70)throw new Error("Too many ZIP entries");
+    const manifestEntry=zip.file("world.json");if(!manifestEntry)throw new Error("Missing world.json");
+    const json=await manifestEntry.async("string");if(json.length>256*1024)throw new Error("World JSON exceeds 256 KB");
+    const manifest=JSON.parse(json);
+    if(manifest?.format!=="shared-world-manifest"||manifest?.version!==1||
+      !Array.isArray(manifest.mediaObjects)||manifest.mediaObjects.length>64)throw new Error("Unsupported world manifest");
+    const map:any=getAuthoritativeMediaMap();
+    const currentIds=new Set<string>();try{for(const [id] of map||[])currentIds.add(String(id));}catch{}
+    const packageIds=manifest.mediaObjects.map((media:any)=>String(media?.id||"")).filter(Boolean);
+    const unmatched=packageIds.filter((id:string)=>!currentIds.has(id));
+    if(unmatched.length)throw new Error(`ROOM mismatch: ${unmatched.length} packaged object IDs are not present. Use the original ROOM code; no objects were added.`);
+    const required=new Map<string,{entry:any;contentType:string}>();
+    const addRequired=(ref:unknown)=>{
+      if(!ref)return;const name=portableAssetName(ref);if(!name)throw new Error("Unsupported asset URL in ZIP manifest");
+      if(required.has(name))return;const entry=zip.file(`assets/${name}`);if(!entry)throw new Error(`Missing media in ZIP: ${name}`);
+      const ext=name.split(".").pop()!.toLowerCase();
+      const contentType=ext==="glb"?"model/gltf-binary":ext==="webm"?"video/webm":
+        ext==="mp3"?"audio/mpeg":ext==="wav"?"audio/wav":"application/zip";
+      required.set(name,{entry,contentType});
+    };
+    for(const media of manifest.mediaObjects){addRequired(media?.assetRef);addRequired(media?.fallbackRef);}
+    const environments=[manifest.environment,...(Array.isArray(manifest.scenes)?manifest.scenes.map((scene:any)=>scene?.environment):[])];
+    for(const environment of environments)for(const field of ["skyAssetRef","groundAssetRef","particleAssetRef"])
+      addRequired(environment?.[field]);
+    let restored=0,alreadyPresent=0,total=0,index=0;
+    for(const [name,item] of required){
+      if(room!==activeRoom)throw new Error("Room changed during asset recovery");index++;
+      const url=new URL(`/assets/${encodeURIComponent(name)}`,SERVER_URL).href;
+      worldManifestStatus.textContent=`Checking ${index}/${required.size}: ${name}`;
+      const existing=await fetch(url,{cache:"no-store"});
+      if(existing.ok){alreadyPresent++;continue;}
+      if(existing.status!==404)throw new Error(`Check ${name}: HTTP ${existing.status}`);
+      const blob=await item.entry.async("blob");
+      if(!blob.size||blob.size>20*1024*1024)throw new Error(`Invalid size: ${name}`);
+      total+=blob.size;if(total>80*1024*1024)throw new Error("ZIP media exceeds 80 MB");
+      worldManifestStatus.textContent=`Restoring ${index}/${required.size}: ${name}`;
+      const upload=await fetch(url,{method:"PUT",headers:{"Content-Type":item.contentType},body:blob});
+      if(!upload.ok)throw new Error(`Restore ${name}: HTTP ${upload.status}`);
+      const verify=await fetch(url,{cache:"no-store"});if(!verify.ok)throw new Error(`Verify ${name}: HTTP ${verify.status}`);
+      restored++;
+    }
+    for(const id of packageIds)if(currentIds.has(id))removeSharedMediaLifecycle(id,"asset-rehydration");
+    room.send("media:snapshot:request",{});
+    window.setTimeout(()=>{if(room===activeRoom)room.send("media:snapshot:request",{});},900);
+    worldManifestStatus.textContent=`ASSETS RESTORED · ${restored} uploaded · ${alreadyPresent} already present · 0 objects duplicated`;
+    console.log("[ASSET REHYDRATION COMPLETE]",{restored,alreadyPresent,objects:packageIds.length});
+  }catch(error){
+    worldManifestStatus.textContent=`ASSET REHYDRATION FAILED · ${String(error)}`;
+    console.error("[ASSET REHYDRATION FAILED]",error);
+  }finally{worldPackageBusy=false;}
 });
 worldPackageInput.addEventListener("change",async()=>{
   const file=worldPackageInput.files?.[0]; worldPackageInput.value="";
@@ -6323,7 +6393,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.2.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

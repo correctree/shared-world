@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.22.1 ROOM AUTO SAVE HARDENING LOADED]");
+console.log("[PROTOTYPE 0.22.1.1 ROOM ENTRY STABILITY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -969,6 +969,7 @@ const keys = new Set<string>();
 let currentSessionId = "";
 let activeRoom: Room | null = null;
 let worldJoinInProgress=false;
+let worldJoinAttemptToken=0;
 let intentionalRoomLeave=false;
 let pageIsLeaving=false;
 let lastRoomPongAt=0;
@@ -3375,8 +3376,57 @@ function resetClientWorldForReentry() {
 // ENTER WORLD
 // =========================================================
 
+const ROOM_JOIN_RETRY_DELAYS=[0,1500,3000,6000,10000];
+const ROOM_JOIN_TIMEOUT_MS=15000;
+function waitForRoomJoinRetry(delay:number,token:number){
+  return new Promise<void>((resolve,reject)=>{
+    const started=Date.now();
+    const timer=window.setInterval(()=>{
+      if(pageIsLeaving||token!==worldJoinAttemptToken){window.clearInterval(timer);reject(new Error("join-cancelled"));return;}
+      const remaining=Math.max(0,delay-(Date.now()-started));
+      status.textContent=`サーバー起動待ち · ${Math.ceil(remaining/1000)}秒後に再試行`;
+      if(remaining<=0){window.clearInterval(timer);resolve();}
+    },Math.min(250,Math.max(1,delay)));
+  });
+}
+async function joinRoomAttempt(client:Client,options:{name:string;roomCode:string;clientId:string},token:number):Promise<Room>{
+  let expired=false;
+  const join=client.joinOrCreate("shared_world",options);
+  return await new Promise<Room>((resolve,reject)=>{
+    const timer=window.setTimeout(()=>{expired=true;reject(new Error("connection-timeout"));},ROOM_JOIN_TIMEOUT_MS);
+    join.then(room=>{
+      window.clearTimeout(timer);
+      if(expired||pageIsLeaving||token!==worldJoinAttemptToken){void room.leave(true).catch(()=>{});reject(new Error("join-cancelled"));return;}
+      resolve(room);
+    },error=>{window.clearTimeout(timer);reject(error);});
+  });
+}
+async function joinRoomWithRetry(options:{name:string;roomCode:string;clientId:string},token:number):Promise<Room>{
+  let lastError:unknown=null;
+  for(let index=0;index<ROOM_JOIN_RETRY_DELAYS.length;index++){
+    if(pageIsLeaving||token!==worldJoinAttemptToken)throw new Error("join-cancelled");
+    const delay=ROOM_JOIN_RETRY_DELAYS[index];
+    if(delay>0)await waitForRoomJoinRetry(delay,token);
+    const attempt=index+1;
+    status.textContent=`ROOMへ接続中… (${attempt}/${ROOM_JOIN_RETRY_DELAYS.length})`;
+    enterButton.textContent=`CONNECTING ${attempt}/${ROOM_JOIN_RETRY_DELAYS.length}`;
+    try{
+      const client=new Client(SERVER_URL);
+      const room=await joinRoomAttempt(client,options,token);
+      console.log("[ROOM JOIN SUCCESS]",{attempt,roomCode:options.roomCode,sessionId:room.sessionId});
+      return room;
+    }catch(error){
+      lastError=error;
+      if(String((error as Error)?.message||error)==="join-cancelled")throw error;
+      console.warn("[ROOM JOIN RETRY]",{attempt,error:error instanceof Error?error.message:String(error)});
+    }
+  }
+  throw lastError instanceof Error?lastError:new Error("room-join-failed");
+}
+
 async function enterWorld() {
   if(worldJoinInProgress||pageIsLeaving)return;
+  const joinToken=++worldJoinAttemptToken;
   worldJoinInProgress=true;
   resetContinuousInputState();
   if(voiceEnabled)disableVoice(false);
@@ -3384,6 +3434,7 @@ async function enterWorld() {
   applyEnvironmentPermissions({canEdit:false,locked:false,ownerPresent:false});
   unlockResonanceAudio();
   enterButton.disabled = true;
+  const originalEnterButtonText=enterButton.textContent||"ENTER WORLD";
   status.textContent = "接続しています…";
 
   if (activeRoom) {
@@ -3414,8 +3465,7 @@ async function enterWorld() {
   roomInput.value = roomCode;
 
   try {
-    const client = new Client(SERVER_URL);
-    const room=await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
+    const room=await joinRoomWithRetry({name,roomCode,clientId:persistentClientId},joinToken);
     installRoomPayloadGuard(room);
     activeRoom = room;
     lastRoomPongAt=Date.now();
@@ -4000,6 +4050,7 @@ async function enterWorld() {
 
     roomLabel.textContent = `ROOM ${roomCode}`;
     status.textContent = "接続しました";
+    enterButton.textContent=originalEnterButtonText;
     lobby.classList.add("hidden");
     hud.classList.remove("hidden");
     avatarControls.style.display="block";
@@ -4013,15 +4064,20 @@ async function enterWorld() {
       "WASD：移動 / SPACE：ジャンプ・上昇 / F：飛行 / SHIFT：下降";
   } catch (error) {
     console.error(error);
-    status.textContent = `接続失敗: ${error instanceof Error ? error.message : String(error)}`;
-    enterButton.disabled = false;
+    if(!pageIsLeaving&&joinToken===worldJoinAttemptToken){
+      status.textContent = `5回接続できませんでした。再度お試しください: ${error instanceof Error ? error.message : String(error)}`;
+      enterButton.disabled = false;
+      enterButton.textContent=originalEnterButtonText;
+      lobby.classList.remove("hidden");
+    }
   } finally {
-    worldJoinInProgress=false;
+    if(joinToken===worldJoinAttemptToken)worldJoinInProgress=false;
   }
 }
 
 window.addEventListener("pagehide", () => {
   pageIsLeaving=true;
+  worldJoinAttemptToken++;
   sharedStateDiagnostic.connection = "CLOSED";
   refreshSharedStateDiagnosticPanel();
   if (sharedWorldReconcileTimer !== null) {
@@ -6522,7 +6578,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.1.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.2.1 ASSET REHYDRATION LOADED]");
+console.log("[PROTOTYPE 0.21.2.2 ASSET NAME REHYDRATION LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -4551,11 +4551,13 @@ worldAssetRehydrateInput.addEventListener("change",async()=>{
     const manifest=JSON.parse(json);
     if(manifest?.format!=="shared-world-manifest"||manifest?.version!==1||
       !Array.isArray(manifest.mediaObjects)||manifest.mediaObjects.length>64)throw new Error("Unsupported world manifest");
+    const packageRoomCode=String(manifest.roomCode||"").toUpperCase();
+    const activeRoomCode=String(roomInput.value||"").toUpperCase();
+    if(packageRoomCode&&activeRoomCode&&packageRoomCode!==activeRoomCode)
+      throw new Error(`ROOM mismatch: package ${packageRoomCode} / current ${activeRoomCode}. No files were written.`);
     const map:any=getAuthoritativeMediaMap();
-    const currentIds=new Set<string>();try{for(const [id] of map||[])currentIds.add(String(id));}catch{}
-    const packageIds=manifest.mediaObjects.map((media:any)=>String(media?.id||"")).filter(Boolean);
-    const unmatched=packageIds.filter((id:string)=>!currentIds.has(id));
-    if(unmatched.length)throw new Error(`ROOM mismatch: ${unmatched.length} packaged object IDs are not present. Use the original ROOM code; no objects were added.`);
+    const currentMedia:Array<{id:string;assetRef:string;fallbackRef:string}>=[];
+    try{for(const [id,media] of map||[])currentMedia.push({id:String(id),assetRef:String(media?.assetRef||""),fallbackRef:String(media?.fallbackRef||"")});}catch{}
     const required=new Map<string,{entry:any;contentType:string}>();
     const addRequired=(ref:unknown)=>{
       if(!ref)return;const name=portableAssetName(ref);if(!name)throw new Error("Unsupported asset URL in ZIP manifest");
@@ -4569,6 +4571,12 @@ worldAssetRehydrateInput.addEventListener("change",async()=>{
     const environments=[manifest.environment,...(Array.isArray(manifest.scenes)?manifest.scenes.map((scene:any)=>scene?.environment):[])];
     for(const environment of environments)for(const field of ["skyAssetRef","groundAssetRef","particleAssetRef"])
       addRequired(environment?.[field]);
+    const matchedCurrentIds=new Set<string>();
+    for(const media of currentMedia)for(const ref of [media.assetRef,media.fallbackRef]){
+      const name=portableAssetName(ref);if(name&&required.has(name))matchedCurrentIds.add(media.id);
+    }
+    if(manifest.mediaObjects.length&&matchedCurrentIds.size===0)
+      throw new Error("No current ROOM asset filenames match this package. No files were written.");
     let restored=0,alreadyPresent=0,total=0,index=0;
     for(const [name,item] of required){
       if(room!==activeRoom)throw new Error("Room changed during asset recovery");index++;
@@ -4586,11 +4594,11 @@ worldAssetRehydrateInput.addEventListener("change",async()=>{
       const verify=await fetch(url,{cache:"no-store"});if(!verify.ok)throw new Error(`Verify ${name}: HTTP ${verify.status}`);
       restored++;
     }
-    for(const id of packageIds)if(currentIds.has(id))removeSharedMediaLifecycle(id,"asset-rehydration");
+    for(const id of matchedCurrentIds)removeSharedMediaLifecycle(id,"asset-rehydration");
     room.send("media:snapshot:request",{});
     window.setTimeout(()=>{if(room===activeRoom)room.send("media:snapshot:request",{});},900);
-    worldManifestStatus.textContent=`ASSETS RESTORED · ${restored} uploaded · ${alreadyPresent} already present · 0 objects duplicated`;
-    console.log("[ASSET REHYDRATION COMPLETE]",{restored,alreadyPresent,objects:packageIds.length});
+    worldManifestStatus.textContent=`ASSETS RESTORED · ${restored} uploaded · ${alreadyPresent} already present · ${matchedCurrentIds.size} existing objects reloaded · 0 duplicated`;
+    console.log("[ASSET REHYDRATION COMPLETE]",{restored,alreadyPresent,reloaded:matchedCurrentIds.size});
   }catch(error){
     worldManifestStatus.textContent=`ASSET REHYDRATION FAILED · ${String(error)}`;
     console.error("[ASSET REHYDRATION FAILED]",error);
@@ -6393,7 +6401,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.2.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.2.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

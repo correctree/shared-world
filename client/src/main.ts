@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.22.0.1 LIVE RESTORE SYNC LOADED]");
+console.log("[PROTOTYPE 0.22.1 ROOM AUTO SAVE HARDENING LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3432,10 +3432,11 @@ async function enterWorld() {
       const configured=payload?.persistentConfigured===true;
       const failed=Boolean(payload?.error);
       if(element){
-        element.textContent=failed?"SAVE FAILED":configured?(payload?.lastSavedAt?"ROOM SAVED":"PERSISTENCE READY"):"DISK NOT CONFIGURED";
+        const recovered=payload?.recoverySource==="previous"||payload?.recoverySource==="stable";
+        element.textContent=failed?"SAVE FAILED":!configured?"DISK NOT CONFIGURED":payload?.dirty?"SAVING…":recovered?"ROOM RECOVERED":payload?.lastSavedAt?"ROOM SAVED":"PERSISTENCE READY";
         element.dataset.state=failed?"error":configured?"ok":"warning";
         element.title=failed?String(payload.error):configured?
-          `Persistent disk · ${String(payload.lastSavedAt||"waiting for first save")}`:
+          `Persistent disk · revision ${Number(payload?.revision)||0} · ${String(payload.lastSavedAt||"waiting for first save")} · source ${String(payload?.recoverySource||"empty")}`:
           "SHARED_WORLD_DATA_DIR is not configured; Render restart recovery is not guaranteed.";
       }
       if(failed)console.error("[ROOM PERSISTENCE ERROR]",payload.error);
@@ -6521,7 +6522,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.0.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

@@ -50,9 +50,12 @@ type CueDefinition = {
 export class SharedWorldRoom extends Room<WorldState> {
   private roomCode = "ART001";
   private persistenceTimer: ReturnType<typeof setTimeout> | null = null;
+  private persistenceCheckpointTimer: ReturnType<typeof setInterval> | null = null;
+  private persistenceDirty = false;
   private persistenceRevision = 0;
   private lastSavedAt = "";
   private lastSaveError = "";
+  private recoverySource = "empty";
   private scenes = new Map<string,SceneSnapshot>();
   private cues = new Map<string,CueDefinition>();
   private authoringRevision = 0;
@@ -89,6 +92,7 @@ export class SharedWorldRoom extends Room<WorldState> {
   private persistenceState() {
     const storage=storageInfo();
     return {revision:this.persistenceRevision,lastSavedAt:this.lastSavedAt,error:this.lastSaveError,
+      dirty:this.persistenceDirty,recoverySource:this.recoverySource,
       persistentConfigured:storage.persistentConfigured,mode:storage.persistentConfigured?"persistent-disk":"ephemeral-local"};
   }
   private sendPersistenceState(target?:Client) {
@@ -101,7 +105,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.persistenceRevision++;
       const snapshot=this.buildPersistentSnapshot();
       saveWorld(this.roomCode,snapshot);
-      this.lastSavedAt=snapshot.savedAt;this.lastSaveError="";
+      this.lastSavedAt=snapshot.savedAt;this.lastSaveError="";this.persistenceDirty=false;this.recoverySource="current";
       console.log("[ROOM SAVED]",{roomCode:this.roomCode,reason,revision:this.persistenceRevision,savedAt:this.lastSavedAt,
         media:snapshot.mediaObjects.length,scenes:snapshot.scenes.length,cues:snapshot.cues.length});
     } catch(error) {
@@ -112,6 +116,8 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.sendPersistenceState();
   }
   private schedulePersistence(reason:string) {
+    this.persistenceDirty=true;
+    this.sendPersistenceState();
     if(this.persistenceTimer)clearTimeout(this.persistenceTimer);
     this.persistenceTimer=setTimeout(()=>this.persistNow(reason),250);
   }
@@ -156,10 +162,11 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.persistenceRevision=Math.max(0,Number(saved.revision)||0);
     this.authoringRevision=this.persistenceRevision;
     this.lastSavedAt=String(saved.savedAt||"");
+    this.recoverySource=loaded.source;
     this.scheduleParticleEnd();
-    console.log(loaded.recovered?"[ROOM RESTORED LAST STABLE]":"[ROOM RESTORED]",{
+    console.log(loaded.recovered?"[ROOM RESTORED RECOVERY GENERATION]":"[ROOM RESTORED]",{
       roomCode:this.roomCode,revision:this.persistenceRevision,media:this.state.mediaObjects.size,
-      scenes:this.scenes.size,cues:this.cues.size,savedAt:this.lastSavedAt});
+      scenes:this.scenes.size,cues:this.cues.size,savedAt:this.lastSavedAt,source:loaded.source});
   }
   private particleEndTimer:ReturnType<typeof setTimeout>|null=null;
   private scheduleParticleEnd() {
@@ -456,6 +463,10 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.lastSaveError=error instanceof Error?error.message:String(error);
       console.error("[ROOM RESTORE FAILED / STARTING EMPTY]",this.roomCode,this.lastSaveError);
     }
+    this.persistenceCheckpointTimer=setInterval(()=>{
+      if(this.persistenceDirty)this.persistNow("60s-dirty-checkpoint");
+      else this.sendPersistenceState();
+    },60_000);
 
     // Lightweight application heartbeat. This detects a Render restart or a
     // half-open browser socket before authoring commands silently time out.
@@ -1083,6 +1094,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.state.mediaObjects.clear();this.mediaBehaviors.clear();this.scenes.clear();this.cues.clear();
       this.environment=environment;this.environmentOwnerClientId=player.clientId;this.persistenceRevision=revision;
       this.lastSavedAt=savedAt;this.lastSaveError="";
+      this.persistenceDirty=false;this.recoverySource="current";
       for(const raw of mediaObjects){const id=String(raw.id),media=new SharedMediaObject({
         title:String(raw.title),type:String(raw.type),assetRef:String(raw.assetRef),fallbackRef:String(raw.fallbackRef),
         ownerSessionId:client.sessionId,ownerClientId:player.clientId,groupName:String(raw.groupName),tags:String(raw.tags),visible:raw.visible!==false,
@@ -1300,7 +1312,8 @@ export class SharedWorldRoom extends Room<WorldState> {
 
   onDispose() {
     if(this.particleEndTimer)clearTimeout(this.particleEndTimer);
-    this.persistNow("room-dispose");
+    if(this.persistenceCheckpointTimer)clearInterval(this.persistenceCheckpointTimer);
+    if(this.persistenceDirty)this.persistNow("room-dispose");
   }
 
 }

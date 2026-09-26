@@ -35,7 +35,8 @@ function safeRoomCode(code: string) {
 }
 
 function worldPath(code: string) { return join(worldDir, `${safeRoomCode(code)}.json`); }
-function backupPath(code: string) { return join(worldDir, `${safeRoomCode(code)}.stable.json`); }
+function previousPath(code: string) { return join(worldDir, `${safeRoomCode(code)}.previous.json`); }
+function stablePath(code: string) { return join(worldDir, `${safeRoomCode(code)}.stable.json`); }
 
 function validateEnvelope(value: unknown, code: string): SavedWorldV2 {
   if (!value || typeof value !== "object") throw new Error("snapshot is not an object");
@@ -47,6 +48,12 @@ function validateEnvelope(value: unknown, code: string): SavedWorldV2 {
   if (!Array.isArray(world.cues) || world.cues.length > 24) throw new Error("invalid cue list");
   if (!Array.isArray(world.directorClientIds) || world.directorClientIds.length > 12) throw new Error("invalid director list");
   if (!world.environment || typeof world.environment !== "object") throw new Error("invalid environment");
+  const ids = new Set<string>();
+  for (const raw of world.mediaObjects) {
+    const id=String(raw?.id||"");
+    if(!/^[a-zA-Z0-9_-]{1,80}$/.test(id)||ids.has(id))throw new Error("invalid or duplicate media id");
+    ids.add(id);
+  }
   return world as SavedWorldV2;
 }
 
@@ -56,33 +63,49 @@ function readSnapshot(path: string, code: string) {
   return validateEnvelope(JSON.parse(readFileSync(path, "utf8")), code);
 }
 
-export function loadWorld(code: string): { world: SavedWorldV2 | null; recovered: boolean } {
-  const primary = worldPath(code);
-  const stable = backupPath(code);
-  if (!existsSync(primary) && !existsSync(stable)) return { world: null, recovered: false };
-  try {
-    return { world: readSnapshot(primary, code), recovered: false };
-  } catch (primaryError) {
-    console.error("[ROOM STORAGE PRIMARY INVALID]", safeRoomCode(code), primaryError);
-    if (!existsSync(stable)) throw primaryError;
-    const world = readSnapshot(stable, code);
-    console.warn("[ROOM STORAGE RECOVERED LAST STABLE]", safeRoomCode(code), world.savedAt);
-    return { world, recovered: true };
+export type WorldGeneration = "current" | "previous" | "stable";
+
+export function loadWorld(code: string): { world: SavedWorldV2 | null; recovered: boolean; source: WorldGeneration | "empty" } {
+  const candidates:Array<{source:WorldGeneration;path:string}>=[
+    {source:"current",path:worldPath(code)},
+    {source:"previous",path:previousPath(code)},
+    {source:"stable",path:stablePath(code)}
+  ];
+  let lastError:unknown=null;
+  for(const candidate of candidates){
+    if(!existsSync(candidate.path))continue;
+    try{
+      const world=readSnapshot(candidate.path,code);
+      if(candidate.source!=="current")console.warn("[ROOM STORAGE RECOVERED]",safeRoomCode(code),candidate.source,world.savedAt);
+      return {world,recovered:candidate.source!=="current",source:candidate.source};
+    }catch(error){lastError=error;console.error("[ROOM STORAGE GENERATION INVALID]",safeRoomCode(code),candidate.source,error);}
   }
+  if(lastError)throw lastError;
+  return {world:null,recovered:false,source:"empty"};
 }
 
 export function saveWorld(code: string, world: SavedWorldV2) {
   const primary = worldPath(code);
-  const stable = backupPath(code);
+  const previous = previousPath(code);
+  const stable = stablePath(code);
   const temporary = `${primary}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   const json = JSON.stringify(validateEnvelope(world, code));
   if (Buffer.byteLength(json, "utf8") > 2 * 1024 * 1024) throw new Error("snapshot exceeds 2 MB");
   writeFileSync(temporary, json, { encoding: "utf8", mode: 0o600 });
   try {
-    if (existsSync(primary)) copyFileSync(primary, stable);
+    // Read back the temporary file before rotation so a truncated write can
+    // never displace a known-good generation.
+    readSnapshot(temporary,code);
+    if(existsSync(previous)){
+      try{readSnapshot(previous,code);copyFileSync(previous,stable);}catch(error){console.warn("[ROOM STORAGE PREVIOUS NOT ROTATED]",safeRoomCode(code),error);}
+    }
+    if(existsSync(primary)){
+      try{readSnapshot(primary,code);copyFileSync(primary,previous);}catch(error){console.warn("[ROOM STORAGE CURRENT NOT ROTATED]",safeRoomCode(code),error);}
+    }
     renameSync(temporary, primary);
-    // The newly validated primary becomes the recovery point after its first save.
-    if (!existsSync(stable)) copyFileSync(primary, stable);
+    // Bootstrap all recovery generations on a ROOM's first successful save.
+    if(!existsSync(previous))copyFileSync(primary,previous);
+    if(!existsSync(stable))copyFileSync(previous,stable);
   } catch (error) {
     if (existsSync(temporary)) unlinkSync(temporary);
     throw error;
@@ -93,7 +116,7 @@ export function storageInfo() {
   return {
     root,
     persistentConfigured: Boolean(process.env.SHARED_WORLD_DATA_DIR),
-    storedWorlds: readdirSync(worldDir).filter(name => name.endsWith(".json") && !name.endsWith(".stable.json")).length,
+    storedWorlds: readdirSync(worldDir).filter(name => name.endsWith(".json") && !name.endsWith(".stable.json") && !name.endsWith(".previous.json")).length,
     storedAssets: readdirSync(assetDir).length
   };
 }

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.22.0 ROOM SNAPSHOT V2 LOADED]");
+console.log("[PROTOTYPE 0.22.0.1 LIVE RESTORE SYNC LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3865,8 +3865,14 @@ async function enterWorld() {
     room.onMessage("world:restore:v2:result",(result:any)=>{
       if(room!==activeRoom)return;worldPackageBusy=false;
       if(!result?.ok){worldManifestStatus.textContent=`RESTORE ROOM REJECTED · ${String(result?.reason||"unknown")}`;return;}
-      worldManifestStatus.textContent=`ROOM RESTORED · ${Number(result.count)||0} objects · backup saved · revision ${Number(result.revision)||0} · reloading…`;
-      window.setTimeout(()=>window.location.reload(),1200);
+      worldManifestStatus.textContent=`ROOM RESTORED · ${Number(result.count)||0} objects · backup saved · revision ${Number(result.revision)||0} · synchronizing live…`;
+      // Keep the current player and Colyseus session alive. Dispose only rendered
+      // media, then rebuild it from the authoritative snapshot in this ROOM.
+      for(const id of new Set([...Array.from(managedPlacedMedia.keys()),...Array.from(sharedRemoteMediaIds)]))
+        removeSharedMediaLifecycle(id,"live-restore-refresh");
+      const sync=()=>{if(room!==activeRoom)return;room.send("media:snapshot:request",{});reconcileWorldFromServerState();};
+      window.setTimeout(sync,120);window.setTimeout(sync,650);window.setTimeout(sync,1500);
+      window.setTimeout(()=>{if(room!==activeRoom)return;worldManifestStatus.textContent=`ROOM SNAPSHOT V2 ACTIVE · ${Number(result.count)||0} objects · connection preserved`;requestLocalWorldSave("ROOM SNAPSHOT V2 RESTORE");},1900);
     });
     room.onMessage("world:restored:v2",(result:any)=>{
       if(room!==activeRoom||worldPackageBusy)return;
@@ -6515,7 +6521,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.0</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.0.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.1.5.15 COLYSEUS 0.18 LIFECYCLE LOADED]");
+console.log("[PROTOTYPE 0.21.1.5.16 PAYLOAD BOUNDARY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -992,8 +992,35 @@ function maybeRestoreLocalWorld(){
   if(!manifest||manifest.format!=="shared-world-manifest"||!Array.isArray(manifest.mediaObjects)||
     (!manifest.mediaObjects.length&&!(Array.isArray(manifest.scenes)&&manifest.scenes.length)&&
       !(Array.isArray(manifest.cues)&&manifest.cues.length)))return;
-  sceneStatus.textContent="Restoring local room backup…";
-  activeRoom.send("world:import",manifest);
+  // Never push an unknown-size local backup during room entry. A legacy backup
+  // can contain embedded data and exceed the WebSocket transport limit, which
+  // used to disconnect the room before the user could interact with it.
+  sceneStatus.textContent="LOCAL BACKUP AVAILABLE · USE RESTORE LOCAL";
+  localBackupStatus.textContent="LOCAL BACKUP READY · MANUAL RESTORE ONLY";
+}
+
+const ROOM_CONTROL_PAYLOAD_LIMIT=512*1024;
+function installRoomPayloadGuard(room:Room){
+  const guarded=room as Room&{__payloadGuardInstalled?:boolean};
+  if(guarded.__payloadGuardInstalled)return;
+  guarded.__payloadGuardInstalled=true;
+  const originalSend=room.send.bind(room);
+  (room as any).send=(type:string|number,payload?:unknown)=>{
+    let bytes=0;
+    try {bytes=new TextEncoder().encode(JSON.stringify(payload??null)).byteLength;}
+    catch {bytes=0;}
+    if(bytes>ROOM_CONTROL_PAYLOAD_LIMIT){
+      console.error("[ROOM SEND BLOCKED / OVERSIZE]",String(type),bytes);
+      sharedStateDiagnostic.lastError=`BLOCKED OVERSIZE · ${String(type)} · ${bytes} B`;
+      refreshSharedStateDiagnosticPanel();
+      if(String(type)==="world:import"){
+        sceneStatus.textContent=`LOCAL BACKUP TOO LARGE · ${Math.ceil(bytes/1024)} KB`;
+        localBackupStatus.textContent="RESTORE BLOCKED · EXPORT/ASSETS NEED CLEANUP";
+      }
+      return;
+    }
+    return originalSend(type as any,payload as any);
+  };
 }
 
 const CLIENT_ID_STORAGE_KEY = "shared-world-client-id-v1";
@@ -3389,6 +3416,7 @@ async function enterWorld() {
   try {
     const client = new Client(SERVER_URL);
     const room=await client.joinOrCreate("shared_world", { name, roomCode, clientId: persistentClientId });
+    installRoomPayloadGuard(room);
     activeRoom = room;
     lastRoomPongAt=Date.now();
     room.onMessage("room:pong",()=>{
@@ -6246,7 +6274,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.15</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.1.5.16</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

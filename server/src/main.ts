@@ -1,9 +1,10 @@
+import { assetCount, readAsset, saveAsset } from "./persistence.js";
 import { defineRoom, defineServer } from "colyseus";
 import { SharedWorldRoom } from "./SharedWorldRoom.js";
+import { createHash } from "node:crypto";
 
 const port = Number(process.env.PORT || 2567);
 const MAX_ASSET_BYTES = 20 * 1024 * 1024;
-const sharedAssets = new Map<string, Buffer>();
 
 function parseAssetName(raw: string) {
   const clean = String(raw || "")
@@ -69,9 +70,20 @@ const server = defineServer({
           return;
         }
 
-        sharedAssets.set(key, data);
-        console.log(`[asset:put] ${key} / ${data.length} bytes`);
-        res.json({ ok: true, assetRef: `/assets/${key}`, bytes: data.length });
+        try {
+          if(/^[a-f0-9]{64}$/i.test(parsed.id)){
+            const actual=createHash("sha256").update(data).digest("hex");
+            if(actual.toLowerCase()!==parsed.id.toLowerCase()){
+              res.status(409).json({ok:false,error:"asset hash mismatch"});return;
+            }
+          }
+          saveAsset(key, data);
+          console.log(`[asset:put] ${key} / ${data.length} bytes`);
+          res.json({ ok: true, assetRef: `/assets/${key}`, bytes: data.length });
+        } catch (error) {
+          console.error("[asset:save error]",key,error);
+          res.status(500).json({ok:false,error:"asset storage failed"});
+        }
       });
 
       req.on("error", (error) => {
@@ -88,7 +100,9 @@ const server = defineServer({
       }
 
       const key = `${parsed.id}.${parsed.ext}`;
-      const data = sharedAssets.get(key);
+      let data: Buffer | null = null;
+      try { data = readAsset(key); }
+      catch (error) { console.error("[asset:read error]",key,error); res.sendStatus(500); return; }
       if (!data) {
         res.status(404).json({ ok: false, error: "asset not found" });
         return;
@@ -113,8 +127,8 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.16.0.1",
-        sharedAssets: sharedAssets.size
+        service: "shared-world-0.22.0-room-snapshot-v2",
+        storedAssets: assetCount()
       })
     );
   }
@@ -122,4 +136,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.16.0.1] Audio Playback + Sharing Fix ready");
+console.log("[Prototype 0.22.0] ROOM SNAPSHOT V2 ready");

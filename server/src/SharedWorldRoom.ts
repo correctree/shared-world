@@ -1,5 +1,5 @@
 import { Room, type Client } from "colyseus";
-import { loadWorld, saveWorld, storageInfo, type SavedWorldV2 } from "./persistence.js";
+import { assetExists, loadWorld, saveWorld, storageInfo, type SavedWorldV2 } from "./persistence.js";
 import { Player, SharedMediaObject, WorldState } from "./state.js";
 
 const MAX_STEP = 0.75;
@@ -1029,6 +1029,73 @@ export class SharedWorldRoom extends Room<WorldState> {
         exportedAt: new Date().toISOString(), environment:this.environment, mediaObjects,
         scenes:Array.from(this.scenes.values()),cues:Array.from(this.cues.values())
       });
+    });
+
+    // 0.22.0 / Authoritative, replace-not-merge ROOM restoration. The client
+    // uploads content-addressed assets first; the server validates every file,
+    // atomically saves the proposed snapshot (which also rotates the previous
+    // snapshot to .stable.json), and only then replaces the live room state.
+    this.onMessage("world:restore:v2",(client:Client,payload:any)=>{
+      const fail=(reason:string)=>client.send("world:restore:v2:result",{ok:false,reason});
+      const player=this.state.players.get(client.sessionId);
+      if(!player||!this.canEditEnvironment(client,true)){fail("owner-required");this.sendEnvironmentPermissions(client);return;}
+      const roomCode=String(payload?.roomCode||"").toUpperCase();
+      const items=payload?.mediaObjects;
+      if(payload?.format!=="shared-world-snapshot"||payload?.version!==2||roomCode!==this.roomCode||
+        !Array.isArray(items)||items.length>MAX_MEDIA_OBJECTS){fail("invalid-snapshot-v2");return;}
+      const validTypes=new Set(["sprite","glb","webm","audio"]),ids=new Set<string>();
+      const bounded=(value:unknown,fallback:number,min:number,max:number)=>{const n=Number(value);return Number.isFinite(n)?Math.min(max,Math.max(min,n)):fallback;};
+      const mediaObjects:Array<Record<string,unknown>>=[];
+      const extractKey=(ref:unknown)=>{
+        try{const path=new URL(String(ref||""),"http://local").pathname;const match=/^\/assets\/([a-f0-9]{64}\.(zip|glb|webm|mp3|wav))$/i.exec(path);return match?.[1]?.toLowerCase()||"";}catch{return "";}
+      };
+      for(let i=0;i<items.length;i++){
+        const item=items[i],id=String(item?.id||"").trim(),type=String(item?.type||"");
+        const key=extractKey(item?.assetRef),fallbackKey=item?.fallbackRef?extractKey(item.fallbackRef):"";
+        const values=[item?.x,item?.y,item?.z,item?.rotationX,item?.rotationY,item?.rotationZ,item?.scale].map(Number);
+        if(!/^[a-zA-Z0-9_-]{1,80}$/.test(id)||ids.has(id)||!validTypes.has(type)||!key||
+          (item?.fallbackRef&&!fallbackKey)||!values.every(Number.isFinite)||!assetExists(key)||(fallbackKey&&!assetExists(fallbackKey))){
+          fail(`invalid-or-missing-media-${i+1}`);return;
+        }
+        const expected=type==="sprite"?"zip":type==="glb"?"glb":type==="webm"?"webm":"audio";
+        if((expected!=="audio"&&!key.endsWith(`.${expected}`))||(expected==="audio"&&!/\.(mp3|wav)$/.test(key))){fail(`type-mismatch-${i+1}`);return;}
+        ids.add(id);const [x,y,z,rotationX,rotationY,rotationZ,scale]=values;
+        mediaObjects.push({id,title:String(item?.title||"Shared Artwork").slice(0,80),type,
+          assetRef:String(item.assetRef).slice(0,240),fallbackRef:String(item.fallbackRef||"").slice(0,240),
+          ownerClientId:player.clientId,groupName:this.cleanMediaGroup(item?.groupName),tags:this.cleanMediaTags(item?.tags),
+          visible:item?.visible!==false,x:bounded(x,0,-1000,1000),y:bounded(y,1.8,-10,20),z:bounded(z,-3,-1000,1000),
+          rotationX,rotationY,rotationZ,scale:bounded(scale,1,.05,20),
+          behavior:item?.behavior&&typeof item.behavior==="object"?{...item.behavior}:null});
+      }
+      const environment=this.cleanEnvironment(payload?.environment);if(!environment){fail("invalid-environment");return;}
+      const scenes=Array.isArray(payload?.scenes)?payload.scenes.slice(0,12):[];
+      const cues=Array.isArray(payload?.cues)?payload.cues.slice(0,24):[];
+      const environments=[environment,...scenes.map((scene:any)=>this.cleanEnvironment(scene?.environment)).filter(Boolean)];
+      for(const env of environments)for(const field of ["skyAssetRef","groundAssetRef","particleAssetRef"]){
+        const ref=(env as any)?.[field];if(!ref)continue;const key=extractKey(ref);
+        if(!key||!key.endsWith(".zip")||!assetExists(key)){fail(`missing-environment-asset-${field}`);return;}
+      }
+      const revision=this.persistenceRevision+1,savedAt=new Date().toISOString();
+      const proposed:SavedWorldV2={format:"shared-world-room",version:2,roomCode:this.roomCode,revision,savedAt,
+        environment:{...environment},environmentOwnerClientId:player.clientId,
+        directorClientIds:Array.from(this.directorClientIds).filter(value=>value!==player.clientId),mediaObjects,scenes,cues};
+      try{saveWorld(this.roomCode,proposed);}catch(error){console.error("[ROOM V2 RESTORE SAVE FAILED]",error);fail("snapshot-save-failed");return;}
+      this.state.mediaObjects.clear();this.mediaBehaviors.clear();this.scenes.clear();this.cues.clear();
+      this.environment=environment;this.environmentOwnerClientId=player.clientId;this.persistenceRevision=revision;
+      this.lastSavedAt=savedAt;this.lastSaveError="";
+      for(const raw of mediaObjects){const id=String(raw.id),media=new SharedMediaObject({
+        title:String(raw.title),type:String(raw.type),assetRef:String(raw.assetRef),fallbackRef:String(raw.fallbackRef),
+        ownerSessionId:client.sessionId,ownerClientId:player.clientId,groupName:String(raw.groupName),tags:String(raw.tags),visible:raw.visible!==false,
+        x:Number(raw.x),y:Number(raw.y),z:Number(raw.z),rotationX:Number(raw.rotationX),rotationY:Number(raw.rotationY),rotationZ:Number(raw.rotationZ),scale:Number(raw.scale)
+      });this.state.mediaObjects.set(id,media);if(raw.behavior&&typeof raw.behavior==="object")this.mediaBehaviors.set(id,{...(raw.behavior as Record<string,unknown>)});}
+      for(const raw of scenes){const id=String(raw?.id||"").slice(0,80),name=String(raw?.name||"").slice(0,32),env=this.cleanEnvironment(raw?.environment);
+        if(id&&name&&env&&raw?.media&&typeof raw.media==="object")this.scenes.set(id,{id,name,updatedAt:Number(raw.updatedAt)||Date.now(),environment:env,media:raw.media});}
+      for(const raw of cues){const id=String(raw?.id||"").slice(0,80),name=String(raw?.name||"").slice(0,32),targetType=String(raw?.targetType||"") as CueDefinition["targetType"],action=String(raw?.action||"") as CueDefinition["action"],target=String(raw?.target||"").slice(0,80);
+        if(id&&name&&target&&["scene","group","tag"].includes(targetType)&&["recall","play","stop","move","rotate","scale","float","orbit","shake"].includes(action))this.cues.set(id,{id,name,targetType,target,action,updatedAt:Number(raw.updatedAt)||Date.now()});}
+      this.scheduleParticleEnd();this.broadcast("world:restored:v2",{roomCode:this.roomCode,revision,count:mediaObjects.length,savedAt});
+      client.send("world:restore:v2:result",{ok:true,roomCode:this.roomCode,revision,count:mediaObjects.length,savedAt,backup:true});
+      this.broadcast("environment:state",this.environment);this.sendEnvironmentPermissions();this.sendSceneList();this.sendCueList();this.sendAuthoringState();this.sendPersistenceState();
+      console.log("[ROOM RESTORED V2]",{roomCode:this.roomCode,revision,count:mediaObjects.length,savedAt});
     });
 
     this.onMessage("world:import", (client: Client, payload: any) => {

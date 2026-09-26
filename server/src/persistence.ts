@@ -3,6 +3,7 @@ import {
   renameSync, statSync, unlinkSync, writeFileSync
 } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 // Render must mount a persistent disk and set SHARED_WORLD_DATA_DIR to its
 // mount path (recommended: /var/data). Without the variable, local development
@@ -111,6 +112,21 @@ export function saveAsset(key: string, data: Buffer) {
 export function readAsset(key: string) {
   const path = assetPath(key);
   return existsSync(path) ? readFileSync(path) : null;
+}
+
+export function contentAssetKey(data: Buffer, extension: string) {
+  const ext=String(extension||"").toLowerCase();
+  if(!/^(zip|glb|webm|mp3|wav)$/.test(ext))throw new Error("invalid asset extension");
+  return `${createHash("sha256").update(data).digest("hex")}.${ext}`;
+}
+export function saveContentAsset(data: Buffer, extension: string) {
+  const key=contentAssetKey(data,extension);
+  const path=assetPath(key);
+  if(!existsSync(path))saveAsset(key,data);
+  return key;
+}
+export function assetExists(key:string) {
+  try{return existsSync(assetPath(key));}catch{return false;}
 }
 
 console.log("[ROOM STORAGE]", storageInfo());

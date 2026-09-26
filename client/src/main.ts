@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.21.2.3 ASSET RELINK REHYDRATION LOADED]");
+console.log("[PROTOTYPE 0.22.0 ROOM SNAPSHOT V2 LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3862,6 +3862,16 @@ async function enterWorld() {
         window.setTimeout(()=>requestLocalWorldSave("ROOM RESTORE"),800);
       }
     });
+    room.onMessage("world:restore:v2:result",(result:any)=>{
+      if(room!==activeRoom)return;worldPackageBusy=false;
+      if(!result?.ok){worldManifestStatus.textContent=`RESTORE ROOM REJECTED · ${String(result?.reason||"unknown")}`;return;}
+      worldManifestStatus.textContent=`ROOM RESTORED · ${Number(result.count)||0} objects · backup saved · revision ${Number(result.revision)||0} · reloading…`;
+      window.setTimeout(()=>window.location.reload(),1200);
+    });
+    room.onMessage("world:restored:v2",(result:any)=>{
+      if(room!==activeRoom||worldPackageBusy)return;
+      worldManifestStatus.textContent=`ROOM SNAPSHOT V2 ACTIVE · ${Number(result?.count)||0} objects`;
+    });
     room.onMessage("media:behavior", (payload:any) => {
       const id=String(payload?.id||"");
       if (id) applySharedBehavior(id,payload?.behavior);
@@ -4443,13 +4453,13 @@ let pendingWorldPackageExport = false;
 let worldPackageBusy = false;
 const worldPackageExportButton = document.createElement("button");
 worldPackageExportButton.type = "button";
-worldPackageExportButton.textContent = "EXPORT WORLD + ASSETS ZIP";
+worldPackageExportButton.textContent = "EXPORT ROOM SNAPSHOT V2";
 const worldPackageImportButton = document.createElement("button");
 worldPackageImportButton.type = "button";
-worldPackageImportButton.textContent = "IMPORT WORLD ZIP";
+worldPackageImportButton.textContent = "MERGE WORLD ZIP";
 const worldAssetRehydrateButton = document.createElement("button");
 worldAssetRehydrateButton.type = "button";
-worldAssetRehydrateButton.textContent = "REHYDRATE MISSING ASSETS";
+worldAssetRehydrateButton.textContent = "RESTORE ROOM SNAPSHOT";
 const worldPackageInput = document.createElement("input");
 worldPackageInput.type = "file";
 worldPackageInput.accept = ".zip,application/zip";
@@ -4489,7 +4499,7 @@ async function exportPortableWorld(manifest:any, room:Room) {
     if (room !== activeRoom || manifest?.format !== "shared-world-manifest" ||
         manifest?.version !== 1 || !Array.isArray(manifest.mediaObjects)) throw new Error("Invalid world response");
     const zip=new JSZip();
-    const names=new Set<string>();
+    const names=new Set<string>();const canonicalRefs=new Map<string,string>(),nameToKey=new Map<string,string>();
     let total=0;
     for (const media of manifest.mediaObjects) {
       for (const field of ["assetRef","fallbackRef"] as const) {
@@ -4497,7 +4507,7 @@ async function exportPortableWorld(manifest:any, room:Room) {
         if (!ref) continue;
         const name=portableAssetName(ref);
         if (!name) throw new Error(`Unsupported asset URL: ${String(ref).slice(0,80)}`);
-        if (names.has(name)) continue;
+        if (names.has(name)) {const key=nameToKey.get(name);if(key){const original=new URL(String(ref),SERVER_URL),canonical=new URL(`/assets/${key}`,SERVER_URL);canonical.search=original.search;canonicalRefs.set(String(ref),canonical.href);}continue;}
         names.add(name);
         worldManifestStatus.textContent=`Downloading asset ${names.size}: ${name}`;
         const response=await fetch(new URL(`/assets/${name}`,SERVER_URL),{cache:"no-store"});
@@ -4506,22 +4516,39 @@ async function exportPortableWorld(manifest:any, room:Room) {
         if (!blob.size || blob.size>20*1024*1024) throw new Error(`${name}: invalid asset size`);
         total+=blob.size;
         if (total>80*1024*1024) throw new Error("Package exceeds 80 MB of media");
-        zip.file(`assets/${name}`,blob);
+        const ext=name.split(".").pop()!.toLowerCase();
+        const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await blob.arrayBuffer())),byte=>byte.toString(16).padStart(2,"0")).join("");
+        const key=`${hash}.${ext}`;nameToKey.set(name,key);zip.file(`assets/${key}`,blob);
+        const original=new URL(String(ref),SERVER_URL),canonical=new URL(`/assets/${key}`,SERVER_URL);canonical.search=original.search;
+        canonicalRefs.set(String(ref),canonical.href);
       }
     }
     const sceneEnvironments=[manifest.environment,...(Array.isArray(manifest.scenes)?manifest.scenes.map((scene:any)=>scene?.environment):[])];
     for(const environment of sceneEnvironments)for (const field of ["skyAssetRef","groundAssetRef","particleAssetRef"] as const) {
       const ref=environment?.[field];if (!ref) continue;
       const name=portableAssetName(ref);if(!name || !name.endsWith(".zip")) throw new Error(`Invalid ${field} URL`);
-      if(names.has(name)) continue;
+      if(names.has(name)){const key=nameToKey.get(name);if(key)canonicalRefs.set(String(ref),new URL(`/assets/${key}`,SERVER_URL).href);continue;}
       const response=await fetch(new URL(`/assets/${name}`,SERVER_URL),{cache:"no-store"});
       if(!response.ok) throw new Error(`${field}: HTTP ${response.status}`);
       const blob=await response.blob();
       if(!blob.size || blob.size>20*1024*1024 || total+blob.size>80*1024*1024)throw new Error(`${field} asset too large`);
-      names.add(name);total+=blob.size;zip.file(`assets/${name}`,blob);
+      const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await blob.arrayBuffer())),byte=>byte.toString(16).padStart(2,"0")).join("");
+      const key=`${hash}.zip`;nameToKey.set(name,key);names.add(name);total+=blob.size;zip.file(`assets/${key}`,blob);
+      canonicalRefs.set(String(ref),new URL(`/assets/${key}`,SERVER_URL).href);
     }
     if (room !== activeRoom) throw new Error("Room changed during export");
-    zip.file("world.json",JSON.stringify(manifest,null,2));
+    const snapshot=JSON.parse(JSON.stringify(manifest));
+    snapshot.format="shared-world-snapshot";snapshot.version=2;snapshot.exportedAt=new Date().toISOString();
+    for(const media of snapshot.mediaObjects||[]){
+      if(media.assetRef)media.assetRef=canonicalRefs.get(String(media.assetRef))||media.assetRef;
+      if(media.fallbackRef)media.fallbackRef=canonicalRefs.get(String(media.fallbackRef))||media.fallbackRef;
+      const key=portableAssetName(media.assetRef);media.assetHash=key?.split(".")[0]||"";media.assetFile=key?`assets/${key}`:"";
+    }
+    const snapshotEnvironments=[snapshot.environment,...(Array.isArray(snapshot.scenes)?snapshot.scenes.map((scene:any)=>scene?.environment):[])];
+    for(const environment of snapshotEnvironments)for(const field of ["skyAssetRef","groundAssetRef","particleAssetRef"]){
+      if(environment?.[field])environment[field]=canonicalRefs.get(String(environment[field]))||environment[field];
+    }
+    zip.file("world.json",JSON.stringify(snapshot,null,2));
     worldManifestStatus.textContent="Compressing world ZIP…";
     const output=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:3}});
     const link=document.createElement("a");
@@ -4530,7 +4557,7 @@ async function exportPortableWorld(manifest:any, room:Room) {
     link.download=`shared-world-${String(manifest.roomCode||"ART001")}-${Date.now()}.zip`;
     document.body.appendChild(link); link.click(); link.remove();
     window.setTimeout(()=>URL.revokeObjectURL(url),60000);
-    worldManifestStatus.textContent=`World ZIP saved: ${manifest.mediaObjects.length} objects, ${names.size} files.`;
+    worldManifestStatus.textContent=`SNAPSHOT V2 saved: ${manifest.mediaObjects.length} objects, ${names.size} content-addressed files.`;
   } catch (error) { worldManifestStatus.textContent=`ZIP export failed: ${String(error)}`; }
   finally { worldPackageBusy=false; }
 }
@@ -4548,7 +4575,7 @@ worldAssetRehydrateButton.addEventListener("click",()=>{
   if (!activeRoom || worldPackageBusy) return;
   worldAssetRehydrateInput.click();
 });
-worldAssetRehydrateInput.addEventListener("change",async()=>{
+if(false)worldAssetRehydrateInput.addEventListener("change",async()=>{
   const file=worldAssetRehydrateInput.files?.[0];worldAssetRehydrateInput.value="";
   if(!file||!activeRoom||worldPackageBusy)return;
   worldPackageBusy=true;const room=activeRoom;
@@ -4650,6 +4677,46 @@ worldAssetRehydrateInput.addEventListener("change",async()=>{
     worldManifestStatus.textContent=`ASSET REHYDRATION FAILED · ${String(error)}`;
     console.error("[ASSET REHYDRATION FAILED]",error);
   }finally{worldPackageBusy=false;}
+});
+worldAssetRehydrateInput.addEventListener("change",async()=>{
+  const file=worldAssetRehydrateInput.files?.[0];worldAssetRehydrateInput.value="";
+  if(!file||!activeRoom||worldPackageBusy)return;
+  worldPackageBusy=true;const room=activeRoom;
+  try{
+    if(file.size>90*1024*1024)throw new Error("ZIP exceeds 90 MB");
+    const zip=await JSZip.loadAsync(file);if(Object.keys(zip.files).length>70)throw new Error("Too many ZIP entries");
+    const entry=zip.file("world.json");if(!entry)throw new Error("Missing world.json");
+    const json=await entry.async("string");if(json.length>256*1024)throw new Error("World JSON exceeds 256 KB");
+    const source=JSON.parse(json);const legacy=source?.format==="shared-world-manifest"&&source?.version===1;
+    if(!legacy&&!(source?.format==="shared-world-snapshot"&&source?.version===2))throw new Error("Unsupported snapshot");
+    if(!Array.isArray(source.mediaObjects)||source.mediaObjects.length>64)throw new Error("Invalid media list");
+    const packageRoom=String(source.roomCode||"").toUpperCase(),currentRoom=String(roomInput.value||"").toUpperCase();
+    if(packageRoom!==currentRoom)throw new Error(`ROOM mismatch: package ${packageRoom||"?"} / current ${currentRoom||"?"}`);
+    const snapshot=JSON.parse(JSON.stringify(source));const uploaded=new Map<string,string>();let uploadedCount=0,existingCount=0,total=0;
+    const canonicalize=async(ref:unknown)=>{
+      if(!ref)return "";const oldName=portableAssetName(ref);if(!oldName)throw new Error("Invalid asset reference in snapshot");
+      if(uploaded.has(oldName)){const original=new URL(String(ref),SERVER_URL),canonical=new URL(`/assets/${uploaded.get(oldName)}`,SERVER_URL);canonical.search=original.search;return canonical.href;}
+      const assetEntry=zip.file(`assets/${oldName}`);if(!assetEntry)throw new Error(`Missing packaged asset: ${oldName}`);
+      const blob=await assetEntry.async("blob");if(!blob.size||blob.size>20*1024*1024)throw new Error(`Invalid asset size: ${oldName}`);
+      total+=blob.size;if(total>80*1024*1024)throw new Error("Snapshot media exceeds 80 MB");
+      const ext=oldName.split(".").pop()!.toLowerCase();
+      const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await blob.arrayBuffer())),byte=>byte.toString(16).padStart(2,"0")).join("");
+      const key=`${hash}.${ext}`;
+      if(!legacy&&oldName.toLowerCase()!==key)throw new Error(`Hash verification failed: ${oldName}`);
+      const url=new URL(`/assets/${key}`,SERVER_URL).href;worldManifestStatus.textContent=`STAGING ${uploaded.size+1}: ${key.slice(0,16)}…`;
+      const check=await fetch(url,{cache:"no-store"});
+      if(check.ok)existingCount++;else if(check.status===404){const put=await fetch(url,{method:"PUT",headers:{"Content-Type":blob.type||"application/octet-stream"},body:blob});if(!put.ok)throw new Error(`Asset upload HTTP ${put.status}`);uploadedCount++;}
+      else throw new Error(`Asset check HTTP ${check.status}`);
+      uploaded.set(oldName,key);const original=new URL(String(ref),SERVER_URL),canonical=new URL(`/assets/${key}`,SERVER_URL);canonical.search=original.search;return canonical.href;
+    };
+    for(const media of snapshot.mediaObjects){media.assetRef=await canonicalize(media.assetRef);if(media.fallbackRef)media.fallbackRef=await canonicalize(media.fallbackRef);
+      const name=portableAssetName(media.assetRef);media.assetHash=name?.split(".")[0]||"";media.assetFile=name?`assets/${name}`:"";}
+    const environments=[snapshot.environment,...(Array.isArray(snapshot.scenes)?snapshot.scenes.map((scene:any)=>scene?.environment):[])];
+    for(const environment of environments)for(const field of ["skyAssetRef","groundAssetRef","particleAssetRef"])if(environment?.[field])environment[field]=await canonicalize(environment[field]);
+    snapshot.format="shared-world-snapshot";snapshot.version=2;snapshot.roomCode=currentRoom;
+    worldManifestStatus.textContent=`VALIDATED · ${snapshot.mediaObjects.length} objects · ${uploadedCount} uploaded · ${existingCount} present · creating backup…`;
+    room.send("world:restore:v2",snapshot);
+  }catch(error){worldManifestStatus.textContent=`RESTORE ROOM FAILED · ${String(error)}`;worldPackageBusy=false;console.error("[ROOM SNAPSHOT V2 RESTORE FAILED]",error);}
 });
 worldPackageInput.addEventListener("change",async()=>{
   const file=worldPackageInput.files?.[0]; worldPackageInput.value="";
@@ -6448,7 +6515,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.21.2.3</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.0</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.23.2 ROOM RENAME / ARCHIVE LOADED]");
+console.log("[PROTOTYPE 0.23.3 ROOM MANAGEMENT UI LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1042,14 +1042,35 @@ const persistentClientId = getOrCreateClientId();
 // 0.23.0 / Owner-scoped ROOM catalog. The server returns only ROOM snapshots
 // whose persisted ownerClientId matches this browser's stable client ID.
 const roomManager=document.createElement("section");roomManager.id="roomManager";
-roomManager.style.cssText="margin-top:14px;padding:12px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(5,12,18,.55);display:grid;gap:8px";
-roomManager.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><strong>MY ROOMS</strong><button type="button" id="refreshRoomsButton">REFRESH</button></div>
-  <div id="ownedRoomList" style="display:grid;gap:6px;max-height:170px;overflow:auto"><small>Loading saved rooms…</small></div>
-  <div style="display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%"><input id="newRoomCodeInput" aria-label="New ROOM code" maxlength="16" autocomplete="off" placeholder="NEW ROOM CODE" style="display:block;width:100%!important;min-width:0!important;box-sizing:border-box"><button type="button" id="createRoomButton" style="width:134px!important;min-width:134px!important;margin:0!important">CREATE</button></div>
-  <div style="display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%"><input id="cloneRoomCodeInput" aria-label="Clone target ROOM code" maxlength="16" autocomplete="off" placeholder="CLONE TARGET CODE" style="display:block;width:100%!important;min-width:0!important;box-sizing:border-box"><button type="button" id="cloneRoomButton" style="width:134px!important;min-width:134px!important;margin:0!important">CLONE SELECTED</button></div>
-  <div style="display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%"><input id="renameRoomCodeInput" aria-label="Renamed ROOM code" maxlength="16" autocomplete="off" placeholder="RENAME TO CODE" style="display:block;width:100%!important;min-width:0!important;box-sizing:border-box"><button type="button" id="renameRoomButton" style="width:134px!important;min-width:134px!important;margin:0!important">RENAME</button></div>
-  <div style="display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;align-items:center;width:100%"><label style="display:flex;align-items:center;gap:7px;font-size:11px;color:#b7c9d8"><input type="checkbox" id="showArchivedRoomsInput" style="width:auto!important"> SHOW ARCHIVED</label><button type="button" id="archiveRoomButton" style="width:134px!important;min-width:134px!important;margin:0!important">ARCHIVE</button></div>
-  <small id="roomManagerStatus" style="color:#a9bfd1">Owner rooms only · deletion is disabled in this version.</small>`;
+roomManager.style.cssText="margin-top:14px;padding:12px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(5,12,18,.55);display:grid;gap:9px";
+const roomManagerStyle=document.createElement("style");roomManagerStyle.textContent=`
+  #roomManager .room-manager-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  #roomManager .room-manager-title{display:flex;align-items:baseline;gap:7px}#roomManager .room-manager-title small{color:#7f97a9;font-size:8px;letter-spacing:.08em}
+  #roomManager #refreshRoomsButton{width:auto!important;min-width:108px!important;margin:0!important}
+  #roomManager #ownedRoomList{display:grid;gap:6px;max-height:238px;overflow:auto;padding-right:2px;scrollbar-gutter:stable}
+  #roomManager .owned-room-item{width:100%!important;margin:0!important;border:1px solid transparent!important;transition:border-color .15s,background .15s}
+  #roomManager .owned-room-item[aria-pressed="true"]{border-color:#62d8ff!important;background:#153044!important;box-shadow:inset 3px 0 #62d8ff}
+  #roomManager .owned-room-item[data-archived="true"]{opacity:.72}
+  #roomManager .room-selection{display:grid;grid-template-columns:1fr auto;gap:4px 8px;padding:8px 9px;border:1px solid #314556;border-radius:8px;background:#0a151f;color:#dceaf4;font-size:10px}
+  #roomManager .room-selection strong{font-size:11px}#roomManager .room-selection span{color:#8fa8ba;text-align:right}
+  #roomManager details{border:1px solid #2f414f;border-radius:8px;background:#09121a;overflow:hidden}#roomManager summary{padding:9px 10px;cursor:pointer;color:#bcd0df;font-size:10px;font-weight:850;letter-spacing:.08em}
+  #roomManager .room-action-body{display:grid;gap:7px;padding:0 8px 8px}#roomManager .room-action-row{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%}
+  #roomManager .room-action-row input{display:block;width:100%!important;min-width:0!important;box-sizing:border-box}#roomManager .room-action-row button{width:134px!important;min-width:134px!important;margin:0!important}
+  #roomManager .archive-row{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;align-items:center}#roomManager .archive-row label{display:flex;align-items:center;gap:7px;color:#b7c9d8;font-size:10px}#roomManager .archive-row input{width:auto!important}
+  #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
+`;document.head.appendChild(roomManagerStyle);
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>MY ROOMS</strong><small>0.23.3</small></div><button type="button" id="refreshRoomsButton">REFRESH</button></div>
+  <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
+  <div id="ownedRoomList"><small>Loading saved rooms…</small></div>
+  <details><summary>NEW ROOM / COPY</summary><div class="room-action-body">
+    <div class="room-action-row"><input id="newRoomCodeInput" aria-label="New ROOM code" maxlength="16" autocomplete="off" placeholder="NEW ROOM CODE"><button type="button" id="createRoomButton">CREATE</button></div>
+    <div class="room-action-row"><input id="cloneRoomCodeInput" aria-label="Clone target ROOM code" maxlength="16" autocomplete="off" placeholder="CLONE TARGET CODE"><button type="button" id="cloneRoomButton">CLONE SELECTED</button></div>
+  </div></details>
+  <details><summary>MANAGE SELECTED ROOM</summary><div class="room-action-body">
+    <div class="room-action-row"><input id="renameRoomCodeInput" aria-label="Renamed ROOM code" maxlength="16" autocomplete="off" placeholder="RENAME TO CODE"><button type="button" id="renameRoomButton">RENAME</button></div>
+    <div class="archive-row"><label><input type="checkbox" id="showArchivedRoomsInput"> SHOW ARCHIVED</label><button type="button" id="archiveRoomButton">ARCHIVE</button></div>
+  </div></details>
+  <small id="roomManagerStatus">Owner rooms only · deletion is disabled.</small>`;
 lobby.appendChild(roomManager);
 const ownedRoomList=roomManager.querySelector<HTMLElement>("#ownedRoomList")!;
 const newRoomCodeInput=roomManager.querySelector<HTMLInputElement>("#newRoomCodeInput")!;
@@ -1062,11 +1083,18 @@ const archiveRoomButton=roomManager.querySelector<HTMLButtonElement>("#archiveRo
 const showArchivedRoomsInput=roomManager.querySelector<HTMLInputElement>("#showArchivedRoomsInput")!;
 const refreshRoomsButton=roomManager.querySelector<HTMLButtonElement>("#refreshRoomsButton")!;
 const roomManagerStatus=roomManager.querySelector<HTMLElement>("#roomManagerStatus")!;
+const roomSelectionSummary=roomManager.querySelector<HTMLElement>("#roomSelectionSummary")!;
 let selectedOwnedRoomCode=(roomInput.value||"ART001").toUpperCase();
 let selectedOwnedRoomArchived=false;
 const roomApiBase=SERVER_URL.replace(/^wss:/i,"https:").replace(/^ws:/i,"http:").replace(/\/$/,"");
 const roomApiURL=(path:string)=>`${roomApiBase}${path}`;
 const cleanRoomCode=(value:string)=>value.toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16);
+function selectOwnedRoom(code:string,archived:boolean,button?:HTMLButtonElement,room?:any){
+  selectedOwnedRoomCode=code;selectedOwnedRoomArchived=archived;roomInput.value=code;archiveRoomButton.textContent=archived?"RESTORE":"ARCHIVE";
+  for(const item of ownedRoomList.querySelectorAll("button"))item.setAttribute("aria-pressed",String(item===button));
+  const works=Number(room?.mediaCount)||0,revision=Number(room?.revision)||0;
+  roomSelectionSummary.innerHTML=`<strong>${code}${archived?" · ARCHIVED":""}</strong><span>${works} works</span><small>SELECTED ROOM</small><span>R${revision}</span>`;
+}
 async function refreshOwnedRooms(){
   refreshRoomsButton.disabled=true;roomManagerStatus.textContent="LOADING ROOMS…";
   try{
@@ -1074,21 +1102,25 @@ async function refreshOwnedRooms(){
     const payload=await response.json();if(!response.ok||payload?.ok!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
     const rooms=Array.isArray(payload.rooms)?payload.rooms:[];ownedRoomList.replaceChildren();
     if(!rooms.length){const empty=document.createElement("small");empty.textContent="No owned ROOM snapshots yet.";ownedRoomList.appendChild(empty);}
+    let matchedSelection=false;
     for(const room of rooms){
       const code=cleanRoomCode(String(room?.roomCode||""));if(!code)continue;
       const archived=room?.archived===true;
-      const button=document.createElement("button");button.type="button";button.dataset.roomCode=code;
+      const button=document.createElement("button");button.type="button";button.className="owned-room-item";button.dataset.roomCode=code;
       button.dataset.archived=String(archived);
       button.style.cssText="display:grid;grid-template-columns:1fr auto;text-align:left;gap:3px 10px;padding:8px";
       const saved=room?.savedAt?new Date(String(room.savedAt)).toLocaleString():"not saved";
       button.innerHTML=`<strong>${code}${archived?" · ARCHIVED":""}</strong><span>${Number(room?.mediaCount)||0} works</span><small>R${Number(room?.revision)||0} · ${saved}</small><small>checkpoint R${Number(room?.checkpointRevision)||0}</small>`;
-      button.addEventListener("click",()=>{selectedOwnedRoomCode=code;selectedOwnedRoomArchived=archived;roomInput.value=code;archiveRoomButton.textContent=archived?"RESTORE":"ARCHIVE";
-        for(const item of ownedRoomList.querySelectorAll("button"))item.setAttribute("aria-pressed",String(item===button));
+      button.addEventListener("click",()=>{selectOwnedRoom(code,archived,button,room);
         roomManagerStatus.textContent=`SELECTED ${code} · press ENTER WORLD`;});
       button.addEventListener("dblclick",()=>{selectedOwnedRoomCode=code;roomInput.value=code;void enterWorld();});
       ownedRoomList.appendChild(button);
+      if(code===selectedOwnedRoomCode){selectOwnedRoom(code,archived,button,room);matchedSelection=true;}
     }
-    roomManagerStatus.textContent=`${rooms.length} OWNER ROOM${rooms.length===1?"":"S"} · click to select · double-click to enter`;
+    if(!matchedSelection&&rooms.length){const first=ownedRoomList.querySelector<HTMLButtonElement>("button");const firstRoom=rooms[0];if(first)selectOwnedRoom(cleanRoomCode(String(firstRoom.roomCode||"")),firstRoom.archived===true,first,firstRoom);}
+    if(!rooms.length)roomSelectionSummary.innerHTML="<strong>NO ROOM SELECTED</strong><span>—</span><small>Create a ROOM or show archived ROOMs</small><span>—</span>";
+    const archivedCount=rooms.filter((room:any)=>room?.archived===true).length;
+    roomManagerStatus.textContent=`${rooms.length} ROOM${rooms.length===1?"":"S"}${showArchivedRoomsInput.checked?` · ${archivedCount} archived`:""} · click to select · double-click to enter`;
   }catch(error){ownedRoomList.innerHTML="<small>ROOM catalog unavailable.</small>";roomManagerStatus.textContent=`ROOM LIST FAILED · ${error instanceof Error?error.message:String(error)}`;}
   finally{refreshRoomsButton.disabled=false;}
 }
@@ -1126,6 +1158,7 @@ async function mutateRoomCatalog(action:"create"|"clone",targetValue:string){
 async function renameSelectedRoom(){
   const source=cleanRoomCode(selectedOwnedRoomCode),target=cleanRoomCode(renameRoomCodeInput.value);
   if(!source||!target){roomManagerStatus.textContent="Select a ROOM and enter its new code.";return;}
+  if(!window.confirm(`Rename ROOM ${source} to ${target}?\n\nAll saved generations will move to the new code.`)){roomManagerStatus.textContent="RENAME CANCELLED";return;}
   renameRoomButton.disabled=true;archiveRoomButton.disabled=true;roomManagerStatus.textContent=`RENAMING ${source} → ${target}…`;
   try{
     const query=`clientId=${encodeURIComponent(persistentClientId)}&source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`;
@@ -1139,6 +1172,7 @@ async function renameSelectedRoom(){
 async function toggleSelectedRoomArchive(){
   const code=cleanRoomCode(selectedOwnedRoomCode);if(!code){roomManagerStatus.textContent="Select a ROOM first.";return;}
   const archived=!selectedOwnedRoomArchived;archiveRoomButton.disabled=true;renameRoomButton.disabled=true;roomManagerStatus.textContent=`${archived?"ARCHIVING":"RESTORING"} ${code}…`;
+  if(!window.confirm(archived?`Archive ROOM ${code}?\n\nIts data will be retained and can be restored with SHOW ARCHIVED.`:`Restore ROOM ${code} to the normal list?`)){archiveRoomButton.disabled=false;renameRoomButton.disabled=false;roomManagerStatus.textContent=`${archived?"ARCHIVE":"RESTORE"} CANCELLED`;return;}
   try{
     const query=`clientId=${encodeURIComponent(persistentClientId)}&roomCode=${encodeURIComponent(code)}&archived=${archived?"1":"0"}`;
     const response=await fetch(roomApiURL(`/rooms/archive?${query}`),{method:"POST",mode:"cors"});const payload=await response.json();
@@ -6743,7 +6777,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.3</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

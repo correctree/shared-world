@@ -167,7 +167,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.23.2-room-rename-archive",
+        service: "shared-world-0.23.3-room-management-ui",
         storedAssets: assetCount()
       })
     );
@@ -176,4 +176,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.23.2] ROOM RENAME / ARCHIVE ready");
+console.log("[Prototype 0.23.3] ROOM MANAGEMENT UI ready");

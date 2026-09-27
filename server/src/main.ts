@@ -1,4 +1,4 @@
-import { assetCount, cloneOwnedWorld, createOwnedWorld, listOwnedWorlds, readAsset, renameOwnedWorld, saveAsset, setOwnedWorldArchived } from "./persistence.js";
+import { assetCount, cloneOwnedWorld, createOwnedWorld, listOwnedWorlds, readAsset, renameOwnedWorld, saveAsset, setOwnedWorldAccess, setOwnedWorldArchived } from "./persistence.js";
 import { defineRoom, defineServer } from "colyseus";
 import { SharedWorldRoom } from "./SharedWorldRoom.js";
 import { createHash } from "node:crypto";
@@ -37,6 +37,7 @@ const server = defineServer({
     app.options("/rooms/clone",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/rename",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/archive",(_req,res)=>res.sendStatus(204));
+    app.options("/rooms/access",(_req,res)=>res.sendStatus(204));
     const roomClientId=(req:any)=>String(req.query?.clientId||req.get("X-Shared-Client-Id")||"");
     app.get("/rooms",(req,res)=>{
       try{res.json({ok:true,rooms:listOwnedWorlds(roomClientId(req),String(req.query.includeArchived||"")==="1")});}
@@ -64,6 +65,12 @@ const server = defineServer({
       try{const archived=String(req.query.archived||"")==="1";const result=setOwnedWorldArchived(String(req.query.roomCode||""),roomClientId(req),archived);
         res.json({ok:true,verified:true,...result});}
       catch(error){const message=error instanceof Error?error.message:"room archive failed";
+        res.status(message.includes("owner")?403:400).json({ok:false,error:message});}
+    });
+    app.post("/rooms/access",(req,res)=>{
+      try{const editors=String(req.query.editors||"").split(",").filter(Boolean);const result=setOwnedWorldAccess(String(req.query.roomCode||""),roomClientId(req),String(req.query.accessMode||"shared"),editors);
+        res.json({ok:true,verified:true,...result});}
+      catch(error){const message=error instanceof Error?error.message:"room access update failed";
         res.status(message.includes("owner")?403:400).json({ok:false,error:message});}
     });
     app.use("/assets", (_req, res, next) => {
@@ -167,7 +174,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.23.3-room-management-ui",
+        service: "shared-world-0.24.0-room-access-foundation",
         storedAssets: assetCount()
       })
     );
@@ -176,4 +183,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.23.3] ROOM MANAGEMENT UI ready");
+console.log("[Prototype 0.24.0] ROOM ACCESS FOUNDATION ready");

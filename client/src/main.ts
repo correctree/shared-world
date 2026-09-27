@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.23.3 ROOM MANAGEMENT UI LOADED]");
+console.log("[PROTOTYPE 0.24.0 ROOM ACCESS FOUNDATION LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1055,11 +1055,11 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManager .room-selection strong{font-size:11px}#roomManager .room-selection span{color:#8fa8ba;text-align:right}
   #roomManager details{border:1px solid #2f414f;border-radius:8px;background:#09121a;overflow:hidden}#roomManager summary{padding:9px 10px;cursor:pointer;color:#bcd0df;font-size:10px;font-weight:850;letter-spacing:.08em}
   #roomManager .room-action-body{display:grid;gap:7px;padding:0 8px 8px}#roomManager .room-action-row{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%}
-  #roomManager .room-action-row input{display:block;width:100%!important;min-width:0!important;box-sizing:border-box}#roomManager .room-action-row button{width:134px!important;min-width:134px!important;margin:0!important}
+  #roomManager .room-action-row input,#roomManager .room-action-row select{display:block;width:100%!important;min-width:0!important;box-sizing:border-box}#roomManager .room-action-row button{width:134px!important;min-width:134px!important;margin:0!important}
   #roomManager .archive-row{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;align-items:center}#roomManager .archive-row label{display:flex;align-items:center;gap:7px;color:#b7c9d8;font-size:10px}#roomManager .archive-row input{width:auto!important}
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>MY ROOMS</strong><small>0.23.3</small></div><button type="button" id="refreshRoomsButton">REFRESH</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>MY ROOMS</strong><small>0.24.0</small></div><button type="button" id="refreshRoomsButton">REFRESH</button></div>
   <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
   <div id="ownedRoomList"><small>Loading saved rooms…</small></div>
   <details><summary>NEW ROOM / COPY</summary><div class="room-action-body">
@@ -1069,6 +1069,12 @@ roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-t
   <details><summary>MANAGE SELECTED ROOM</summary><div class="room-action-body">
     <div class="room-action-row"><input id="renameRoomCodeInput" aria-label="Renamed ROOM code" maxlength="16" autocomplete="off" placeholder="RENAME TO CODE"><button type="button" id="renameRoomButton">RENAME</button></div>
     <div class="archive-row"><label><input type="checkbox" id="showArchivedRoomsInput"> SHOW ARCHIVED</label><button type="button" id="archiveRoomButton">ARCHIVE</button></div>
+  </div></details>
+  <details><summary>ROOM ACCESS</summary><div class="room-action-body">
+    <div class="room-action-row"><input id="myRoomAccessId" aria-label="My access ID" readonly><button type="button" id="copyRoomAccessIdButton">COPY MY ID</button></div>
+    <div class="room-action-row"><select id="roomAccessMode" aria-label="ROOM entry mode"><option value="shared">SHARED · CODE ENTRY</option><option value="owner-only">OWNER + EDITORS ONLY</option></select><button type="button" id="saveRoomAccessButton">SAVE ACCESS</button></div>
+    <input id="roomEditorIdsInput" aria-label="Editor access IDs" autocomplete="off" placeholder="EDITOR ACCESS IDs · comma separated" style="width:100%;box-sizing:border-box">
+    <small style="color:#8fa8ba;line-height:1.35">Prototype identity uses this browser's ACCESS ID. Clearing browser storage changes the ID. Account sign-in is not active yet.</small>
   </div></details>
   <small id="roomManagerStatus">Owner rooms only · deletion is disabled.</small>`;
 lobby.appendChild(roomManager);
@@ -1081,6 +1087,11 @@ const cloneRoomButton=roomManager.querySelector<HTMLButtonElement>("#cloneRoomBu
 const renameRoomButton=roomManager.querySelector<HTMLButtonElement>("#renameRoomButton")!;
 const archiveRoomButton=roomManager.querySelector<HTMLButtonElement>("#archiveRoomButton")!;
 const showArchivedRoomsInput=roomManager.querySelector<HTMLInputElement>("#showArchivedRoomsInput")!;
+const myRoomAccessId=roomManager.querySelector<HTMLInputElement>("#myRoomAccessId")!;
+const copyRoomAccessIdButton=roomManager.querySelector<HTMLButtonElement>("#copyRoomAccessIdButton")!;
+const roomAccessMode=roomManager.querySelector<HTMLSelectElement>("#roomAccessMode")!;
+const roomEditorIdsInput=roomManager.querySelector<HTMLInputElement>("#roomEditorIdsInput")!;
+const saveRoomAccessButton=roomManager.querySelector<HTMLButtonElement>("#saveRoomAccessButton")!;
 const refreshRoomsButton=roomManager.querySelector<HTMLButtonElement>("#refreshRoomsButton")!;
 const roomManagerStatus=roomManager.querySelector<HTMLElement>("#roomManagerStatus")!;
 const roomSelectionSummary=roomManager.querySelector<HTMLElement>("#roomSelectionSummary")!;
@@ -1089,10 +1100,13 @@ let selectedOwnedRoomArchived=false;
 const roomApiBase=SERVER_URL.replace(/^wss:/i,"https:").replace(/^ws:/i,"http:").replace(/\/$/,"");
 const roomApiURL=(path:string)=>`${roomApiBase}${path}`;
 const cleanRoomCode=(value:string)=>value.toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16);
+myRoomAccessId.value=persistentClientId;
 function selectOwnedRoom(code:string,archived:boolean,button?:HTMLButtonElement,room?:any){
   selectedOwnedRoomCode=code;selectedOwnedRoomArchived=archived;roomInput.value=code;archiveRoomButton.textContent=archived?"RESTORE":"ARCHIVE";
   for(const item of ownedRoomList.querySelectorAll("button"))item.setAttribute("aria-pressed",String(item===button));
   const works=Number(room?.mediaCount)||0,revision=Number(room?.revision)||0;
+  roomAccessMode.value=room?.accessMode==="owner-only"?"owner-only":"shared";
+  roomEditorIdsInput.value=Array.isArray(room?.editorClientIds)?room.editorClientIds.join(", "):"";
   roomSelectionSummary.innerHTML=`<strong>${code}${archived?" · ARCHIVED":""}</strong><span>${works} works</span><small>SELECTED ROOM</small><span>R${revision}</span>`;
 }
 async function refreshOwnedRooms(){
@@ -1182,12 +1196,28 @@ async function toggleSelectedRoomArchive(){
   }catch(error){roomManagerStatus.textContent=`ARCHIVE FAILED · ${error instanceof Error?error.message:String(error)}`;}
   finally{archiveRoomButton.disabled=false;renameRoomButton.disabled=false;}
 }
+async function saveSelectedRoomAccess(){
+  const code=cleanRoomCode(selectedOwnedRoomCode);if(!code){roomManagerStatus.textContent="Select a ROOM first.";return;}
+  const mode=roomAccessMode.value==="owner-only"?"owner-only":"shared";
+  const editors=Array.from(new Set(roomEditorIdsInput.value.split(",").map(value=>value.trim().replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80)).filter(value=>value&&value!==persistentClientId))).slice(0,12);
+  if(mode==="owner-only"&&!window.confirm(`Restrict ${code} to this owner and ${editors.length} editor ID${editors.length===1?"":"s"}?\n\nOther visitors will be unable to enter.`)){roomManagerStatus.textContent="ACCESS UPDATE CANCELLED";return;}
+  saveRoomAccessButton.disabled=true;roomManagerStatus.textContent=`SAVING ACCESS FOR ${code}…`;
+  try{
+    const query=`clientId=${encodeURIComponent(persistentClientId)}&roomCode=${encodeURIComponent(code)}&accessMode=${encodeURIComponent(mode)}&editors=${encodeURIComponent(editors.join(","))}`;
+    const response=await fetch(roomApiURL(`/rooms/access?${query}`),{method:"POST",mode:"cors"});const payload=await response.json();
+    if(!response.ok||payload?.ok!==true||payload?.verified!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
+    await refreshOwnedRooms();roomManagerStatus.textContent=`ACCESS SAVED · ${mode==="owner-only"?"OWNER + EDITORS ONLY":"SHARED CODE ENTRY"} · ${editors.length} editors`;
+  }catch(error){roomManagerStatus.textContent=`ACCESS SAVE FAILED · ${error instanceof Error?error.message:String(error)}`;}
+  finally{saveRoomAccessButton.disabled=false;}
+}
 refreshRoomsButton.addEventListener("click",()=>void refreshOwnedRooms());
 createRoomButton.addEventListener("click",()=>void mutateRoomCatalog("create",newRoomCodeInput.value));
 cloneRoomButton.addEventListener("click",()=>void mutateRoomCatalog("clone",cloneRoomCodeInput.value));
 renameRoomButton.addEventListener("click",()=>void renameSelectedRoom());
 archiveRoomButton.addEventListener("click",()=>void toggleSelectedRoomArchive());
 showArchivedRoomsInput.addEventListener("change",()=>void refreshOwnedRooms());
+copyRoomAccessIdButton.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(persistentClientId);roomManagerStatus.textContent="MY ACCESS ID COPIED";}catch{myRoomAccessId.select();document.execCommand("copy");roomManagerStatus.textContent="MY ACCESS ID COPIED";}});
+saveRoomAccessButton.addEventListener("click",()=>void saveSelectedRoomAccess());
 newRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("create",newRoomCodeInput.value);}});
 cloneRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("clone",cloneRoomCodeInput.value);}});
 renameRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void renameSelectedRoom();}});
@@ -5568,10 +5598,10 @@ const customParticleInput=environmentEditor.querySelector<HTMLInputElement>("[da
 const customParticleStatus=environmentEditor.querySelector<HTMLElement>("[data-particle-status]")!;
 function applyEnvironmentPermissions(payload:any) {
   environmentCanEdit=payload?.canEdit===true;
-  const locked=payload?.locked===true,ownerPresent=payload?.ownerPresent===true;
+  const locked=payload?.locked===true,ownerPresent=payload?.ownerPresent===true,role=String(payload?.role||"visitor").toUpperCase();
   const status=environmentEditor.querySelector<HTMLElement>("[data-env-owner-status]")!;
   status.textContent=environmentCanEdit
-    ?locked?"ENVIRONMENT OWNER — EDITING ENABLED":"UNLOCKED — FIRST APPLY BECOMES OWNER"
+    ?locked?`${role} — EDITING ENABLED`:"UNLOCKED — FIRST APPLY BECOMES OWNER"
     :ownerPresent?"VIEW ONLY — ENVIRONMENT LOCKED BY OWNER":"VIEW ONLY — OWNER OFFLINE";
   status.style.color=environmentCanEdit?"#58e6bb":"#ffca72";
   for(const control of environmentEditor.querySelectorAll<HTMLInputElement|HTMLSelectElement|HTMLButtonElement>("input,select,button"))
@@ -6777,7 +6807,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.3</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.0</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

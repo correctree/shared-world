@@ -104,15 +104,22 @@ export function worldGenerationInfo(code:string) {
   return {current:inspect("current"),previous:inspect("previous"),stable:inspect("stable"),checkpoint};
 }
 
-function readCatalogMeta(code:string):{archived:boolean} {
-  const path=catalogPath(code);if(!existsSync(path))return {archived:false};
-  try{const value=JSON.parse(readFileSync(path,"utf8"));return {archived:value?.archived===true};}
-  catch(error){console.warn("[ROOM CATALOG META INVALID]",safeRoomCode(code),error);return {archived:false};}
+export type RoomAccessPolicy={version:1;accessMode:"shared"|"owner-only";editorClientIds:string[]};
+type RoomCatalogMeta=RoomAccessPolicy&{archived:boolean;updatedAt?:string};
+function defaultCatalogMeta():RoomCatalogMeta{return {version:1,archived:false,accessMode:"shared",editorClientIds:[]};}
+function readCatalogMeta(code:string):RoomCatalogMeta {
+  const path=catalogPath(code);if(!existsSync(path))return defaultCatalogMeta();
+  try{const value=JSON.parse(readFileSync(path,"utf8"));return {version:1,archived:value?.archived===true,
+    accessMode:value?.accessMode==="owner-only"?"owner-only":"shared",
+    editorClientIds:Array.isArray(value?.editorClientIds)?Array.from(new Set(value.editorClientIds.map((id:unknown)=>String(id||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80)).filter(Boolean))).slice(0,12):[],
+    updatedAt:typeof value?.updatedAt==="string"?value.updatedAt:""};}
+  catch(error){console.warn("[ROOM CATALOG META INVALID]",safeRoomCode(code),error);return defaultCatalogMeta();}
 }
 
-function writeCatalogMeta(code:string,meta:{archived:boolean}) {
+function writeCatalogMeta(code:string,meta:RoomCatalogMeta) {
   const path=catalogPath(code),temporary=`${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  writeFileSync(temporary,JSON.stringify({version:1,archived:meta.archived===true,updatedAt:new Date().toISOString()}),{encoding:"utf8",mode:0o600});
+  writeFileSync(temporary,JSON.stringify({version:1,archived:meta.archived===true,accessMode:meta.accessMode,
+    editorClientIds:meta.editorClientIds,updatedAt:new Date().toISOString()}),{encoding:"utf8",mode:0o600});
   try{const value=JSON.parse(readFileSync(temporary,"utf8"));if(value?.version!==1||typeof value?.archived!=="boolean")throw new Error("invalid catalog metadata");renameSync(temporary,path);}
   catch(error){if(existsSync(temporary))unlinkSync(temporary);throw error;}
 }
@@ -128,7 +135,8 @@ export function listOwnedWorlds(clientId:string,includeArchived=false) {
       const checkpoint=worldGenerationInfo(roomCode).checkpoint;
       rooms.push({roomCode,revision:world.revision,savedAt:world.savedAt,
         mediaCount:world.mediaObjects.length,sceneCount:world.scenes.length,cueCount:world.cues.length,
-        checkpointRevision:checkpoint.valid?checkpoint.revision:0,checkpointSavedAt:checkpoint.valid?checkpoint.savedAt:"",archived:meta.archived});
+        checkpointRevision:checkpoint.valid?checkpoint.revision:0,checkpointSavedAt:checkpoint.valid?checkpoint.savedAt:"",archived:meta.archived,
+        accessMode:meta.accessMode,editorCount:meta.editorClientIds.length,editorClientIds:[...meta.editorClientIds]});
     }catch(error){console.warn("[ROOM CATALOG SKIP INVALID]",roomCode,error);}
     if(rooms.length>=50)break;
   }
@@ -192,9 +200,23 @@ export function setOwnedWorldArchived(code:string,clientId:string,archived:boole
   const world=loadWorldGeneration(roomCode,"current");
   if(!world)throw new Error("room not found");
   if(world.environmentOwnerClientId!==owner)throw new Error("owner required");
-  writeCatalogMeta(roomCode,{archived});
+  writeCatalogMeta(roomCode,{...readCatalogMeta(roomCode),archived});
   const verified=readCatalogMeta(roomCode);if(verified.archived!==archived)throw new Error("archive verification failed");
   return {roomCode,archived:verified.archived};
+}
+
+export function getRoomAccessPolicy(code:string):RoomAccessPolicy {
+  const meta=readCatalogMeta(code);return {version:1,accessMode:meta.accessMode,editorClientIds:[...meta.editorClientIds]};
+}
+
+export function setOwnedWorldAccess(code:string,clientId:string,accessMode:string,editorClientIds:unknown) {
+  const roomCode=safeRoomCode(code),owner=safeClientId(clientId),world=loadWorldGeneration(roomCode,"current");
+  if(!world)throw new Error("room not found");if(world.environmentOwnerClientId!==owner)throw new Error("owner required");
+  const mode=accessMode==="owner-only"?"owner-only":"shared";
+  const editors=Array.isArray(editorClientIds)?Array.from(new Set(editorClientIds.map(value=>String(value||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80)).filter(value=>value&&value!==owner))).slice(0,12):[];
+  const current=readCatalogMeta(roomCode);writeCatalogMeta(roomCode,{...current,accessMode:mode,editorClientIds:editors});
+  const verified=readCatalogMeta(roomCode);if(verified.accessMode!==mode||verified.editorClientIds.join("|")!==editors.join("|"))throw new Error("access verification failed");
+  return {roomCode,accessMode:verified.accessMode,editorClientIds:verified.editorClientIds};
 }
 
 function writeRenamedSnapshot(path:string,code:string,world:SavedWorldV2) {

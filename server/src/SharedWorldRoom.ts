@@ -1,5 +1,5 @@
 import { Room, type Client } from "colyseus";
-import { assetExists, loadWorld, loadWorldCheckpoint, loadWorldGeneration, saveWorld, saveWorldCheckpoint, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
+import { assetExists, getRoomAccessPolicy, loadWorld, loadWorldCheckpoint, loadWorldGeneration, saveWorld, saveWorldCheckpoint, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
 import { Player, SharedMediaObject, WorldState } from "./state.js";
 
 const MAX_STEP = 0.75;
@@ -191,7 +191,8 @@ export class SharedWorldRoom extends Room<WorldState> {
   private canEditEnvironment(client:Client,claim=false) {
     const actorId=this.environmentActorId(client);
     if(!this.environmentOwnerClientId&&claim)this.environmentOwnerClientId=actorId;
-    return !this.environmentOwnerClientId||this.environmentOwnerClientId===actorId;
+    const policy=getRoomAccessPolicy(this.roomCode);
+    return !this.environmentOwnerClientId||this.environmentOwnerClientId===actorId||policy.editorClientIds.includes(actorId);
   }
   private canDirect(client:Client) {
     const actorId=this.environmentActorId(client);
@@ -219,7 +220,8 @@ export class SharedWorldRoom extends Room<WorldState> {
     for(const item of recipients)item.send("environment:permissions",{
       locked:!!this.environmentOwnerClientId,
       canEdit:this.canEditEnvironment(item,false),
-      ownerPresent
+      ownerPresent,
+      role:this.environmentActorId(item)===this.environmentOwnerClientId?"owner":getRoomAccessPolicy(this.roomCode).editorClientIds.includes(this.environmentActorId(item))?"editor":"visitor"
     });
     this.sendDirectorState(target);
   }
@@ -1319,6 +1321,13 @@ export class SharedWorldRoom extends Room<WorldState> {
     });
 
     console.log("[room:create] message handlers ready");
+  }
+
+  onAuth(_client:Client,options:{clientId?:string}) {
+    const clientId=String(options?.clientId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
+    const policy=getRoomAccessPolicy(this.roomCode);
+    if(policy.accessMode==="owner-only"&&clientId!==this.environmentOwnerClientId&&!policy.editorClientIds.includes(clientId))throw new Error("ROOM_ACCESS_DENIED");
+    return true;
   }
 
   onJoin(client: Client, options: { name?: string; clientId?: string }) {

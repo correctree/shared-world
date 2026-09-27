@@ -1,4 +1,4 @@
-import { assetCount, cloneOwnedWorld, createOwnedWorld, listOwnedWorlds, readAsset, renameOwnedWorld, saveAsset, setOwnedWorldAccess, setOwnedWorldArchived } from "./persistence.js";
+import { assetCount, cloneOwnedWorld, createOwnedWorld, inspectRoomEntry, listOwnedWorlds, readAsset, renameOwnedWorld, saveAsset, setOwnedWorldAccess, setOwnedWorldArchived } from "./persistence.js";
 import { defineRoom, defineServer } from "colyseus";
 import { SharedWorldRoom } from "./SharedWorldRoom.js";
 import { createHash } from "node:crypto";
@@ -38,10 +38,15 @@ const server = defineServer({
     app.options("/rooms/rename",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/archive",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/access",(_req,res)=>res.sendStatus(204));
+    app.options("/rooms/entry",(_req,res)=>res.sendStatus(204));
     const roomClientId=(req:any)=>String(req.query?.clientId||req.get("X-Shared-Client-Id")||"");
     app.get("/rooms",(req,res)=>{
       try{res.json({ok:true,rooms:listOwnedWorlds(roomClientId(req),String(req.query.includeArchived||"")==="1")});}
       catch(error){res.status(403).json({ok:false,error:error instanceof Error?error.message:"room list failed"});}
+    });
+    app.get("/rooms/entry",(req,res)=>{
+      try{res.json({ok:true,...inspectRoomEntry(String(req.query.roomCode||""),roomClientId(req))});}
+      catch(error){res.status(400).json({ok:false,error:error instanceof Error?error.message:"room entry check failed"});}
     });
     app.post("/rooms/create",(req,res)=>{
       try{const world=createOwnedWorld(String(req.query.roomCode||""),roomClientId(req));
@@ -174,7 +179,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.24.2-room-share-links",
+        service: "shared-world-0.24.3-access-preflight-simple-entry",
         storedAssets: assetCount()
       })
     );
@@ -183,4 +188,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.24.2] ROOM SHARE LINKS ready");
+console.log("[Prototype 0.24.3] ACCESS PREFLIGHT + SIMPLE ENTRY ready");

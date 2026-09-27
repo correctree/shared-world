@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.24.2 ROOM SHARE LINKS LOADED]");
+console.log("[PROTOTYPE 0.24.3 ACCESS PREFLIGHT + SIMPLE ENTRY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1057,11 +1057,21 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManager .room-action-body{display:grid;gap:7px;padding:0 8px 8px}#roomManager .room-action-row{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%}
   #roomManager .room-action-row input,#roomManager .room-action-row select{display:block;width:100%!important;min-width:0!important;box-sizing:border-box}#roomManager .room-action-row button{width:134px!important;min-width:134px!important;margin:0!important}
   #roomManager .archive-row{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;align-items:center}#roomManager .archive-row label{display:flex;align-items:center;gap:7px;color:#b7c9d8;font-size:10px}#roomManager .archive-row input{width:auto!important}
+  #roomManager .room-entry-card{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:7px;padding:10px;border:1px solid #3b596d;border-radius:9px;background:#0a1721}#roomManager .room-entry-card>div{display:flex;flex-direction:column;gap:4px;min-width:0}#roomManager .room-entry-card strong{font-size:12px;color:#e8f5fd}#roomManager .room-entry-card span{font-size:9px;color:#9db3c3;line-height:1.35}#roomManager .room-entry-card button{width:134px!important;min-width:134px!important;margin:0!important}#roomManager .room-entry-card[data-state="allowed"]{border-color:#43d3a7}#roomManager .room-entry-card[data-state="denied"]{border-color:#dc8f55}#roomManager .room-entry-card[data-state="missing"]{border-color:#d86161}
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>MY ROOMS</strong><small>0.24.2</small></div><button type="button" id="refreshRoomsButton">REFRESH</button></div>
-  <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
-  <div id="ownedRoomList"><small>Loading saved rooms…</small></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.24.3</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+  <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
+  <details><summary>MY ROOMS</summary><div class="room-action-body">
+    <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
+    <div id="ownedRoomList"><small>Loading saved rooms…</small></div>
+  </div></details>
+  <details><summary>SHARE & ACCESS</summary><div class="room-action-body">
+    <div class="room-action-row"><input id="roomShareLinkPreview" aria-label="Selected ROOM share link" readonly><button type="button" id="copyRoomShareLinkButton">COPY ROOM LINK</button></div>
+    <div class="room-action-row"><select id="roomAccessMode" aria-label="ROOM entry mode"><option value="shared">SHARED · CODE ENTRY</option><option value="owner-only">OWNER + EDITORS ONLY</option></select><button type="button" id="saveRoomAccessButton">SAVE ACCESS</button></div>
+    <input id="roomEditorIdsInput" aria-label="Editor access IDs" autocomplete="off" placeholder="EDITOR ACCESS IDs · comma separated" style="width:100%;box-sizing:border-box">
+    <details><summary>MY ACCESS ID</summary><div class="room-action-body"><div class="room-action-row"><input id="myRoomAccessId" aria-label="My access ID" readonly><button type="button" id="copyRoomAccessIdButton">COPY MY ID</button></div><small style="color:#8fa8ba;line-height:1.35">Browser-local prototype identity. Clearing site storage changes this ID.</small></div></details>
+  </div></details>
   <details><summary>NEW ROOM / COPY</summary><div class="room-action-body">
     <div class="room-action-row"><input id="newRoomCodeInput" aria-label="New ROOM code" maxlength="16" autocomplete="off" placeholder="NEW ROOM CODE"><button type="button" id="createRoomButton">CREATE</button></div>
     <div class="room-action-row"><input id="cloneRoomCodeInput" aria-label="Clone target ROOM code" maxlength="16" autocomplete="off" placeholder="CLONE TARGET CODE"><button type="button" id="cloneRoomButton">CLONE SELECTED</button></div>
@@ -1070,15 +1080,9 @@ roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-t
     <div class="room-action-row"><input id="renameRoomCodeInput" aria-label="Renamed ROOM code" maxlength="16" autocomplete="off" placeholder="RENAME TO CODE"><button type="button" id="renameRoomButton">RENAME</button></div>
     <div class="archive-row"><label><input type="checkbox" id="showArchivedRoomsInput"> SHOW ARCHIVED</label><button type="button" id="archiveRoomButton">ARCHIVE</button></div>
   </div></details>
-  <details><summary>ROOM ACCESS</summary><div class="room-action-body">
-    <div class="room-action-row"><input id="myRoomAccessId" aria-label="My access ID" readonly><button type="button" id="copyRoomAccessIdButton">COPY MY ID</button></div>
-    <div class="room-action-row"><input id="roomShareLinkPreview" aria-label="Selected ROOM share link" readonly><button type="button" id="copyRoomShareLinkButton">COPY ROOM LINK</button></div>
-    <div class="room-action-row"><select id="roomAccessMode" aria-label="ROOM entry mode"><option value="shared">SHARED · CODE ENTRY</option><option value="owner-only">OWNER + EDITORS ONLY</option></select><button type="button" id="saveRoomAccessButton">SAVE ACCESS</button></div>
-    <input id="roomEditorIdsInput" aria-label="Editor access IDs" autocomplete="off" placeholder="EDITOR ACCESS IDs · comma separated" style="width:100%;box-sizing:border-box">
-    <small style="color:#8fa8ba;line-height:1.35">Prototype identity uses this browser's ACCESS ID. Clearing browser storage changes the ID. Account sign-in is not active yet.</small>
-  </div></details>
   <small id="roomManagerStatus">Owner rooms only · deletion is disabled.</small>`;
 lobby.appendChild(roomManager);
+enterButton.style.display="none";
 const ownedRoomList=roomManager.querySelector<HTMLElement>("#ownedRoomList")!;
 const newRoomCodeInput=roomManager.querySelector<HTMLInputElement>("#newRoomCodeInput")!;
 const cloneRoomCodeInput=roomManager.querySelector<HTMLInputElement>("#cloneRoomCodeInput")!;
@@ -1098,6 +1102,8 @@ const saveRoomAccessButton=roomManager.querySelector<HTMLButtonElement>("#saveRo
 const refreshRoomsButton=roomManager.querySelector<HTMLButtonElement>("#refreshRoomsButton")!;
 const roomManagerStatus=roomManager.querySelector<HTMLElement>("#roomManagerStatus")!;
 const roomSelectionSummary=roomManager.querySelector<HTMLElement>("#roomSelectionSummary")!;
+const roomEntryPreview=roomManager.querySelector<HTMLElement>("#roomEntryPreview")!;
+const enterSelectedRoomButton=roomManager.querySelector<HTMLButtonElement>("#enterSelectedRoomButton")!;
 const roomApiBase=SERVER_URL.replace(/^wss:/i,"https:").replace(/^ws:/i,"http:").replace(/\/$/,"");
 const roomApiURL=(path:string)=>`${roomApiBase}${path}`;
 const cleanRoomCode=(value:string)=>value.toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16);
@@ -1111,6 +1117,28 @@ let selectedOwnedRoomCode=cleanRoomCode(roomInput.value||"ART001");
 let selectedOwnedRoomArchived=false;
 myRoomAccessId.value=persistentClientId;
 roomShareLinkPreview.value=roomShareURL(selectedOwnedRoomCode);
+type RoomEntryPreview={ok:boolean;roomCode:string;exists:boolean;allowed:boolean;role:"owner"|"editor"|"visitor";accessMode:"shared"|"owner-only";mediaCount:number};
+let lastRoomEntryPreview:RoomEntryPreview|null=null;
+function renderRoomEntryPreview(value:RoomEntryPreview|null,codeValue:string,error=""){
+  const code=cleanRoomCode(codeValue)||"—";
+  const title=roomEntryPreview.querySelector<HTMLElement>("strong")!,detail=roomEntryPreview.querySelector<HTMLElement>("span")!;
+  if(error){roomEntryPreview.dataset.state="error";title.textContent=`${code} · CHECK UNAVAILABLE`;detail.textContent="Server check unavailable; normal connection recovery will be used.";enterSelectedRoomButton.disabled=false;return;}
+  if(!value){roomEntryPreview.dataset.state="checking";title.textContent=`${code} · CHECKING…`;detail.textContent="Confirming ROOM and entry role";enterSelectedRoomButton.disabled=true;return;}
+  if(!value.exists){roomEntryPreview.dataset.state="missing";title.textContent=`${code} · ROOM NOT FOUND`;detail.textContent="Choose an existing ROOM or create it first.";enterSelectedRoomButton.disabled=true;return;}
+  const role=value.role.toUpperCase();roomEntryPreview.dataset.state=value.allowed?"allowed":"denied";
+  title.textContent=value.allowed?`${code} · ENTER AS ${role}`:`${code} · ACCESS DENIED`;
+  detail.textContent=value.allowed?`${value.mediaCount} works · ${value.accessMode==="shared"?"shared code entry":"owner / editors only"}`:"This ROOM allows only its owner and registered editors.";
+  enterSelectedRoomButton.disabled=!value.allowed;
+}
+async function preflightRoomEntry(codeValue:string,showChecking=true){
+  const code=cleanRoomCode(codeValue);if(!code){lastRoomEntryPreview=null;renderRoomEntryPreview(null,"");return null;}
+  if(showChecking)renderRoomEntryPreview(null,code);
+  try{
+    const response=await fetch(roomApiURL(`/rooms/entry?roomCode=${encodeURIComponent(code)}&clientId=${encodeURIComponent(persistentClientId)}&verify=${Date.now()}`),{cache:"no-store",mode:"cors"});
+    const payload=await response.json();if(!response.ok||payload?.ok!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
+    lastRoomEntryPreview=payload as RoomEntryPreview;renderRoomEntryPreview(lastRoomEntryPreview,code);return lastRoomEntryPreview;
+  }catch(error){lastRoomEntryPreview=null;renderRoomEntryPreview(null,code,error instanceof Error?error.message:String(error));return null;}
+}
 function selectOwnedRoom(code:string,archived:boolean,button?:HTMLButtonElement,room?:any){
   selectedOwnedRoomCode=code;selectedOwnedRoomArchived=archived;roomInput.value=code;archiveRoomButton.textContent=archived?"RESTORE":"ARCHIVE";
   roomShareLinkPreview.value=roomShareURL(code);
@@ -1119,6 +1147,7 @@ function selectOwnedRoom(code:string,archived:boolean,button?:HTMLButtonElement,
   roomAccessMode.value=room?.accessMode==="owner-only"?"owner-only":"shared";
   roomEditorIdsInput.value=Array.isArray(room?.editorClientIds)?room.editorClientIds.join(", "):"";
   roomSelectionSummary.innerHTML=`<strong>${code}${archived?" · ARCHIVED":""}</strong><span>${works} works</span><small>SELECTED ROOM</small><span>R${revision}</span>`;
+  void preflightRoomEntry(code);
 }
 async function refreshOwnedRooms(){
   refreshRoomsButton.disabled=true;roomManagerStatus.textContent="LOADING ROOMS…";
@@ -1236,11 +1265,15 @@ copyRoomShareLinkButton.addEventListener("click",async()=>{
   roomManagerStatus.textContent=`ROOM LINK COPIED · ${code} · entry permission is still required`;
 });
 saveRoomAccessButton.addEventListener("click",()=>void saveSelectedRoomAccess());
+enterSelectedRoomButton.addEventListener("click",()=>void enterWorld());
 newRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("create",newRoomCodeInput.value);}});
 cloneRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("clone",cloneRoomCodeInput.value);}});
 renameRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void renameSelectedRoom();}});
 window.setTimeout(()=>void refreshOwnedRooms(),500);
-if(invitedRoomCode)window.setTimeout(()=>{roomManagerStatus.textContent=`INVITED ROOM ${invitedRoomCode} · press ENTER WORLD`;},700);
+if(invitedRoomCode)window.setTimeout(()=>{roomManagerStatus.textContent=`INVITED ROOM ${invitedRoomCode} · check role above, then enter`;void preflightRoomEntry(invitedRoomCode);},700);
+else window.setTimeout(()=>void preflightRoomEntry(roomInput.value),700);
+let roomPreflightInputTimer:number|null=null;
+roomInput.addEventListener("input",()=>{if(roomPreflightInputTimer!==null)window.clearTimeout(roomPreflightInputTimer);roomPreflightInputTimer=window.setTimeout(()=>void preflightRoomEntry(roomInput.value),350);});
 let localPosition = new pc.Vec3();
 let lastSend = 0;
 let moveSequence = 0;
@@ -3621,6 +3654,7 @@ function roomJoinErrorText(error:unknown) {
 function isRoomAccessDenied(error:unknown){
   return /ROOM_ACCESS_DENIED|access denied|forbidden/i.test(roomJoinErrorText(error));
 }
+function isRoomNotFound(error:unknown){return /ROOM_NOT_FOUND|room not found/i.test(roomJoinErrorText(error));}
 async function joinRoomWithRetry(options:{name:string;roomCode:string;clientId:string},token:number):Promise<Room>{
   let lastError:unknown=null;
   for(let index=0;index<ROOM_JOIN_RETRY_DELAYS.length;index++){
@@ -3630,6 +3664,7 @@ async function joinRoomWithRetry(options:{name:string;roomCode:string;clientId:s
     const attempt=index+1;
     status.textContent=`ROOMへ接続中… (${attempt}/${ROOM_JOIN_RETRY_DELAYS.length})`;
     enterButton.textContent=`CONNECTING ${attempt}/${ROOM_JOIN_RETRY_DELAYS.length}`;
+    enterSelectedRoomButton.textContent=`CONNECTING ${attempt}/${ROOM_JOIN_RETRY_DELAYS.length}`;
     try{
       const client=new Client(SERVER_URL);
       const room=await joinRoomAttempt(client,options,token);
@@ -3638,7 +3673,7 @@ async function joinRoomWithRetry(options:{name:string;roomCode:string;clientId:s
     }catch(error){
       lastError=error;
       if(String((error as Error)?.message||error)==="join-cancelled")throw error;
-      if(isRoomAccessDenied(error))throw error;
+      if(isRoomAccessDenied(error)||isRoomNotFound(error))throw error;
       console.warn("[ROOM JOIN RETRY]",{attempt,error:error instanceof Error?error.message:String(error)});
     }
   }
@@ -3649,14 +3684,21 @@ async function enterWorld() {
   if(worldJoinInProgress||pageIsLeaving)return;
   const joinToken=++worldJoinAttemptToken;
   worldJoinInProgress=true;
+  const originalEnterButtonText=enterSelectedRoomButton.textContent||"ENTER ROOM";
+  const name=(nameInput.value.trim()||"Guest").slice(0,16);
+  const roomCode=cleanRoomCode(roomInput.value.trim()||"ART001");
+  roomInput.value=roomCode;enterButton.disabled=true;enterSelectedRoomButton.disabled=true;status.textContent="入室権限を確認しています…";
+  const entryPreview=await preflightRoomEntry(roomCode,false);
+  if(entryPreview&&!entryPreview.allowed){
+    status.textContent=entryPreview.exists?`入室できません：ROOM ${roomCode} は所有者と登録Editorのみ入室できます。`:`入室できません：ROOM ${roomCode} は保存されていません。`;
+    enterButton.disabled=false;enterSelectedRoomButton.textContent=originalEnterButtonText;worldJoinInProgress=false;return;
+  }
   updateRoomRoleUI("");
   resetContinuousInputState();
   if(voiceEnabled)disableVoice(false);
   directorCanDirect=false;directorCanManage=false;directorParticipants=[];directorPanel.classList.add("hidden");refreshDirectorPanel();
   applyEnvironmentPermissions({canEdit:false,locked:false,ownerPresent:false});
   unlockResonanceAudio();
-  enterButton.disabled = true;
-  const originalEnterButtonText=enterButton.textContent||"ENTER WORLD";
   status.textContent = "接続しています…";
 
   if (activeRoom) {
@@ -3677,14 +3719,6 @@ async function enterWorld() {
   applyWorldEnvironment(defaultWorldEnvironment);
   pendingMediaDeletes.clear();
   pendingWorldPackageExport = false;
-
-  const name = (nameInput.value.trim() || "Guest").slice(0, 16);
-  const roomCode = (roomInput.value.trim() || "ART001")
-    .toUpperCase()
-    .replace(/[^A-Z0-9_-]/g, "")
-    .slice(0, 16);
-
-  roomInput.value = roomCode;
 
   try {
     const room=await joinRoomWithRetry({name,roomCode,clientId:persistentClientId},joinToken);
@@ -3770,6 +3804,7 @@ async function enterWorld() {
       refreshSharedStateDiagnosticPanel();
       status.textContent="接続が終了しました。再入室してください。";
       enterButton.disabled=false;
+      enterSelectedRoomButton.textContent="ENTER ROOM";void preflightRoomEntry(roomInput.value);
       lobby.classList.remove("hidden");
     });
     room.onError((code:number,message:string)=>{
@@ -4296,6 +4331,7 @@ async function enterWorld() {
     roomLabel.textContent = `ROOM ${roomCode}`;
     status.textContent = "接続しました";
     enterButton.textContent=originalEnterButtonText;
+    enterSelectedRoomButton.textContent=originalEnterButtonText;
     lobby.classList.add("hidden");
     hud.classList.remove("hidden");
     avatarControls.style.display="block";
@@ -4312,9 +4348,11 @@ async function enterWorld() {
     if(!pageIsLeaving&&joinToken===worldJoinAttemptToken){
       status.textContent = isRoomAccessDenied(error)
         ? `入室できません：ROOM ${roomCode} は所有者と登録Editorのみ入室できます。ROOM所有者に、このブラウザーのACCESS IDをEditor登録してもらってください。`
-        : `5回接続できませんでした。再度お試しください: ${roomJoinErrorText(error)}`;
+        :isRoomNotFound(error)?`入室できません：ROOM ${roomCode} は保存されていません。`
+        :`5回接続できませんでした。再度お試しください: ${roomJoinErrorText(error)}`;
       enterButton.disabled = false;
       enterButton.textContent=originalEnterButtonText;
+      enterSelectedRoomButton.textContent=originalEnterButtonText;void preflightRoomEntry(roomCode,false);
       lobby.classList.remove("hidden");
     }
   } finally {
@@ -6849,7 +6887,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.3</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

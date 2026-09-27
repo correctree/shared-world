@@ -1,4 +1,4 @@
-Shared World Prototype 0.24.2 - ROOM SHARE LINKS
+Shared World Prototype 0.24.3 - ACCESS PREFLIGHT + SIMPLE ENTRY
 
 CHANGES FROM 0.21.2.1
 - Replaces strict artwork-ID matching with original asset-filename matching.
@@ -507,3 +507,30 @@ ROOM SHARE LINK TEST
 6. Remove its editor registration temporarily and reopen the same link; confirm
    the link does not bypass the owner/editor-only rejection.
 7. Register it again and confirm the same link enters as EDITOR.
+
+0.24.3 ACCESS PREFLIGHT + SIMPLE ENTRY
+
+- Adds a server-authoritative entry preview before the WebSocket ROOM join.
+- Shows ROOM NOT FOUND, ENTER AS OWNER, ENTER AS EDITOR, ENTER AS VISITOR or
+  ACCESS DENIED directly in the lobby.
+- A known denial or missing ROOM stops before opening a ROOM connection.
+- If the HTTP preview itself is temporarily unavailable, the existing robust
+  WebSocket retry and authorization path remains available as fallback.
+- Simplifies the lobby around one primary ROOM ENTRY card and ENTER ROOM action.
+- Moves MY ROOMS, SHARE & ACCESS, ACCESS ID, NEW/COPY and ROOM management into
+  progressively disclosed sections.
+- Keeps the 3D workspace UI unchanged to avoid destabilizing authoring tools.
+- The preview returns only role, access mode and work count; it never exposes
+  owner IDs, editor IDs or other identity data.
+- Persistent snapshots, access sidecars and artwork assets are unchanged.
+
+ACCESS PREFLIGHT + SIMPLE ENTRY TEST
+1. Deploy and confirm the lobby shows ROOM ENTRY version 0.24.3.
+2. Select TESTROOM on the left owner browser and confirm ENTER AS OWNER.
+3. Open its share link on the registered right browser and confirm ENTER AS
+   EDITOR before pressing ENTER ROOM.
+4. Enter from both browsers and confirm the existing OWNER / EDITOR badges.
+5. Remove the right browser editor ID and reopen the link. Confirm ACCESS DENIED
+   appears and ENTER ROOM is disabled without starting the five join retries.
+6. Enter an unused code and confirm ROOM NOT FOUND.
+7. Restore the editor ID and confirm ENTER AS EDITOR and entry return.

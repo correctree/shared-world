@@ -197,7 +197,7 @@ function provisionOwnedWorld(roomCode:string,world:SavedWorldV2,owner:string) {
 
 export function setOwnedWorldArchived(code:string,clientId:string,archived:boolean) {
   const roomCode=safeRoomCode(code),owner=safeClientId(clientId);
-  const world=loadWorldGeneration(roomCode,"current");
+  const world=loadWorld(roomCode).world;
   if(!world)throw new Error("room not found");
   if(world.environmentOwnerClientId!==owner)throw new Error("owner required");
   writeCatalogMeta(roomCode,{...readCatalogMeta(roomCode),archived});
@@ -207,6 +207,16 @@ export function setOwnedWorldArchived(code:string,clientId:string,archived:boole
 
 export function getRoomAccessPolicy(code:string):RoomAccessPolicy {
   const meta=readCatalogMeta(code);return {version:1,accessMode:meta.accessMode,editorClientIds:[...meta.editorClientIds]};
+}
+
+export function inspectRoomEntry(code:string,clientId:string) {
+  const roomCode=safeRoomCode(code),viewer=safeClientId(clientId);
+  const world=loadWorldGeneration(roomCode,"current");
+  if(!world)return {roomCode,exists:false,allowed:false,role:"visitor" as const,accessMode:"shared" as const,mediaCount:0};
+  const policy=getRoomAccessPolicy(roomCode);
+  const role=world.environmentOwnerClientId===viewer?"owner":policy.editorClientIds.includes(viewer)?"editor":"visitor";
+  const allowed=policy.accessMode==="shared"||role==="owner"||role==="editor";
+  return {roomCode,exists:true,allowed,role,accessMode:policy.accessMode,mediaCount:world.mediaObjects.length};
 }
 
 export function setOwnedWorldAccess(code:string,clientId:string,accessMode:string,editorClientIds:unknown) {

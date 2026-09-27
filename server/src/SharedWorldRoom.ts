@@ -56,6 +56,7 @@ export class SharedWorldRoom extends Room<WorldState> {
   private lastSavedAt = "";
   private lastSaveError = "";
   private recoverySource = "empty";
+  private persistentRoomAvailable = false;
   private scenes = new Map<string,SceneSnapshot>();
   private cues = new Map<string,CueDefinition>();
   private authoringRevision = 0;
@@ -127,6 +128,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     const loaded=override||loadWorld(this.roomCode);
     const saved=loaded.world;
     if(!saved)return;
+    this.persistentRoomAvailable=true;
     this.state.mediaObjects.clear();this.mediaBehaviors.clear();this.scenes.clear();this.cues.clear();
     const restoredEnvironment=this.cleanEnvironment(saved.environment);
     if(restoredEnvironment)this.environment=restoredEnvironment;
@@ -1325,6 +1327,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
   onAuth(_client:Client,options:{clientId?:string}) {
     const clientId=String(options?.clientId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
+    if(!this.persistentRoomAvailable)throw new Error("ROOM_NOT_FOUND");
     const policy=getRoomAccessPolicy(this.roomCode);
     if(policy.accessMode==="owner-only"&&clientId!==this.environmentOwnerClientId&&!policy.editorClientIds.includes(clientId))throw new Error("ROOM_ACCESS_DENIED");
     return true;

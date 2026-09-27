@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.23.0 ROOM MANAGEMENT LOADED]");
+console.log("[PROTOTYPE 0.23.0.1 ROOM API REACHABILITY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1057,13 +1057,13 @@ const cloneRoomButton=roomManager.querySelector<HTMLButtonElement>("#cloneRoomBu
 const refreshRoomsButton=roomManager.querySelector<HTMLButtonElement>("#refreshRoomsButton")!;
 const roomManagerStatus=roomManager.querySelector<HTMLElement>("#roomManagerStatus")!;
 let selectedOwnedRoomCode=(roomInput.value||"ART001").toUpperCase();
-const roomApiURL=(path:string)=>`${SERVER_URL.replace(/\/$/,"")}${path}`;
+const roomApiBase=SERVER_URL.replace(/^wss:/i,"https:").replace(/^ws:/i,"http:").replace(/\/$/,"");
+const roomApiURL=(path:string)=>`${roomApiBase}${path}`;
 const cleanRoomCode=(value:string)=>value.toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16);
-const roomApiHeaders={"X-Shared-Client-Id":persistentClientId};
 async function refreshOwnedRooms(){
   refreshRoomsButton.disabled=true;roomManagerStatus.textContent="LOADING ROOMS…";
   try{
-    const response=await fetch(roomApiURL("/rooms"),{headers:roomApiHeaders,cache:"no-store"});
+    const response=await fetch(roomApiURL(`/rooms?clientId=${encodeURIComponent(persistentClientId)}`),{cache:"no-store",mode:"cors"});
     const payload=await response.json();if(!response.ok||payload?.ok!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
     const rooms=Array.isArray(payload.rooms)?payload.rooms:[];ownedRoomList.replaceChildren();
     if(!rooms.length){const empty=document.createElement("small");empty.textContent="No owned ROOM snapshots yet.";ownedRoomList.appendChild(empty);}
@@ -1086,10 +1086,11 @@ async function refreshOwnedRooms(){
 async function mutateRoomCatalog(action:"create"|"clone",targetValue:string){
   const target=cleanRoomCode(targetValue);if(!target){roomManagerStatus.textContent="Enter a valid ROOM code.";return;}
   const source=cleanRoomCode(selectedOwnedRoomCode||roomInput.value);
-  const query=action==="create"?`roomCode=${encodeURIComponent(target)}`:`source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`;
+  const auth=`clientId=${encodeURIComponent(persistentClientId)}`;
+  const query=action==="create"?`${auth}&roomCode=${encodeURIComponent(target)}`:`${auth}&source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`;
   createRoomButton.disabled=true;cloneRoomButton.disabled=true;roomManagerStatus.textContent=action==="create"?`CREATING ${target}…`:`CLONING ${source} → ${target}…`;
   try{
-    const response=await fetch(roomApiURL(`/rooms/${action}?${query}`),{method:"POST",headers:roomApiHeaders});
+    const response=await fetch(roomApiURL(`/rooms/${action}?${query}`),{method:"POST",mode:"cors"});
     const payload=await response.json();if(!response.ok||payload?.ok!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
     selectedOwnedRoomCode=target;roomInput.value=target;newRoomCodeInput.value="";cloneRoomCodeInput.value="";
     await refreshOwnedRooms();roomManagerStatus.textContent=`${action==="create"?"CREATED":"CLONED"} ${target} · ready to enter`;
@@ -6685,7 +6686,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.0</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.0.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

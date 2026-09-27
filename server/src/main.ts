@@ -35,7 +35,7 @@ const server = defineServer({
     app.options("/rooms",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/create",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/clone",(_req,res)=>res.sendStatus(204));
-    const roomClientId=(req:any)=>String(req.get("X-Shared-Client-Id")||"");
+    const roomClientId=(req:any)=>String(req.query?.clientId||req.get("X-Shared-Client-Id")||"");
     app.get("/rooms",(req,res)=>{
       try{res.json({ok:true,rooms:listOwnedWorlds(roomClientId(req))});}
       catch(error){res.status(403).json({ok:false,error:error instanceof Error?error.message:"room list failed"});}
@@ -153,7 +153,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.23.0-room-management",
+        service: "shared-world-0.23.0.1-room-api-reachability",
         storedAssets: assetCount()
       })
     );
@@ -162,4 +162,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.23.0] ROOM MANAGEMENT ready");
+console.log("[Prototype 0.23.0.1] ROOM API REACHABILITY ready");

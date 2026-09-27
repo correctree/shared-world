@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.22.2.1 MANUAL CHECKPOINT FIX LOADED]");
+console.log("[PROTOTYPE 0.22.2.2 RESTORE DUPLICATE GUARD LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3509,10 +3509,13 @@ async function enterWorld() {
       if(payload?.ok!==true){roomRecoveryStatus.textContent=`RESTORE REJECTED · ${String(payload?.reason||payload?.error||"unknown")}`;return;}
       const label=payload?.kind==="checkpoint"?"CHECKPOINT":"PREVIOUS";
       roomRecoveryStatus.textContent=`${label} RESTORED · ${Number(payload.count)||0} objects · revision ${Number(payload.revision)||0} · synchronizing…`;
-      for(const id of new Set([...Array.from(managedPlacedMedia.keys()),...Array.from(sharedRemoteMediaIds)]))
-        removeSharedMediaLifecycle(id,"previous-generation-restore");
+      // Do not run a second full delete/rebuild here. The Colyseus state patch
+      // already carries the authoritative clear/add sequence. A parallel local
+      // rebuild could race async GLB/WebM/Sprite loading and leave a duplicate
+      // render entity for one logical media ID. Snapshot reconciliation below
+      // now performs the only explicit healing pass.
       const sync=()=>{if(room!==activeRoom)return;room.send("media:snapshot:request",{});reconcileWorldFromServerState();};
-      window.setTimeout(sync,120);window.setTimeout(sync,650);window.setTimeout(sync,1500);
+      window.setTimeout(sync,250);window.setTimeout(sync,800);window.setTimeout(sync,1700);
       window.setTimeout(()=>{if(room===activeRoom)roomRecoveryStatus.textContent=`${label} ACTIVE · ${Number(payload.count)||0} objects · revision ${Number(payload.revision)||0}`;},1900);
     });
     // Colyseus SDK 0.18 owns transient reconnection. Keep this Room instance,
@@ -6620,7 +6623,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.2.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.2.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

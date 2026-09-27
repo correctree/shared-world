@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.22.2 ROOM RECOVERY CONTROLS LOADED]");
+console.log("[PROTOTYPE 0.22.2.1 MANUAL CHECKPOINT FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3492,9 +3492,11 @@ async function enterWorld() {
       if(failed)console.error("[ROOM PERSISTENCE ERROR]",payload.error);
       else console.log("[ROOM PERSISTENCE]",payload);
       const previous=payload?.generations?.previous;
+      const checkpoint=payload?.generations?.checkpoint;
       roomRecoveryStatus.textContent=failed?`SAVE FAILED · ${String(payload.error)}`:
-        `REVISION ${Number(payload?.revision)||0} · ${payload?.lastSavedAt?new Date(String(payload.lastSavedAt)).toLocaleString():"NOT SAVED"} · PREVIOUS ${previous?.valid?`R${Number(previous.revision)||0}`:"NONE"}`;
-      restorePreviousButton.disabled=!previous?.valid;
+        `REVISION ${Number(payload?.revision)||0} · ${payload?.lastSavedAt?new Date(String(payload.lastSavedAt)).toLocaleString():"NOT SAVED"} · CHECKPOINT ${checkpoint?.valid?`R${Number(checkpoint.revision)||0}`:"NONE"}`;
+      restoreCheckpointButton.disabled=!checkpoint?.valid;
+      undoRestoreButton.disabled=!previous?.valid;
     });
     room.onMessage("persistence:result",(payload:any)=>{
       if(room!==activeRoom)return;
@@ -3503,14 +3505,15 @@ async function enterWorld() {
       else {roomRecoveryStatus.textContent=`SAVE REJECTED · ${String(payload?.reason||payload?.error||"unknown")}`;console.warn("[ROOM MANUAL SAVE REJECTED]",payload?.reason||payload?.error||"unknown");}
     });
     room.onMessage("persistence:restore-result",(payload:any)=>{
-      if(room!==activeRoom)return;restorePreviousButton.disabled=false;
+      if(room!==activeRoom)return;restoreCheckpointButton.disabled=false;undoRestoreButton.disabled=false;
       if(payload?.ok!==true){roomRecoveryStatus.textContent=`RESTORE REJECTED · ${String(payload?.reason||payload?.error||"unknown")}`;return;}
-      roomRecoveryStatus.textContent=`PREVIOUS RESTORED · ${Number(payload.count)||0} objects · revision ${Number(payload.revision)||0} · synchronizing…`;
+      const label=payload?.kind==="checkpoint"?"CHECKPOINT":"PREVIOUS";
+      roomRecoveryStatus.textContent=`${label} RESTORED · ${Number(payload.count)||0} objects · revision ${Number(payload.revision)||0} · synchronizing…`;
       for(const id of new Set([...Array.from(managedPlacedMedia.keys()),...Array.from(sharedRemoteMediaIds)]))
         removeSharedMediaLifecycle(id,"previous-generation-restore");
       const sync=()=>{if(room!==activeRoom)return;room.send("media:snapshot:request",{});reconcileWorldFromServerState();};
       window.setTimeout(sync,120);window.setTimeout(sync,650);window.setTimeout(sync,1500);
-      window.setTimeout(()=>{if(room===activeRoom)roomRecoveryStatus.textContent=`PREVIOUS ACTIVE · ${Number(payload.count)||0} objects · revision ${Number(payload.revision)||0}`;},1900);
+      window.setTimeout(()=>{if(room===activeRoom)roomRecoveryStatus.textContent=`${label} ACTIVE · ${Number(payload.count)||0} objects · revision ${Number(payload.revision)||0}`;},1900);
     });
     // Colyseus SDK 0.18 owns transient reconnection. Keep this Room instance,
     // its listeners and its state tree alive while the SDK retries.
@@ -4507,20 +4510,27 @@ worldManifestStatus.style.cssText = "width:100%;font-size:11px;line-height:1.4;c
 worldManifestStatus.textContent = "JSON saves positions and behavior. Uploaded asset files are not included.";
 const saveNowButton=document.createElement("button");
 saveNowButton.type="button";saveNowButton.textContent="SAVE ROOM NOW";
-const restorePreviousButton=document.createElement("button");
-restorePreviousButton.type="button";restorePreviousButton.textContent="RESTORE PREVIOUS";restorePreviousButton.disabled=true;
+const restoreCheckpointButton=document.createElement("button");
+restoreCheckpointButton.type="button";restoreCheckpointButton.textContent="RESTORE CHECKPOINT";restoreCheckpointButton.disabled=true;
+const undoRestoreButton=document.createElement("button");
+undoRestoreButton.type="button";undoRestoreButton.textContent="UNDO LAST RESTORE";undoRestoreButton.disabled=true;
 const roomRecoveryStatus=document.createElement("div");
 roomRecoveryStatus.style.cssText="width:100%;font-size:11px;line-height:1.4;color:#9fd8b7";
 roomRecoveryStatus.textContent="ROOM RECOVERY · connect to inspect saved generations";
-worldManifestControls.append(saveNowButton,restorePreviousButton,worldExportButton,worldImportButton,worldImportInput,roomRecoveryStatus,worldManifestStatus);
+worldManifestControls.append(saveNowButton,restoreCheckpointButton,undoRestoreButton,worldExportButton,worldImportButton,worldImportInput,roomRecoveryStatus,worldManifestStatus);
 saveNowButton.addEventListener("click",()=>{
   if(!activeRoom){roomRecoveryStatus.textContent="Connect to a room first.";return;}
   saveNowButton.disabled=true;roomRecoveryStatus.textContent="SAVING ROOM NOW…";activeRoom.send("persistence:save",{});
 });
-restorePreviousButton.addEventListener("click",()=>{
+restoreCheckpointButton.addEventListener("click",()=>{
   if(!activeRoom){roomRecoveryStatus.textContent="Connect to a room first.";return;}
-  if(!window.confirm("直前の保存世代へ戻しますか？ 現在の状態はPREVIOUSとして退避されます。"))return;
-  restorePreviousButton.disabled=true;roomRecoveryStatus.textContent="RESTORING PREVIOUS…";activeRoom.send("persistence:restore-previous",{});
+  if(!window.confirm("SAVE ROOM NOWで作成したチェックポイントへ戻しますか？ 現在の状態はUNDO用に退避されます。"))return;
+  restoreCheckpointButton.disabled=true;roomRecoveryStatus.textContent="RESTORING CHECKPOINT…";activeRoom.send("persistence:restore-checkpoint",{});
+});
+undoRestoreButton.addEventListener("click",()=>{
+  if(!activeRoom){roomRecoveryStatus.textContent="Connect to a room first.";return;}
+  if(!window.confirm("直前の復元を取り消して、復元前の状態へ戻しますか？"))return;
+  undoRestoreButton.disabled=true;roomRecoveryStatus.textContent="UNDOING LAST RESTORE…";activeRoom.send("persistence:restore-previous",{});
 });
 worldExportButton.addEventListener("click", () => {
   if (!activeRoom) { worldManifestStatus.textContent = "Connect to a room first."; return; }
@@ -6610,7 +6620,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.2.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

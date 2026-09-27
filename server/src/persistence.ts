@@ -37,6 +37,7 @@ function safeRoomCode(code: string) {
 function worldPath(code: string) { return join(worldDir, `${safeRoomCode(code)}.json`); }
 function previousPath(code: string) { return join(worldDir, `${safeRoomCode(code)}.previous.json`); }
 function stablePath(code: string) { return join(worldDir, `${safeRoomCode(code)}.stable.json`); }
+function checkpointPath(code: string) { return join(worldDir, `${safeRoomCode(code)}.checkpoint.json`); }
 
 function validateEnvelope(value: unknown, code: string): SavedWorldV2 {
   if (!value || typeof value !== "object") throw new Error("snapshot is not an object");
@@ -70,6 +71,20 @@ export function loadWorldGeneration(code:string,generation:WorldGeneration):Save
   return existsSync(path)?readSnapshot(path,code):null;
 }
 
+export function loadWorldCheckpoint(code:string):SavedWorldV2|null {
+  const path=checkpointPath(code);return existsSync(path)?readSnapshot(path,code):null;
+}
+
+export function saveWorldCheckpoint(code:string,world:SavedWorldV2) {
+  const path=checkpointPath(code);
+  const temporary=`${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  const json=JSON.stringify(validateEnvelope(world,code));
+  if(Buffer.byteLength(json,"utf8")>2*1024*1024)throw new Error("checkpoint exceeds 2 MB");
+  writeFileSync(temporary,json,{encoding:"utf8",mode:0o600});
+  try{readSnapshot(temporary,code);renameSync(temporary,path);}
+  catch(error){if(existsSync(temporary))unlinkSync(temporary);throw error;}
+}
+
 export function worldGenerationInfo(code:string) {
   const inspect=(generation:WorldGeneration)=>{
     try{
@@ -77,7 +92,10 @@ export function worldGenerationInfo(code:string) {
       return world?{available:true,valid:true,revision:world.revision,savedAt:world.savedAt}:{available:false,valid:false,revision:0,savedAt:""};
     }catch{return {available:true,valid:false,revision:0,savedAt:""};}
   };
-  return {current:inspect("current"),previous:inspect("previous"),stable:inspect("stable")};
+  let checkpoint:{available:boolean;valid:boolean;revision:number;savedAt:string};
+  try{const world=loadWorldCheckpoint(code);checkpoint=world?{available:true,valid:true,revision:world.revision,savedAt:world.savedAt}:{available:false,valid:false,revision:0,savedAt:""};}
+  catch{checkpoint={available:true,valid:false,revision:0,savedAt:""};}
+  return {current:inspect("current"),previous:inspect("previous"),stable:inspect("stable"),checkpoint};
 }
 
 export function loadWorld(code: string): { world: SavedWorldV2 | null; recovered: boolean; source: WorldGeneration | "empty" } {
@@ -131,7 +149,7 @@ export function storageInfo() {
   return {
     root,
     persistentConfigured: Boolean(process.env.SHARED_WORLD_DATA_DIR),
-    storedWorlds: readdirSync(worldDir).filter(name => name.endsWith(".json") && !name.endsWith(".stable.json") && !name.endsWith(".previous.json")).length,
+    storedWorlds: readdirSync(worldDir).filter(name => name.endsWith(".json") && !name.endsWith(".stable.json") && !name.endsWith(".previous.json") && !name.endsWith(".checkpoint.json")).length,
     storedAssets: readdirSync(assetDir).length
   };
 }

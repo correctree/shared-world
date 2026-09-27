@@ -1,5 +1,5 @@
 import { Room, type Client } from "colyseus";
-import { assetExists, loadWorld, loadWorldGeneration, saveWorld, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
+import { assetExists, loadWorld, loadWorldCheckpoint, loadWorldGeneration, saveWorld, saveWorldCheckpoint, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
 import { Player, SharedMediaObject, WorldState } from "./state.js";
 
 const MAX_STEP = 0.75;
@@ -480,7 +480,39 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.onMessage("persistence:save",(client:Client)=>{
       if(!this.canEditEnvironment(client,true)){client.send("persistence:result",{ok:false,reason:"owner-required"});return;}
       this.persistNow("manual-save");
+      if(!this.lastSaveError){
+        try{const checkpoint=this.buildPersistentSnapshot();checkpoint.savedAt=this.lastSavedAt;saveWorldCheckpoint(this.roomCode,checkpoint);}
+        catch(error){this.lastSaveError=error instanceof Error?error.message:String(error);console.error("[ROOM CHECKPOINT SAVE FAILED]",this.roomCode,error);}
+      }
+      this.sendPersistenceState();
       client.send("persistence:result",{ok:!this.lastSaveError,...this.persistenceState()});
+    });
+    this.onMessage("persistence:restore-checkpoint",(client:Client)=>{
+      if(!this.canEditEnvironment(client,true)){client.send("persistence:restore-result",{ok:false,reason:"owner-required",kind:"checkpoint"});return;}
+      try{
+        const target=loadWorldCheckpoint(this.roomCode);
+        if(!target){client.send("persistence:restore-result",{ok:false,reason:"checkpoint-not-found",kind:"checkpoint"});return;}
+        if(this.persistenceTimer){clearTimeout(this.persistenceTimer);this.persistenceTimer=null;}
+        const restored:SavedWorldV2={...target,revision:this.persistenceRevision+1,savedAt:new Date().toISOString(),
+          environment:{...target.environment},mediaObjects:target.mediaObjects.map(item=>({...item})),
+          scenes:target.scenes.map(item=>({...item})),cues:target.cues.map(item=>({...item}))};
+        // The live pre-restore current rotates to previous. The named manual
+        // checkpoint is deliberately not changed by this operation.
+        saveWorld(this.roomCode,restored);
+        this.persistenceDirty=false;this.lastSaveError="";
+        this.restorePersistentWorld({world:restored,recovered:true,source:"previous"});this.recoverySource="current";
+        this.broadcast("world:restored:v2",{roomCode:this.roomCode,revision:restored.revision,
+          count:this.state.mediaObjects.size,savedAt:restored.savedAt,source:"checkpoint"});
+        this.broadcast("environment:state",this.environment);this.sendEnvironmentPermissions();
+        this.sendSceneList();this.sendCueList();this.sendAuthoringState();this.sendPersistenceState();
+        client.send("persistence:restore-result",{ok:true,kind:"checkpoint",revision:restored.revision,
+          savedAt:restored.savedAt,count:this.state.mediaObjects.size,source:"checkpoint"});
+        console.log("[ROOM CHECKPOINT RESTORED]",{roomCode:this.roomCode,revision:restored.revision,count:this.state.mediaObjects.size});
+      }catch(error){
+        this.lastSaveError=error instanceof Error?error.message:String(error);this.sendPersistenceState();
+        client.send("persistence:restore-result",{ok:false,reason:"checkpoint-restore-failed",kind:"checkpoint",error:this.lastSaveError});
+        console.error("[ROOM CHECKPOINT RESTORE FAILED]",this.roomCode,error);
+      }
     });
     this.onMessage("persistence:restore-previous",(client:Client)=>{
       if(!this.canEditEnvironment(client,true)){client.send("persistence:restore-result",{ok:false,reason:"owner-required"});return;}

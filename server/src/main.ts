@@ -179,7 +179,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.24.3-access-preflight-simple-entry",
+        service: "shared-world-0.24.4-access-clarity-mobile-share",
         storedAssets: assetCount()
       })
     );
@@ -188,4 +188,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.24.3] ACCESS PREFLIGHT + SIMPLE ENTRY ready");
+console.log("[Prototype 0.24.4] ACCESS CLARITY + MOBILE SHARE ready");

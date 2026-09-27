@@ -1,4 +1,4 @@
-Shared World Prototype 0.24.3 - ACCESS PREFLIGHT + SIMPLE ENTRY
+Shared World Prototype 0.24.4 - ACCESS CLARITY + MOBILE SHARE
 
 CHANGES FROM 0.21.2.1
 - Replaces strict artwork-ID matching with original asset-filename matching.
@@ -534,3 +534,29 @@ ACCESS PREFLIGHT + SIMPLE ENTRY TEST
    appears and ENTER ROOM is disabled without starting the five join retries.
 6. Enter an unused code and confirm ROOM NOT FOUND.
 7. Restore the editor ID and confirm ENTER AS EDITOR and entry return.
+
+0.24.4 ACCESS CLARITY + MOBILE SHARE
+
+- Renames SHARED · CODE ENTRY to PUBLIC VIEWING · CODE / LINK.
+- Renames OWNER + EDITORS ONLY to PRIVATE · OWNER + EDITORS.
+- Adds an always-visible explanation below the access selector describing who
+  can enter and who can edit in the selected mode.
+- Adds SHARE ROOM. On supported mobile devices it opens the native share sheet.
+- If native sharing is unavailable, SHARE ROOM safely falls back to copying the
+  selected ROOM link.
+- Keeps COPY LINK as a predictable desktop action.
+- The share URL still contains only the ROOM code and never contains an ACCESS
+  ID, owner ID, editor ID or permission grant.
+- Server authorization, preflight behavior, Persistent Disk formats and ROOM
+  contents are unchanged from 0.24.3.
+
+ACCESS CLARITY + MOBILE SHARE TEST
+1. Deploy and confirm ROOM ENTRY shows version 0.24.4.
+2. Open SHARE & ACCESS and confirm both clearer mode names and the explanation.
+3. Select PUBLIC VIEWING, save, and confirm the right browser shows ENTER AS
+   VISITOR when its editor ID is absent.
+4. Select PRIVATE, save, and confirm the same unregistered browser shows ACCESS
+   DENIED.
+5. Restore the editor ID and confirm ENTER AS EDITOR.
+6. Press SHARE ROOM on a phone and confirm the system share sheet opens. On a
+   desktop without Web Share, confirm the ROOM link is copied instead.

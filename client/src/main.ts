@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.24.3 ACCESS PREFLIGHT + SIMPLE ENTRY LOADED]");
+console.log("[PROTOTYPE 0.24.4 ACCESS CLARITY + MOBILE SHARE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1058,17 +1058,20 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManager .room-action-row input,#roomManager .room-action-row select{display:block;width:100%!important;min-width:0!important;box-sizing:border-box}#roomManager .room-action-row button{width:134px!important;min-width:134px!important;margin:0!important}
   #roomManager .archive-row{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;align-items:center}#roomManager .archive-row label{display:flex;align-items:center;gap:7px;color:#b7c9d8;font-size:10px}#roomManager .archive-row input{width:auto!important}
   #roomManager .room-entry-card{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:7px;padding:10px;border:1px solid #3b596d;border-radius:9px;background:#0a1721}#roomManager .room-entry-card>div{display:flex;flex-direction:column;gap:4px;min-width:0}#roomManager .room-entry-card strong{font-size:12px;color:#e8f5fd}#roomManager .room-entry-card span{font-size:9px;color:#9db3c3;line-height:1.35}#roomManager .room-entry-card button{width:134px!important;min-width:134px!important;margin:0!important}#roomManager .room-entry-card[data-state="allowed"]{border-color:#43d3a7}#roomManager .room-entry-card[data-state="denied"]{border-color:#dc8f55}#roomManager .room-entry-card[data-state="missing"]{border-color:#d86161}
+  #roomManager .access-mode-help{display:block;padding:8px 9px;border-radius:7px;background:#101d28;color:#b9ccda;font-size:9px;line-height:1.45}#roomManager #shareRoomButton{width:100%!important;margin:0!important}
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.24.3</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.24.4</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
     <div id="ownedRoomList"><small>Loading saved rooms…</small></div>
   </div></details>
   <details><summary>SHARE & ACCESS</summary><div class="room-action-body">
-    <div class="room-action-row"><input id="roomShareLinkPreview" aria-label="Selected ROOM share link" readonly><button type="button" id="copyRoomShareLinkButton">COPY ROOM LINK</button></div>
-    <div class="room-action-row"><select id="roomAccessMode" aria-label="ROOM entry mode"><option value="shared">SHARED · CODE ENTRY</option><option value="owner-only">OWNER + EDITORS ONLY</option></select><button type="button" id="saveRoomAccessButton">SAVE ACCESS</button></div>
+    <button type="button" id="shareRoomButton">SHARE ROOM</button>
+    <div class="room-action-row"><input id="roomShareLinkPreview" aria-label="Selected ROOM share link" readonly><button type="button" id="copyRoomShareLinkButton">COPY LINK</button></div>
+    <div class="room-action-row"><select id="roomAccessMode" aria-label="ROOM entry mode"><option value="shared">PUBLIC VIEWING · CODE / LINK</option><option value="owner-only">PRIVATE · OWNER + EDITORS</option></select><button type="button" id="saveRoomAccessButton">SAVE ACCESS</button></div>
+    <small id="roomAccessModeHelp" class="access-mode-help"></small>
     <input id="roomEditorIdsInput" aria-label="Editor access IDs" autocomplete="off" placeholder="EDITOR ACCESS IDs · comma separated" style="width:100%;box-sizing:border-box">
     <details><summary>MY ACCESS ID</summary><div class="room-action-body"><div class="room-action-row"><input id="myRoomAccessId" aria-label="My access ID" readonly><button type="button" id="copyRoomAccessIdButton">COPY MY ID</button></div><small style="color:#8fa8ba;line-height:1.35">Browser-local prototype identity. Clearing site storage changes this ID.</small></div></details>
   </div></details>
@@ -1096,7 +1099,9 @@ const myRoomAccessId=roomManager.querySelector<HTMLInputElement>("#myRoomAccessI
 const copyRoomAccessIdButton=roomManager.querySelector<HTMLButtonElement>("#copyRoomAccessIdButton")!;
 const roomShareLinkPreview=roomManager.querySelector<HTMLInputElement>("#roomShareLinkPreview")!;
 const copyRoomShareLinkButton=roomManager.querySelector<HTMLButtonElement>("#copyRoomShareLinkButton")!;
+const shareRoomButton=roomManager.querySelector<HTMLButtonElement>("#shareRoomButton")!;
 const roomAccessMode=roomManager.querySelector<HTMLSelectElement>("#roomAccessMode")!;
+const roomAccessModeHelp=roomManager.querySelector<HTMLElement>("#roomAccessModeHelp")!;
 const roomEditorIdsInput=roomManager.querySelector<HTMLInputElement>("#roomEditorIdsInput")!;
 const saveRoomAccessButton=roomManager.querySelector<HTMLButtonElement>("#saveRoomAccessButton")!;
 const refreshRoomsButton=roomManager.querySelector<HTMLButtonElement>("#refreshRoomsButton")!;
@@ -1117,6 +1122,12 @@ let selectedOwnedRoomCode=cleanRoomCode(roomInput.value||"ART001");
 let selectedOwnedRoomArchived=false;
 myRoomAccessId.value=persistentClientId;
 roomShareLinkPreview.value=roomShareURL(selectedOwnedRoomCode);
+function updateRoomAccessModeHelp(){
+  roomAccessModeHelp.textContent=roomAccessMode.value==="owner-only"
+    ?"PRIVATE: Only the ROOM owner and registered editors can enter. The link alone does not grant access."
+    :"PUBLIC VIEWING: Anyone with the ROOM code or link can enter as a visitor. Only the owner and editors can change the environment.";
+}
+updateRoomAccessModeHelp();
 type RoomEntryPreview={ok:boolean;roomCode:string;exists:boolean;allowed:boolean;role:"owner"|"editor"|"visitor";accessMode:"shared"|"owner-only";mediaCount:number};
 let lastRoomEntryPreview:RoomEntryPreview|null=null;
 function renderRoomEntryPreview(value:RoomEntryPreview|null,codeValue:string,error=""){
@@ -1145,6 +1156,7 @@ function selectOwnedRoom(code:string,archived:boolean,button?:HTMLButtonElement,
   for(const item of ownedRoomList.querySelectorAll("button"))item.setAttribute("aria-pressed",String(item===button));
   const works=Number(room?.mediaCount)||0,revision=Number(room?.revision)||0;
   roomAccessMode.value=room?.accessMode==="owner-only"?"owner-only":"shared";
+  updateRoomAccessModeHelp();
   roomEditorIdsInput.value=Array.isArray(room?.editorClientIds)?room.editorClientIds.join(", "):"";
   roomSelectionSummary.innerHTML=`<strong>${code}${archived?" · ARCHIVED":""}</strong><span>${works} works</span><small>SELECTED ROOM</small><span>R${revision}</span>`;
   void preflightRoomEntry(code);
@@ -1264,6 +1276,17 @@ copyRoomShareLinkButton.addEventListener("click",async()=>{
   try{await navigator.clipboard.writeText(link);}catch{roomShareLinkPreview.select();document.execCommand("copy");}
   roomManagerStatus.textContent=`ROOM LINK COPIED · ${code} · entry permission is still required`;
 });
+shareRoomButton.addEventListener("click",async()=>{
+  const code=cleanRoomCode(selectedOwnedRoomCode);const link=roomShareURL(code);
+  if(!code||!link){roomManagerStatus.textContent="Select an owned ROOM first.";return;}
+  if(typeof navigator.share==="function"){
+    try{await navigator.share({title:`Shared World · ${code}`,text:`Enter ROOM ${code}`,url:link});roomManagerStatus.textContent=`ROOM SHARED · ${code}`;return;}
+    catch(error){if((error as Error)?.name==="AbortError"){roomManagerStatus.textContent="SHARE CANCELLED";return;}}
+  }
+  try{await navigator.clipboard.writeText(link);}catch{roomShareLinkPreview.value=link;roomShareLinkPreview.select();document.execCommand("copy");}
+  roomManagerStatus.textContent=`ROOM LINK COPIED · ${code}`;
+});
+roomAccessMode.addEventListener("change",updateRoomAccessModeHelp);
 saveRoomAccessButton.addEventListener("click",()=>void saveSelectedRoomAccess());
 enterSelectedRoomButton.addEventListener("click",()=>void enterWorld());
 newRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("create",newRoomCodeInput.value);}});
@@ -6887,7 +6910,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.3</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.4</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

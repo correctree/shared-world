@@ -65,6 +65,21 @@ function readSnapshot(path: string, code: string) {
 
 export type WorldGeneration = "current" | "previous" | "stable";
 
+export function loadWorldGeneration(code:string,generation:WorldGeneration):SavedWorldV2|null {
+  const path=generation==="current"?worldPath(code):generation==="previous"?previousPath(code):stablePath(code);
+  return existsSync(path)?readSnapshot(path,code):null;
+}
+
+export function worldGenerationInfo(code:string) {
+  const inspect=(generation:WorldGeneration)=>{
+    try{
+      const world=loadWorldGeneration(code,generation);
+      return world?{available:true,valid:true,revision:world.revision,savedAt:world.savedAt}:{available:false,valid:false,revision:0,savedAt:""};
+    }catch{return {available:true,valid:false,revision:0,savedAt:""};}
+  };
+  return {current:inspect("current"),previous:inspect("previous"),stable:inspect("stable")};
+}
+
 export function loadWorld(code: string): { world: SavedWorldV2 | null; recovered: boolean; source: WorldGeneration | "empty" } {
   const candidates:Array<{source:WorldGeneration;path:string}>=[
     {source:"current",path:worldPath(code)},

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.22.1.1 ROOM ENTRY STABILITY LOADED]");
+console.log("[PROTOTYPE 0.22.2 ROOM RECOVERY CONTROLS LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -3491,10 +3491,26 @@ async function enterWorld() {
       }
       if(failed)console.error("[ROOM PERSISTENCE ERROR]",payload.error);
       else console.log("[ROOM PERSISTENCE]",payload);
+      const previous=payload?.generations?.previous;
+      roomRecoveryStatus.textContent=failed?`SAVE FAILED · ${String(payload.error)}`:
+        `REVISION ${Number(payload?.revision)||0} · ${payload?.lastSavedAt?new Date(String(payload.lastSavedAt)).toLocaleString():"NOT SAVED"} · PREVIOUS ${previous?.valid?`R${Number(previous.revision)||0}`:"NONE"}`;
+      restorePreviousButton.disabled=!previous?.valid;
     });
     room.onMessage("persistence:result",(payload:any)=>{
       if(room!==activeRoom)return;
-      if(payload?.ok!==true)console.warn("[ROOM MANUAL SAVE REJECTED]",payload?.reason||payload?.error||"unknown");
+      saveNowButton.disabled=false;
+      if(payload?.ok===true)roomRecoveryStatus.textContent=`SAVED NOW · REVISION ${Number(payload.revision)||0} · ${new Date(String(payload.lastSavedAt)).toLocaleString()}`;
+      else {roomRecoveryStatus.textContent=`SAVE REJECTED · ${String(payload?.reason||payload?.error||"unknown")}`;console.warn("[ROOM MANUAL SAVE REJECTED]",payload?.reason||payload?.error||"unknown");}
+    });
+    room.onMessage("persistence:restore-result",(payload:any)=>{
+      if(room!==activeRoom)return;restorePreviousButton.disabled=false;
+      if(payload?.ok!==true){roomRecoveryStatus.textContent=`RESTORE REJECTED · ${String(payload?.reason||payload?.error||"unknown")}`;return;}
+      roomRecoveryStatus.textContent=`PREVIOUS RESTORED · ${Number(payload.count)||0} objects · revision ${Number(payload.revision)||0} · synchronizing…`;
+      for(const id of new Set([...Array.from(managedPlacedMedia.keys()),...Array.from(sharedRemoteMediaIds)]))
+        removeSharedMediaLifecycle(id,"previous-generation-restore");
+      const sync=()=>{if(room!==activeRoom)return;room.send("media:snapshot:request",{});reconcileWorldFromServerState();};
+      window.setTimeout(sync,120);window.setTimeout(sync,650);window.setTimeout(sync,1500);
+      window.setTimeout(()=>{if(room===activeRoom)roomRecoveryStatus.textContent=`PREVIOUS ACTIVE · ${Number(payload.count)||0} objects · revision ${Number(payload.revision)||0}`;},1900);
     });
     // Colyseus SDK 0.18 owns transient reconnection. Keep this Room instance,
     // its listeners and its state tree alive while the SDK retries.
@@ -4489,7 +4505,23 @@ worldImportInput.hidden = true;
 const worldManifestStatus = document.createElement("div");
 worldManifestStatus.style.cssText = "width:100%;font-size:11px;line-height:1.4;color:#c9d7e8";
 worldManifestStatus.textContent = "JSON saves positions and behavior. Uploaded asset files are not included.";
-worldManifestControls.append(worldExportButton,worldImportButton,worldImportInput,worldManifestStatus);
+const saveNowButton=document.createElement("button");
+saveNowButton.type="button";saveNowButton.textContent="SAVE ROOM NOW";
+const restorePreviousButton=document.createElement("button");
+restorePreviousButton.type="button";restorePreviousButton.textContent="RESTORE PREVIOUS";restorePreviousButton.disabled=true;
+const roomRecoveryStatus=document.createElement("div");
+roomRecoveryStatus.style.cssText="width:100%;font-size:11px;line-height:1.4;color:#9fd8b7";
+roomRecoveryStatus.textContent="ROOM RECOVERY · connect to inspect saved generations";
+worldManifestControls.append(saveNowButton,restorePreviousButton,worldExportButton,worldImportButton,worldImportInput,roomRecoveryStatus,worldManifestStatus);
+saveNowButton.addEventListener("click",()=>{
+  if(!activeRoom){roomRecoveryStatus.textContent="Connect to a room first.";return;}
+  saveNowButton.disabled=true;roomRecoveryStatus.textContent="SAVING ROOM NOW…";activeRoom.send("persistence:save",{});
+});
+restorePreviousButton.addEventListener("click",()=>{
+  if(!activeRoom){roomRecoveryStatus.textContent="Connect to a room first.";return;}
+  if(!window.confirm("直前の保存世代へ戻しますか？ 現在の状態はPREVIOUSとして退避されます。"))return;
+  restorePreviousButton.disabled=true;roomRecoveryStatus.textContent="RESTORING PREVIOUS…";activeRoom.send("persistence:restore-previous",{});
+});
 worldExportButton.addEventListener("click", () => {
   if (!activeRoom) { worldManifestStatus.textContent = "Connect to a room first."; return; }
   activeRoom.send("world:export",{});
@@ -6578,7 +6610,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.1.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

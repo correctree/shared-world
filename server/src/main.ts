@@ -127,7 +127,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.22.1-room-auto-save-hardening",
+        service: "shared-world-0.22.2-room-recovery-controls",
         storedAssets: assetCount()
       })
     );
@@ -136,4 +136,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.22.1] ROOM AUTO SAVE HARDENING ready");
+console.log("[Prototype 0.22.2] ROOM RECOVERY CONTROLS ready");

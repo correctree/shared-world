@@ -1,5 +1,5 @@
 import { Room, type Client } from "colyseus";
-import { assetExists, loadWorld, saveWorld, storageInfo, type SavedWorldV2 } from "./persistence.js";
+import { assetExists, loadWorld, loadWorldGeneration, saveWorld, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
 import { Player, SharedMediaObject, WorldState } from "./state.js";
 
 const MAX_STEP = 0.75;
@@ -91,8 +91,10 @@ export class SharedWorldRoom extends Room<WorldState> {
   }
   private persistenceState() {
     const storage=storageInfo();
+    const generations=worldGenerationInfo(this.roomCode);
     return {revision:this.persistenceRevision,lastSavedAt:this.lastSavedAt,error:this.lastSaveError,
       dirty:this.persistenceDirty,recoverySource:this.recoverySource,
+      generations,
       persistentConfigured:storage.persistentConfigured,mode:storage.persistentConfigured?"persistent-disk":"ephemeral-local"};
   }
   private sendPersistenceState(target?:Client) {
@@ -121,10 +123,11 @@ export class SharedWorldRoom extends Room<WorldState> {
     if(this.persistenceTimer)clearTimeout(this.persistenceTimer);
     this.persistenceTimer=setTimeout(()=>this.persistNow(reason),250);
   }
-  private restorePersistentWorld() {
-    const loaded=loadWorld(this.roomCode);
+  private restorePersistentWorld(override?:{world:SavedWorldV2|null;recovered:boolean;source:"current"|"previous"|"stable"|"empty"}) {
+    const loaded=override||loadWorld(this.roomCode);
     const saved=loaded.world;
     if(!saved)return;
+    this.state.mediaObjects.clear();this.mediaBehaviors.clear();this.scenes.clear();this.cues.clear();
     const restoredEnvironment=this.cleanEnvironment(saved.environment);
     if(restoredEnvironment)this.environment=restoredEnvironment;
     this.environmentOwnerClientId=String(saved.environmentOwnerClientId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
@@ -475,9 +478,38 @@ export class SharedWorldRoom extends Room<WorldState> {
     });
     this.onMessage("persistence:get",(client:Client)=>this.sendPersistenceState(client));
     this.onMessage("persistence:save",(client:Client)=>{
-      if(!this.canEditEnvironment(client,false)){client.send("persistence:result",{ok:false,reason:"owner-required"});return;}
+      if(!this.canEditEnvironment(client,true)){client.send("persistence:result",{ok:false,reason:"owner-required"});return;}
       this.persistNow("manual-save");
       client.send("persistence:result",{ok:!this.lastSaveError,...this.persistenceState()});
+    });
+    this.onMessage("persistence:restore-previous",(client:Client)=>{
+      if(!this.canEditEnvironment(client,true)){client.send("persistence:restore-result",{ok:false,reason:"owner-required"});return;}
+      try{
+        const target=loadWorldGeneration(this.roomCode,"previous");
+        if(!target){client.send("persistence:restore-result",{ok:false,reason:"previous-not-found"});return;}
+        if(this.persistenceTimer){clearTimeout(this.persistenceTimer);this.persistenceTimer=null;}
+        const restored:SavedWorldV2={...target,revision:this.persistenceRevision+1,savedAt:new Date().toISOString(),
+          environment:{...target.environment},mediaObjects:target.mediaObjects.map(item=>({...item})),
+          scenes:target.scenes.map(item=>({...item})),cues:target.cues.map(item=>({...item}))};
+        // saveWorld rotates the pre-restore current into previous, so this
+        // operation is reversible by choosing RESTORE PREVIOUS again.
+        saveWorld(this.roomCode,restored);
+        this.persistenceDirty=false;this.lastSaveError="";
+        this.restorePersistentWorld({world:restored,recovered:true,source:"previous"});
+        this.recoverySource="current";
+        this.broadcast("world:restored:v2",{roomCode:this.roomCode,revision:restored.revision,
+          count:this.state.mediaObjects.size,savedAt:restored.savedAt,source:"previous"});
+        this.broadcast("environment:state",this.environment);this.sendEnvironmentPermissions();
+        this.sendSceneList();this.sendCueList();this.sendAuthoringState();this.sendPersistenceState();
+        client.send("persistence:restore-result",{ok:true,revision:restored.revision,savedAt:restored.savedAt,
+          count:this.state.mediaObjects.size,source:"previous"});
+        console.log("[ROOM PREVIOUS RESTORED]",{roomCode:this.roomCode,revision:restored.revision,
+          count:this.state.mediaObjects.size,savedAt:restored.savedAt});
+      }catch(error){
+        this.lastSaveError=error instanceof Error?error.message:String(error);this.sendPersistenceState();
+        client.send("persistence:restore-result",{ok:false,reason:"restore-failed",error:this.lastSaveError});
+        console.error("[ROOM PREVIOUS RESTORE FAILED]",this.roomCode,error);
+      }
     });
 
     // Prototype 0.14.7.1

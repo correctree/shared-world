@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.22.2.2 RESTORE DUPLICATE GUARD LOADED]");
+console.log("[PROTOTYPE 0.23.0 ROOM MANAGEMENT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1038,6 +1038,68 @@ function getOrCreateClientId() {
   }
 }
 const persistentClientId = getOrCreateClientId();
+
+// 0.23.0 / Owner-scoped ROOM catalog. The server returns only ROOM snapshots
+// whose persisted ownerClientId matches this browser's stable client ID.
+const roomManager=document.createElement("section");roomManager.id="roomManager";
+roomManager.style.cssText="margin-top:14px;padding:12px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(5,12,18,.55);display:grid;gap:8px";
+roomManager.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><strong>MY ROOMS</strong><button type="button" id="refreshRoomsButton">REFRESH</button></div>
+  <div id="ownedRoomList" style="display:grid;gap:6px;max-height:170px;overflow:auto"><small>Loading saved rooms…</small></div>
+  <div style="display:flex;gap:6px"><input id="newRoomCodeInput" maxlength="16" placeholder="NEW ROOM CODE" style="min-width:0;flex:1"><button type="button" id="createRoomButton">CREATE</button></div>
+  <div style="display:flex;gap:6px"><input id="cloneRoomCodeInput" maxlength="16" placeholder="CLONE TARGET CODE" style="min-width:0;flex:1"><button type="button" id="cloneRoomButton">CLONE SELECTED</button></div>
+  <small id="roomManagerStatus" style="color:#a9bfd1">Owner rooms only · deletion is disabled in this version.</small>`;
+lobby.appendChild(roomManager);
+const ownedRoomList=roomManager.querySelector<HTMLElement>("#ownedRoomList")!;
+const newRoomCodeInput=roomManager.querySelector<HTMLInputElement>("#newRoomCodeInput")!;
+const cloneRoomCodeInput=roomManager.querySelector<HTMLInputElement>("#cloneRoomCodeInput")!;
+const createRoomButton=roomManager.querySelector<HTMLButtonElement>("#createRoomButton")!;
+const cloneRoomButton=roomManager.querySelector<HTMLButtonElement>("#cloneRoomButton")!;
+const refreshRoomsButton=roomManager.querySelector<HTMLButtonElement>("#refreshRoomsButton")!;
+const roomManagerStatus=roomManager.querySelector<HTMLElement>("#roomManagerStatus")!;
+let selectedOwnedRoomCode=(roomInput.value||"ART001").toUpperCase();
+const roomApiURL=(path:string)=>`${SERVER_URL.replace(/\/$/,"")}${path}`;
+const cleanRoomCode=(value:string)=>value.toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16);
+const roomApiHeaders={"X-Shared-Client-Id":persistentClientId};
+async function refreshOwnedRooms(){
+  refreshRoomsButton.disabled=true;roomManagerStatus.textContent="LOADING ROOMS…";
+  try{
+    const response=await fetch(roomApiURL("/rooms"),{headers:roomApiHeaders,cache:"no-store"});
+    const payload=await response.json();if(!response.ok||payload?.ok!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
+    const rooms=Array.isArray(payload.rooms)?payload.rooms:[];ownedRoomList.replaceChildren();
+    if(!rooms.length){const empty=document.createElement("small");empty.textContent="No owned ROOM snapshots yet.";ownedRoomList.appendChild(empty);}
+    for(const room of rooms){
+      const code=cleanRoomCode(String(room?.roomCode||""));if(!code)continue;
+      const button=document.createElement("button");button.type="button";button.dataset.roomCode=code;
+      button.style.cssText="display:grid;grid-template-columns:1fr auto;text-align:left;gap:3px 10px;padding:8px";
+      const saved=room?.savedAt?new Date(String(room.savedAt)).toLocaleString():"not saved";
+      button.innerHTML=`<strong>${code}</strong><span>${Number(room?.mediaCount)||0} works</span><small>R${Number(room?.revision)||0} · ${saved}</small><small>checkpoint R${Number(room?.checkpointRevision)||0}</small>`;
+      button.addEventListener("click",()=>{selectedOwnedRoomCode=code;roomInput.value=code;
+        for(const item of ownedRoomList.querySelectorAll("button"))item.setAttribute("aria-pressed",String(item===button));
+        roomManagerStatus.textContent=`SELECTED ${code} · press ENTER WORLD`;});
+      button.addEventListener("dblclick",()=>{selectedOwnedRoomCode=code;roomInput.value=code;void enterWorld();});
+      ownedRoomList.appendChild(button);
+    }
+    roomManagerStatus.textContent=`${rooms.length} OWNER ROOM${rooms.length===1?"":"S"} · click to select · double-click to enter`;
+  }catch(error){ownedRoomList.innerHTML="<small>ROOM catalog unavailable.</small>";roomManagerStatus.textContent=`ROOM LIST FAILED · ${error instanceof Error?error.message:String(error)}`;}
+  finally{refreshRoomsButton.disabled=false;}
+}
+async function mutateRoomCatalog(action:"create"|"clone",targetValue:string){
+  const target=cleanRoomCode(targetValue);if(!target){roomManagerStatus.textContent="Enter a valid ROOM code.";return;}
+  const source=cleanRoomCode(selectedOwnedRoomCode||roomInput.value);
+  const query=action==="create"?`roomCode=${encodeURIComponent(target)}`:`source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`;
+  createRoomButton.disabled=true;cloneRoomButton.disabled=true;roomManagerStatus.textContent=action==="create"?`CREATING ${target}…`:`CLONING ${source} → ${target}…`;
+  try{
+    const response=await fetch(roomApiURL(`/rooms/${action}?${query}`),{method:"POST",headers:roomApiHeaders});
+    const payload=await response.json();if(!response.ok||payload?.ok!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
+    selectedOwnedRoomCode=target;roomInput.value=target;newRoomCodeInput.value="";cloneRoomCodeInput.value="";
+    await refreshOwnedRooms();roomManagerStatus.textContent=`${action==="create"?"CREATED":"CLONED"} ${target} · ready to enter`;
+  }catch(error){roomManagerStatus.textContent=`${action.toUpperCase()} FAILED · ${error instanceof Error?error.message:String(error)}`;}
+  finally{createRoomButton.disabled=false;cloneRoomButton.disabled=false;}
+}
+refreshRoomsButton.addEventListener("click",()=>void refreshOwnedRooms());
+createRoomButton.addEventListener("click",()=>void mutateRoomCatalog("create",newRoomCodeInput.value));
+cloneRoomButton.addEventListener("click",()=>void mutateRoomCatalog("clone",cloneRoomCodeInput.value));
+window.setTimeout(()=>void refreshOwnedRooms(),500);
 let localPosition = new pc.Vec3();
 let lastSend = 0;
 let moveSequence = 0;
@@ -6623,7 +6685,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.22.2.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.0</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

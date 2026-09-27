@@ -28,6 +28,11 @@ export type SavedWorldV2 = {
   cues: Array<Record<string, unknown>>;
 };
 
+function safeClientId(value:string) {
+  const id=String(value||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
+  if(!id)throw new Error("invalid client id");return id;
+}
+
 function safeRoomCode(code: string) {
   const value = String(code || "").toUpperCase();
   if (!/^[A-Z0-9_-]{1,16}$/.test(value)) throw new Error("invalid room code");
@@ -96,6 +101,54 @@ export function worldGenerationInfo(code:string) {
   try{const world=loadWorldCheckpoint(code);checkpoint=world?{available:true,valid:true,revision:world.revision,savedAt:world.savedAt}:{available:false,valid:false,revision:0,savedAt:""};}
   catch{checkpoint={available:true,valid:false,revision:0,savedAt:""};}
   return {current:inspect("current"),previous:inspect("previous"),stable:inspect("stable"),checkpoint};
+}
+
+export function listOwnedWorlds(clientId:string) {
+  const owner=safeClientId(clientId);const rooms:Array<Record<string,unknown>>=[];
+  for(const name of readdirSync(worldDir).filter(value=>/^[A-Z0-9_-]{1,16}\.json$/.test(value)).sort()){
+    const roomCode=name.slice(0,-5);
+    try{
+      const world=readSnapshot(worldPath(roomCode),roomCode);
+      if(world.environmentOwnerClientId!==owner)continue;
+      const checkpoint=worldGenerationInfo(roomCode).checkpoint;
+      rooms.push({roomCode,revision:world.revision,savedAt:world.savedAt,
+        mediaCount:world.mediaObjects.length,sceneCount:world.scenes.length,cueCount:world.cues.length,
+        checkpointRevision:checkpoint.valid?checkpoint.revision:0,checkpointSavedAt:checkpoint.valid?checkpoint.savedAt:""});
+    }catch(error){console.warn("[ROOM CATALOG SKIP INVALID]",roomCode,error);}
+    if(rooms.length>=50)break;
+  }
+  return rooms.sort((a,b)=>String(b.savedAt).localeCompare(String(a.savedAt)));
+}
+
+function defaultEnvironment():Record<string,unknown> {
+  return {sky:"#090c11",ground:"#262b33",grid:"#474d57",gridVisible:true,
+    ambient:0.45,sunlight:1.5,lightColor:"#ffffff",sunAngle:45,skyMode:"color",skyAssetRef:"",
+    groundMode:"plain",groundSize:15,groundAssetRef:"",particles:"off",particleCount:16,
+    particleDuration:0,particleRadius:5,particleSpeed:1,particleSize:1,particleColor:"#ffbb55",
+    particleAssetRef:"",environmentPreset:"custom",cycleEnabled:false,cycleMinutes:8,cycleStartedAt:0,
+    fogEnabled:false,fogColor:"#b8cbd9",fogDensity:0.75,fogDistance:12,groundRepeat:1,groundRotation:0};
+}
+
+export function createOwnedWorld(code:string,clientId:string) {
+  const roomCode=safeRoomCode(code),owner=safeClientId(clientId);
+  if(existsSync(worldPath(roomCode))||existsSync(previousPath(roomCode))||existsSync(stablePath(roomCode))||existsSync(checkpointPath(roomCode)))throw new Error("room already exists");
+  const world:SavedWorldV2={format:"shared-world-room",version:2,roomCode,revision:1,savedAt:new Date().toISOString(),
+    environment:defaultEnvironment(),environmentOwnerClientId:owner,directorClientIds:[],mediaObjects:[],scenes:[],cues:[]};
+  saveWorld(roomCode,world);saveWorldCheckpoint(roomCode,world);return world;
+}
+
+export function cloneOwnedWorld(sourceCode:string,targetCode:string,clientId:string) {
+  const source=safeRoomCode(sourceCode),target=safeRoomCode(targetCode),owner=safeClientId(clientId);
+  if(source===target)throw new Error("source and target must differ");
+  if(existsSync(worldPath(target))||existsSync(previousPath(target))||existsSync(stablePath(target))||existsSync(checkpointPath(target)))throw new Error("target room already exists");
+  const original=loadWorldGeneration(source,"current");
+  if(!original)throw new Error("source room not found");
+  if(original.environmentOwnerClientId!==owner)throw new Error("owner required");
+  const world:SavedWorldV2={...original,roomCode:target,revision:1,savedAt:new Date().toISOString(),
+    environment:{...original.environment},environmentOwnerClientId:owner,directorClientIds:[],
+    mediaObjects:original.mediaObjects.map(item=>({...item,ownerClientId:owner})),
+    scenes:original.scenes.map(item=>({...item})),cues:original.cues.map(item=>({...item}))};
+  saveWorld(target,world);saveWorldCheckpoint(target,world);return world;
 }
 
 export function loadWorld(code: string): { world: SavedWorldV2 | null; recovered: boolean; source: WorldGeneration | "empty" } {

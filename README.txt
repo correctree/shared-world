@@ -1,4 +1,4 @@
-Shared World Prototype 0.24.1 - ACCESS UX
+Shared World Prototype 0.24.2 - ROOM SHARE LINKS
 
 CHANGES FROM 0.21.2.1
 - Replaces strict artwork-ID matching with original asset-filename matching.
@@ -485,3 +485,25 @@ ACCESS UX TEST
 5. Confirm entry stops immediately with the owner/editor-only explanation; it
    must not run the five temporary-connection retries.
 6. Register the second browser again and confirm entry and EDITOR status return.
+
+0.24.2 ROOM SHARE LINKS
+
+- Adds COPY ROOM LINK to the owner-side ROOM ACCESS panel.
+- The copied URL contains only the selected ROOM code as a `room` query
+  parameter. It never contains an ACCESS ID or grants a role.
+- Opening the link pre-fills the ROOM code and shows an invited-ROOM hint in
+  the lobby; the visitor still presses ENTER WORLD deliberately.
+- Existing SHARED or OWNER + EDITORS ONLY rules remain authoritative on the
+  server. A copied URL cannot bypass ROOM access control.
+- OWNER, EDITOR and VISITOR role display from 0.24.1 remains unchanged.
+- Persistent ROOM snapshots, access sidecars and artwork assets are unchanged.
+
+ROOM SHARE LINK TEST
+1. Deploy and confirm MY ROOMS and the workspace header show version 0.24.2.
+2. On the left owner browser, select TESTROOM and open ROOM ACCESS.
+3. Press COPY ROOM LINK and paste the link into the right browser address bar.
+4. Confirm TESTROOM is already filled in and INVITED ROOM TESTROOM is shown.
+5. Press ENTER WORLD and confirm the registered browser enters as EDITOR.
+6. Remove its editor registration temporarily and reopen the same link; confirm
+   the link does not bypass the owner/editor-only rejection.
+7. Register it again and confirm the same link enters as EDITOR.

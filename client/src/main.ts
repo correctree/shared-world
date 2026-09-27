@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.24.1 ACCESS UX LOADED]");
+console.log("[PROTOTYPE 0.24.2 ROOM SHARE LINKS LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1059,7 +1059,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManager .archive-row{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;align-items:center}#roomManager .archive-row label{display:flex;align-items:center;gap:7px;color:#b7c9d8;font-size:10px}#roomManager .archive-row input{width:auto!important}
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>MY ROOMS</strong><small>0.24.1</small></div><button type="button" id="refreshRoomsButton">REFRESH</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>MY ROOMS</strong><small>0.24.2</small></div><button type="button" id="refreshRoomsButton">REFRESH</button></div>
   <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
   <div id="ownedRoomList"><small>Loading saved rooms…</small></div>
   <details><summary>NEW ROOM / COPY</summary><div class="room-action-body">
@@ -1072,6 +1072,7 @@ roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-t
   </div></details>
   <details><summary>ROOM ACCESS</summary><div class="room-action-body">
     <div class="room-action-row"><input id="myRoomAccessId" aria-label="My access ID" readonly><button type="button" id="copyRoomAccessIdButton">COPY MY ID</button></div>
+    <div class="room-action-row"><input id="roomShareLinkPreview" aria-label="Selected ROOM share link" readonly><button type="button" id="copyRoomShareLinkButton">COPY ROOM LINK</button></div>
     <div class="room-action-row"><select id="roomAccessMode" aria-label="ROOM entry mode"><option value="shared">SHARED · CODE ENTRY</option><option value="owner-only">OWNER + EDITORS ONLY</option></select><button type="button" id="saveRoomAccessButton">SAVE ACCESS</button></div>
     <input id="roomEditorIdsInput" aria-label="Editor access IDs" autocomplete="off" placeholder="EDITOR ACCESS IDs · comma separated" style="width:100%;box-sizing:border-box">
     <small style="color:#8fa8ba;line-height:1.35">Prototype identity uses this browser's ACCESS ID. Clearing browser storage changes the ID. Account sign-in is not active yet.</small>
@@ -1089,20 +1090,30 @@ const archiveRoomButton=roomManager.querySelector<HTMLButtonElement>("#archiveRo
 const showArchivedRoomsInput=roomManager.querySelector<HTMLInputElement>("#showArchivedRoomsInput")!;
 const myRoomAccessId=roomManager.querySelector<HTMLInputElement>("#myRoomAccessId")!;
 const copyRoomAccessIdButton=roomManager.querySelector<HTMLButtonElement>("#copyRoomAccessIdButton")!;
+const roomShareLinkPreview=roomManager.querySelector<HTMLInputElement>("#roomShareLinkPreview")!;
+const copyRoomShareLinkButton=roomManager.querySelector<HTMLButtonElement>("#copyRoomShareLinkButton")!;
 const roomAccessMode=roomManager.querySelector<HTMLSelectElement>("#roomAccessMode")!;
 const roomEditorIdsInput=roomManager.querySelector<HTMLInputElement>("#roomEditorIdsInput")!;
 const saveRoomAccessButton=roomManager.querySelector<HTMLButtonElement>("#saveRoomAccessButton")!;
 const refreshRoomsButton=roomManager.querySelector<HTMLButtonElement>("#refreshRoomsButton")!;
 const roomManagerStatus=roomManager.querySelector<HTMLElement>("#roomManagerStatus")!;
 const roomSelectionSummary=roomManager.querySelector<HTMLElement>("#roomSelectionSummary")!;
-let selectedOwnedRoomCode=(roomInput.value||"ART001").toUpperCase();
-let selectedOwnedRoomArchived=false;
 const roomApiBase=SERVER_URL.replace(/^wss:/i,"https:").replace(/^ws:/i,"http:").replace(/\/$/,"");
 const roomApiURL=(path:string)=>`${roomApiBase}${path}`;
 const cleanRoomCode=(value:string)=>value.toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16);
+function roomShareURL(codeValue:string){
+  const code=cleanRoomCode(codeValue);if(!code)return "";
+  const url=new URL(window.location.href);url.searchParams.set("room",code);url.hash="";return url.toString();
+}
+const invitedRoomCode=cleanRoomCode(new URLSearchParams(window.location.search).get("room")||"");
+if(invitedRoomCode)roomInput.value=invitedRoomCode;
+let selectedOwnedRoomCode=cleanRoomCode(roomInput.value||"ART001");
+let selectedOwnedRoomArchived=false;
 myRoomAccessId.value=persistentClientId;
+roomShareLinkPreview.value=roomShareURL(selectedOwnedRoomCode);
 function selectOwnedRoom(code:string,archived:boolean,button?:HTMLButtonElement,room?:any){
   selectedOwnedRoomCode=code;selectedOwnedRoomArchived=archived;roomInput.value=code;archiveRoomButton.textContent=archived?"RESTORE":"ARCHIVE";
+  roomShareLinkPreview.value=roomShareURL(code);
   for(const item of ownedRoomList.querySelectorAll("button"))item.setAttribute("aria-pressed",String(item===button));
   const works=Number(room?.mediaCount)||0,revision=Number(room?.revision)||0;
   roomAccessMode.value=room?.accessMode==="owner-only"?"owner-only":"shared";
@@ -1217,11 +1228,19 @@ renameRoomButton.addEventListener("click",()=>void renameSelectedRoom());
 archiveRoomButton.addEventListener("click",()=>void toggleSelectedRoomArchive());
 showArchivedRoomsInput.addEventListener("change",()=>void refreshOwnedRooms());
 copyRoomAccessIdButton.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(persistentClientId);roomManagerStatus.textContent="MY ACCESS ID COPIED";}catch{myRoomAccessId.select();document.execCommand("copy");roomManagerStatus.textContent="MY ACCESS ID COPIED";}});
+copyRoomShareLinkButton.addEventListener("click",async()=>{
+  const code=cleanRoomCode(selectedOwnedRoomCode);const link=roomShareURL(code);
+  if(!code||!link){roomManagerStatus.textContent="Select an owned ROOM first.";return;}
+  roomShareLinkPreview.value=link;
+  try{await navigator.clipboard.writeText(link);}catch{roomShareLinkPreview.select();document.execCommand("copy");}
+  roomManagerStatus.textContent=`ROOM LINK COPIED · ${code} · entry permission is still required`;
+});
 saveRoomAccessButton.addEventListener("click",()=>void saveSelectedRoomAccess());
 newRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("create",newRoomCodeInput.value);}});
 cloneRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("clone",cloneRoomCodeInput.value);}});
 renameRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void renameSelectedRoom();}});
 window.setTimeout(()=>void refreshOwnedRooms(),500);
+if(invitedRoomCode)window.setTimeout(()=>{roomManagerStatus.textContent=`INVITED ROOM ${invitedRoomCode} · press ENTER WORLD`;},700);
 let localPosition = new pc.Vec3();
 let lastSend = 0;
 let moveSequence = 0;
@@ -6830,7 +6849,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

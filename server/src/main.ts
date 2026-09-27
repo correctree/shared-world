@@ -174,7 +174,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.24.1-access-ux",
+        service: "shared-world-0.24.2-room-share-links",
         storedAssets: assetCount()
       })
     );
@@ -183,4 +183,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.24.1] ACCESS UX ready");
+console.log("[Prototype 0.24.2] ROOM SHARE LINKS ready");

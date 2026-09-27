@@ -42,13 +42,13 @@ const server = defineServer({
     });
     app.post("/rooms/create",(req,res)=>{
       try{const world=createOwnedWorld(String(req.query.roomCode||""),roomClientId(req));
-        res.status(201).json({ok:true,roomCode:world.roomCode,revision:world.revision,savedAt:world.savedAt});}
+        res.status(201).json({ok:true,verified:true,roomCode:world.roomCode,revision:world.revision,savedAt:world.savedAt,mediaCount:world.mediaObjects.length});}
       catch(error){const message=error instanceof Error?error.message:"room create failed";
         res.status(message.includes("exists")?409:400).json({ok:false,error:message});}
     });
     app.post("/rooms/clone",(req,res)=>{
       try{const world=cloneOwnedWorld(String(req.query.source||""),String(req.query.target||""),roomClientId(req));
-        res.status(201).json({ok:true,roomCode:world.roomCode,revision:world.revision,savedAt:world.savedAt});}
+        res.status(201).json({ok:true,verified:true,roomCode:world.roomCode,revision:world.revision,savedAt:world.savedAt,mediaCount:world.mediaObjects.length});}
       catch(error){const message=error instanceof Error?error.message:"room clone failed";
         res.status(message.includes("exists")?409:message.includes("owner")?403:400).json({ok:false,error:message});}
     });
@@ -153,7 +153,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.23.0.1-room-api-reachability",
+        service: "shared-world-0.23.1-room-create-clone-stability",
         storedAssets: assetCount()
       })
     );
@@ -162,4 +162,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.23.0.1] ROOM API REACHABILITY ready");
+console.log("[Prototype 0.23.1] ROOM CREATE / CLONE STABILITY ready");

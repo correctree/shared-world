@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.23.0.1 ROOM API REACHABILITY LOADED]");
+console.log("[PROTOTYPE 0.23.1 ROOM CREATE / CLONE STABILITY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1083,6 +1083,21 @@ async function refreshOwnedRooms(){
   }catch(error){ownedRoomList.innerHTML="<small>ROOM catalog unavailable.</small>";roomManagerStatus.textContent=`ROOM LIST FAILED · ${error instanceof Error?error.message:String(error)}`;}
   finally{refreshRoomsButton.disabled=false;}
 }
+async function confirmRoomInCatalog(target:string,expectedMediaCount:number){
+  let lastError="ROOM was saved but is not visible in the catalog yet.";
+  for(let attempt=1;attempt<=3;attempt++){
+    try{
+      const response=await fetch(roomApiURL(`/rooms?clientId=${encodeURIComponent(persistentClientId)}&verify=${Date.now()}`),{cache:"no-store",mode:"cors"});
+      const payload=await response.json();
+      if(!response.ok||payload?.ok!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
+      const match=(Array.isArray(payload.rooms)?payload.rooms:[]).find((room:any)=>cleanRoomCode(String(room?.roomCode||""))===target);
+      if(match&&Number(match.mediaCount)===expectedMediaCount)return;
+      lastError=match?`Saved ROOM content count mismatch (${Number(match.mediaCount)||0}/${expectedMediaCount}).`:`${target} is not visible in the catalog yet.`;
+    }catch(error){lastError=error instanceof Error?error.message:String(error);}
+    await new Promise(resolve=>window.setTimeout(resolve,350*attempt));
+  }
+  throw new Error(lastError);
+}
 async function mutateRoomCatalog(action:"create"|"clone",targetValue:string){
   const target=cleanRoomCode(targetValue);if(!target){roomManagerStatus.textContent="Enter a valid ROOM code.";return;}
   const source=cleanRoomCode(selectedOwnedRoomCode||roomInput.value);
@@ -1091,9 +1106,11 @@ async function mutateRoomCatalog(action:"create"|"clone",targetValue:string){
   createRoomButton.disabled=true;cloneRoomButton.disabled=true;roomManagerStatus.textContent=action==="create"?`CREATING ${target}…`:`CLONING ${source} → ${target}…`;
   try{
     const response=await fetch(roomApiURL(`/rooms/${action}?${query}`),{method:"POST",mode:"cors"});
-    const payload=await response.json();if(!response.ok||payload?.ok!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
+    const payload=await response.json();if(!response.ok||payload?.ok!==true||payload?.verified!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
+    const expectedMediaCount=Number(payload?.mediaCount)||0;
+    await confirmRoomInCatalog(target,expectedMediaCount);
     selectedOwnedRoomCode=target;roomInput.value=target;newRoomCodeInput.value="";cloneRoomCodeInput.value="";
-    await refreshOwnedRooms();roomManagerStatus.textContent=`${action==="create"?"CREATED":"CLONED"} ${target} · ready to enter`;
+    await refreshOwnedRooms();roomManagerStatus.textContent=`${action==="create"?"CREATED":"CLONED"} ${target} · ${expectedMediaCount} works · verified`;
   }catch(error){roomManagerStatus.textContent=`${action.toUpperCase()} FAILED · ${error instanceof Error?error.message:String(error)}`;}
   finally{createRoomButton.disabled=false;cloneRoomButton.disabled=false;}
 }
@@ -6686,7 +6703,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.0.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

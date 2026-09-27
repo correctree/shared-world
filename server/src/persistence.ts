@@ -134,7 +134,7 @@ export function createOwnedWorld(code:string,clientId:string) {
   if(existsSync(worldPath(roomCode))||existsSync(previousPath(roomCode))||existsSync(stablePath(roomCode))||existsSync(checkpointPath(roomCode)))throw new Error("room already exists");
   const world:SavedWorldV2={format:"shared-world-room",version:2,roomCode,revision:1,savedAt:new Date().toISOString(),
     environment:defaultEnvironment(),environmentOwnerClientId:owner,directorClientIds:[],mediaObjects:[],scenes:[],cues:[]};
-  saveWorld(roomCode,world);saveWorldCheckpoint(roomCode,world);return world;
+  return provisionOwnedWorld(roomCode,world,owner);
 }
 
 export function cloneOwnedWorld(sourceCode:string,targetCode:string,clientId:string) {
@@ -148,7 +148,28 @@ export function cloneOwnedWorld(sourceCode:string,targetCode:string,clientId:str
     environment:{...original.environment},environmentOwnerClientId:owner,directorClientIds:[],
     mediaObjects:original.mediaObjects.map(item=>({...item,ownerClientId:owner})),
     scenes:original.scenes.map(item=>({...item})),cues:original.cues.map(item=>({...item}))};
-  saveWorld(target,world);saveWorldCheckpoint(target,world);return world;
+  return provisionOwnedWorld(target,world,owner);
+}
+
+// CREATE and CLONE provision four files (current, previous, stable and
+// checkpoint). If any write or read-back verification fails, remove only the
+// newly-created target files so a retry is never blocked by a partial ROOM.
+function provisionOwnedWorld(roomCode:string,world:SavedWorldV2,owner:string) {
+  const paths=[worldPath(roomCode),previousPath(roomCode),stablePath(roomCode),checkpointPath(roomCode)];
+  try{
+    saveWorld(roomCode,world);
+    saveWorldCheckpoint(roomCode,world);
+    const current=loadWorldGeneration(roomCode,"current");
+    const checkpoint=loadWorldCheckpoint(roomCode);
+    if(!current||!checkpoint)throw new Error("room verification failed");
+    if(current.environmentOwnerClientId!==owner||checkpoint.environmentOwnerClientId!==owner)throw new Error("room owner verification failed");
+    if(current.revision!==world.revision||checkpoint.revision!==world.revision)throw new Error("room revision verification failed");
+    if(current.mediaObjects.length!==world.mediaObjects.length||checkpoint.mediaObjects.length!==world.mediaObjects.length)throw new Error("room content verification failed");
+    return current;
+  }catch(error){
+    for(const path of paths){try{if(existsSync(path))unlinkSync(path);}catch(cleanupError){console.error("[ROOM PROVISION CLEANUP FAILED]",roomCode,path,cleanupError);}}
+    throw error;
+  }
 }
 
 export function loadWorld(code: string): { world: SavedWorldV2 | null; recovered: boolean; source: WorldGeneration | "empty" } {

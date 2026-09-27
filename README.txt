@@ -1,4 +1,4 @@
-Shared World Prototype 0.24.4.2 - IOS INPUT ZOOM FIX
+Shared World Prototype 0.24.5 - STABLE CHECKPOINT
 
 CHANGES FROM 0.21.2.1
 - Replaces strict artwork-ID matching with original asset-filename matching.
@@ -604,3 +604,35 @@ IOS INPUT ZOOM TEST
 4. Close the keyboard with Done and confirm the page remains at normal scale.
 5. Repeat after scrolling to an input inside SHARE & ACCESS.
 6. Confirm normal two-finger pinch zoom is still available.
+
+0.24.5 STABLE CHECKPOINT
+
+- Freezes the verified 0.24.4.2 behavior as the recovery point before the 0.25
+  edit-history and performance-control phase.
+- Adds no new ROOM, media, access, persistence or UI behavior.
+- Retains per-ROOM Persistent Disk recovery, validated generations, explicit
+  checkpoints and off-platform ROOM snapshot export.
+- Retains ROOM catalog management, rename/archive, public/private entry modes,
+  owner/editor/visitor roles, access preflight and share links.
+- Retains desktop and iPhone lobby scrolling, safe-area handling, native share
+  behavior and the iOS input-focus zoom fix.
+- This version should be tagged and backed up after regression testing.
+
+0.24.5 STABLE CHECKPOINT TEST
+1. Deploy and confirm ROOM ENTRY and the in-world header show version 0.24.5.
+2. Enter ART001 as OWNER and confirm all seven works are restored.
+3. Enter TESTROOM from the registered second browser and confirm EDITOR.
+4. In PUBLIC VIEWING, remove the second browser editor ID and confirm it can
+   enter as VISITOR; restore the ID afterward.
+5. In PRIVATE, confirm the same unregistered browser shows ACCESS DENIED; then
+   restore the editor ID and confirm EDITOR entry returns.
+6. Confirm COPY LINK and SHARE ROOM still create a TESTROOM invitation.
+7. On iPhone, confirm internal lobby scrolling and no automatic input zoom.
+8. In ART001, move one non-critical work, wait for ROOM SAVED, restart Render,
+   and confirm the saved position and all seven works return.
+9. Create one fresh off-platform backup ZIP after every item above succeeds.
+
+NEXT PHASE
+- 0.25.0 EDIT HISTORY: command records and scoped UNDO / REDO.
+- 0.25.1 CUE TIMELINE: ordered and timed cue playback.
+- 0.25.2 DIRECTOR REMOTE: a second browser/device as performance controller.

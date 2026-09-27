@@ -179,7 +179,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.24.4.1-mobile-lobby-viewport-fix",
+        service: "shared-world-0.24.4.2-ios-input-zoom-fix",
         storedAssets: assetCount()
       })
     );
@@ -188,4 +188,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.24.4.1] MOBILE LOBBY VIEWPORT FIX ready");
+console.log("[Prototype 0.24.4.2] IOS INPUT ZOOM FIX ready");

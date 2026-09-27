@@ -1,4 +1,4 @@
-Shared World Prototype 0.24.4.1 - MOBILE LOBBY VIEWPORT FIX
+Shared World Prototype 0.24.4.2 - IOS INPUT ZOOM FIX
 
 CHANGES FROM 0.21.2.1
 - Replaces strict artwork-ID matching with original asset-filename matching.
@@ -585,3 +585,22 @@ MOBILE LOBBY VIEWPORT TEST
    height adjusts and remains scrollable.
 5. Close the keyboard, rotate once if available, and confirm the panel expands
    back to the new visible height.
+
+0.24.4.2 IOS INPUT ZOOM FIX
+
+- Sets lobby input, select and textarea controls to at least 16 px on narrow
+  screens, preventing iPhone Safari's automatic focus zoom.
+- Recalculates the visible lobby height shortly after keyboard dismissal.
+- Clears accidental horizontal lobby scroll after an input loses focus.
+- Does not disable pinch zoom or set maximum-scale, preserving accessibility.
+- Keeps the 0.24.4.1 internal lobby scrolling and safe-area behavior.
+- ROOM access, sharing, persistence and 3D workspace behavior are unchanged.
+
+IOS INPUT ZOOM TEST
+1. Deploy and confirm ROOM ENTRY shows version 0.24.4.2.
+2. Fully reload the page on iPhone so any zoom retained by the old page resets.
+3. Tap NAME and ROOM CODE and confirm the keyboard opens without enlarging the
+   entire page.
+4. Close the keyboard with Done and confirm the page remains at normal scale.
+5. Repeat after scrolling to an input inside SHARE & ACCESS.
+6. Confirm normal two-finger pinch zoom is still available.

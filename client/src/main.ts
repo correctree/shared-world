@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.23.1 ROOM CREATE / CLONE STABILITY LOADED]");
+console.log("[PROTOTYPE 0.23.1.1 ROOM CODE INPUT FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1045,8 +1045,8 @@ const roomManager=document.createElement("section");roomManager.id="roomManager"
 roomManager.style.cssText="margin-top:14px;padding:12px;border:1px solid rgba(255,255,255,.16);border-radius:10px;background:rgba(5,12,18,.55);display:grid;gap:8px";
 roomManager.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><strong>MY ROOMS</strong><button type="button" id="refreshRoomsButton">REFRESH</button></div>
   <div id="ownedRoomList" style="display:grid;gap:6px;max-height:170px;overflow:auto"><small>Loading saved rooms…</small></div>
-  <div style="display:flex;gap:6px"><input id="newRoomCodeInput" maxlength="16" placeholder="NEW ROOM CODE" style="min-width:0;flex:1"><button type="button" id="createRoomButton">CREATE</button></div>
-  <div style="display:flex;gap:6px"><input id="cloneRoomCodeInput" maxlength="16" placeholder="CLONE TARGET CODE" style="min-width:0;flex:1"><button type="button" id="cloneRoomButton">CLONE SELECTED</button></div>
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%"><input id="newRoomCodeInput" aria-label="New ROOM code" maxlength="16" autocomplete="off" placeholder="NEW ROOM CODE" style="display:block;width:100%!important;min-width:0!important;box-sizing:border-box"><button type="button" id="createRoomButton" style="width:134px!important;min-width:134px!important;margin:0!important">CREATE</button></div>
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%"><input id="cloneRoomCodeInput" aria-label="Clone target ROOM code" maxlength="16" autocomplete="off" placeholder="CLONE TARGET CODE" style="display:block;width:100%!important;min-width:0!important;box-sizing:border-box"><button type="button" id="cloneRoomButton" style="width:134px!important;min-width:134px!important;margin:0!important">CLONE SELECTED</button></div>
   <small id="roomManagerStatus" style="color:#a9bfd1">Owner rooms only · deletion is disabled in this version.</small>`;
 lobby.appendChild(roomManager);
 const ownedRoomList=roomManager.querySelector<HTMLElement>("#ownedRoomList")!;
@@ -1117,6 +1117,8 @@ async function mutateRoomCatalog(action:"create"|"clone",targetValue:string){
 refreshRoomsButton.addEventListener("click",()=>void refreshOwnedRooms());
 createRoomButton.addEventListener("click",()=>void mutateRoomCatalog("create",newRoomCodeInput.value));
 cloneRoomButton.addEventListener("click",()=>void mutateRoomCatalog("clone",cloneRoomCodeInput.value));
+newRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("create",newRoomCodeInput.value);}});
+cloneRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("clone",cloneRoomCodeInput.value);}});
 window.setTimeout(()=>void refreshOwnedRooms(),500);
 let localPosition = new pc.Vec3();
 let lastSend = 0;
@@ -6703,7 +6705,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.1.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

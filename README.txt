@@ -1,4 +1,4 @@
-Shared World Prototype 0.24.4 - ACCESS CLARITY + MOBILE SHARE
+Shared World Prototype 0.24.4.1 - MOBILE LOBBY VIEWPORT FIX
 
 CHANGES FROM 0.21.2.1
 - Replaces strict artwork-ID matching with original asset-filename matching.
@@ -560,3 +560,28 @@ ACCESS CLARITY + MOBILE SHARE TEST
 5. Restore the editor ID and confirm ENTER AS EDITOR.
 6. Press SHARE ROOM on a phone and confirm the system share sheet opens. On a
    desktop without Web Share, confirm the ROOM link is copied instead.
+
+0.24.4.1 MOBILE LOBBY VIEWPORT FIX
+
+- Constrains the lobby panel to the currently visible browser viewport.
+- Adds independent vertical scrolling inside the lobby instead of allowing the
+  panel to extend below the window.
+- Uses dynamic viewport height and Visual Viewport updates for iPhone Safari,
+  including changes caused by the address bar and on-screen keyboard.
+- Includes iPhone safe-area insets at the top, sides and bottom.
+- Enables momentum touch scrolling and contains overscroll inside the panel.
+- Reduces mobile action-column width and owned-ROOM list height so primary
+  actions remain readable on narrow screens.
+- Desktop behavior, ROOM permissions, sharing, persistence and 3D UI remain
+  unchanged.
+
+MOBILE LOBBY VIEWPORT TEST
+1. Deploy and confirm ROOM ENTRY shows version 0.24.4.1.
+2. On desktop, reduce the browser height and confirm the lobby stays inside the
+   window and scrolls internally.
+3. On iPhone portrait, swipe vertically inside the lobby and confirm every
+   section and the final status line can be reached.
+4. Focus NAME and ROOM CODE to open the keyboard; confirm the visible lobby
+   height adjusts and remains scrollable.
+5. Close the keyboard, rotate once if available, and confirm the panel expands
+   back to the new visible height.

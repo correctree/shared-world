@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.24.0 ROOM ACCESS FOUNDATION LOADED]");
+console.log("[PROTOTYPE 0.24.1 ACCESS UX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1059,7 +1059,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManager .archive-row{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;align-items:center}#roomManager .archive-row label{display:flex;align-items:center;gap:7px;color:#b7c9d8;font-size:10px}#roomManager .archive-row input{width:auto!important}
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>MY ROOMS</strong><small>0.24.0</small></div><button type="button" id="refreshRoomsButton">REFRESH</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>MY ROOMS</strong><small>0.24.1</small></div><button type="button" id="refreshRoomsButton">REFRESH</button></div>
   <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
   <div id="ownedRoomList"><small>Loading saved rooms…</small></div>
   <details><summary>NEW ROOM / COPY</summary><div class="room-action-body">
@@ -3585,6 +3585,23 @@ async function joinRoomAttempt(client:Client,options:{name:string;roomCode:strin
     },error=>{window.clearTimeout(timer);reject(error);});
   });
 }
+function roomJoinErrorText(error:unknown) {
+  const values:string[]=[];
+  const seen=new Set<unknown>();
+  const visit=(value:unknown,depth=0)=>{
+    if(value==null||depth>3||seen.has(value))return;
+    if(typeof value==="string"||typeof value==="number"){values.push(String(value));return;}
+    if(typeof value!=="object")return;
+    seen.add(value);
+    const record=value as Record<string,unknown>;
+    for(const key of ["message","reason","error","data","cause","code"])visit(record[key],depth+1);
+  };
+  visit(error);
+  return values.join(" · ")||String(error||"room-join-failed");
+}
+function isRoomAccessDenied(error:unknown){
+  return /ROOM_ACCESS_DENIED|access denied|forbidden/i.test(roomJoinErrorText(error));
+}
 async function joinRoomWithRetry(options:{name:string;roomCode:string;clientId:string},token:number):Promise<Room>{
   let lastError:unknown=null;
   for(let index=0;index<ROOM_JOIN_RETRY_DELAYS.length;index++){
@@ -3602,6 +3619,7 @@ async function joinRoomWithRetry(options:{name:string;roomCode:string;clientId:s
     }catch(error){
       lastError=error;
       if(String((error as Error)?.message||error)==="join-cancelled")throw error;
+      if(isRoomAccessDenied(error))throw error;
       console.warn("[ROOM JOIN RETRY]",{attempt,error:error instanceof Error?error.message:String(error)});
     }
   }
@@ -3612,6 +3630,7 @@ async function enterWorld() {
   if(worldJoinInProgress||pageIsLeaving)return;
   const joinToken=++worldJoinAttemptToken;
   worldJoinInProgress=true;
+  updateRoomRoleUI("");
   resetContinuousInputState();
   if(voiceEnabled)disableVoice(false);
   directorCanDirect=false;directorCanManage=false;directorParticipants=[];directorPanel.classList.add("hidden");refreshDirectorPanel();
@@ -3725,6 +3744,7 @@ async function enterWorld() {
       if(room!==activeRoom)return;
       console.warn("[ROOM PERMANENT LEAVE]",code,reason,room.sessionId);
       activeRoom=null;currentSessionId="";
+      updateRoomRoleUI("");
       if(sharedWorldReconcileTimer!==null){window.clearInterval(sharedWorldReconcileTimer);sharedWorldReconcileTimer=null;}
       sharedStateDiagnostic.connection="CLOSED";
       sharedStateDiagnostic.lastError=`ROOM LEFT · ${code} · ${reason||"closed"}`;
@@ -4271,7 +4291,9 @@ async function enterWorld() {
   } catch (error) {
     console.error(error);
     if(!pageIsLeaving&&joinToken===worldJoinAttemptToken){
-      status.textContent = `5回接続できませんでした。再度お試しください: ${error instanceof Error ? error.message : String(error)}`;
+      status.textContent = isRoomAccessDenied(error)
+        ? `入室できません：ROOM ${roomCode} は所有者と登録Editorのみ入室できます。ROOM所有者に、このブラウザーのACCESS IDをEditor登録してもらってください。`
+        : `5回接続できませんでした。再度お試しください: ${roomJoinErrorText(error)}`;
       enterButton.disabled = false;
       enterButton.textContent=originalEnterButtonText;
       lobby.classList.remove("hidden");
@@ -5599,6 +5621,7 @@ const customParticleStatus=environmentEditor.querySelector<HTMLElement>("[data-p
 function applyEnvironmentPermissions(payload:any) {
   environmentCanEdit=payload?.canEdit===true;
   const locked=payload?.locked===true,ownerPresent=payload?.ownerPresent===true,role=String(payload?.role||"visitor").toUpperCase();
+  updateRoomRoleUI(role);
   const status=environmentEditor.querySelector<HTMLElement>("[data-env-owner-status]")!;
   status.textContent=environmentCanEdit
     ?locked?`${role} — EDITING ENABLED`:"UNLOCKED — FIRST APPLY BECOMES OWNER"
@@ -6807,7 +6830,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.0</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -6815,7 +6838,7 @@ uiFoundationRoot.innerHTML=`
       <button type="button" data-workspace="avatar">AVATAR<span>自分</span></button>
       <button type="button" data-workspace="direct">DIRECT<span>演出</span></button>
     </div>
-    <div id="uiSaveState" role="status">READY</div>
+    <div class="ui-access-state"><span id="roomAccessRole" data-role="pending">ROLE…</span><div id="uiSaveState" role="status">READY</div></div>
   </nav>
   <aside id="uiContextRail" aria-label="Workspace actions">
     <div class="ui-context-heading"><strong id="uiContextTitle">VIEW</strong><span id="uiContextSubtitle">EXPLORE & COMMUNICATE</span></div>
@@ -6846,6 +6869,16 @@ const uiContextTitle=uiFoundationRoot.querySelector<HTMLElement>("#uiContextTitl
 const uiContextSubtitle=uiFoundationRoot.querySelector<HTMLElement>("#uiContextSubtitle")!;
 const uiContextActions=uiFoundationRoot.querySelector<HTMLElement>("#uiContextActions")!;
 const uiSaveState=uiFoundationRoot.querySelector<HTMLElement>("#uiSaveState")!;
+const roomAccessRole=uiFoundationRoot.querySelector<HTMLElement>("#roomAccessRole")!;
+let currentRoomRole="";
+function updateRoomRoleUI(roleValue:unknown){
+  const role=String(roleValue||"").toUpperCase();
+  currentRoomRole=role==="OWNER"||role==="EDITOR"||role==="VISITOR"?role:"";
+  roomAccessRole.textContent=currentRoomRole||"ROLE…";
+  roomAccessRole.dataset.role=currentRoomRole.toLowerCase()||"pending";
+  const code=cleanRoomCode(roomInput.value);
+  if(code&&activeRoom)roomLabel.textContent=`ROOM ${code}${currentRoomRole?` · ${currentRoomRole}`:""}`;
+}
 
 const uiWorkspaceCopy:Record<UIFoundationWorkspace,{title:string;subtitle:string;actions:Array<[string,string]>}>={
   view:{title:"VIEW",subtitle:"EXPLORE & COMMUNICATE",actions:[["camera","CAMERA VIEW"],["talk","VOICE / CHAT"],["photo","TAKE PHOTO"]]},
@@ -6928,6 +6961,7 @@ uiFoundationStyle.textContent=`
   #uiWorkspaceBar{position:fixed;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:46;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:18px;width:min(850px,calc(100vw - 300px));min-height:52px;padding:6px 8px 6px 14px;box-sizing:border-box;border:1px solid rgba(130,157,180,.5);border-radius:15px;background:rgba(7,13,21,.9);backdrop-filter:blur(18px);box-shadow:0 12px 35px rgba(0,0,0,.2)}
   .ui-foundation-brand{display:flex;flex-direction:column;font-size:11px;line-height:1.15;letter-spacing:.08em;white-space:nowrap}.ui-foundation-brand span{margin-top:3px;color:#8fa8bb;font-size:9px}
   #room-persistence-status[data-state="ok"]{color:#75d6a3}#room-persistence-status[data-state="warning"]{color:#f2bd63}#room-persistence-status[data-state="error"]{color:#ff7d7d}
+  .ui-access-state{display:grid;gap:4px;min-width:76px}.ui-access-state #roomAccessRole{padding:5px 7px;border:1px solid #415568;border-radius:7px;background:#0e1a25;color:#9fb1c0;font-size:8px;font-weight:900;text-align:center;letter-spacing:.08em}.ui-access-state #roomAccessRole[data-role="owner"]{border-color:#66ddff;color:#72e2ff}.ui-access-state #roomAccessRole[data-role="editor"]{border-color:#51d9ad;color:#62e7bd}.ui-access-state #roomAccessRole[data-role="visitor"]{border-color:#b28a51;color:#ffd18a}
   .ui-workspace-tabs{display:grid;grid-template-columns:repeat(5,minmax(70px,1fr));gap:4px}
   .ui-workspace-tabs button{min-height:40px;padding:5px 8px;border:1px solid transparent;border-radius:9px;background:transparent;color:#c8d4de;font-size:10px;font-weight:900;letter-spacing:.07em}.ui-workspace-tabs button span{display:block;margin-top:2px;color:#8195a5;font-size:8px;font-weight:600;letter-spacing:0}.ui-workspace-tabs button:hover,.ui-workspace-tabs button.active{border-color:#52d7ff;background:#102638;color:#fff}.ui-workspace-tabs button.active span{color:#74ddff}
   #uiSaveState{min-width:66px;padding:6px 8px;border-radius:8px;background:#13202b;color:#9ab0c1;font-size:8px;font-weight:800;text-align:center;letter-spacing:.06em}

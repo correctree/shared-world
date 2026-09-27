@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.23.1.1 ROOM CODE INPUT FIX LOADED]");
+console.log("[PROTOTYPE 0.23.2 ROOM RENAME / ARCHIVE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1047,33 +1047,42 @@ roomManager.innerHTML=`<div style="display:flex;justify-content:space-between;al
   <div id="ownedRoomList" style="display:grid;gap:6px;max-height:170px;overflow:auto"><small>Loading saved rooms…</small></div>
   <div style="display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%"><input id="newRoomCodeInput" aria-label="New ROOM code" maxlength="16" autocomplete="off" placeholder="NEW ROOM CODE" style="display:block;width:100%!important;min-width:0!important;box-sizing:border-box"><button type="button" id="createRoomButton" style="width:134px!important;min-width:134px!important;margin:0!important">CREATE</button></div>
   <div style="display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%"><input id="cloneRoomCodeInput" aria-label="Clone target ROOM code" maxlength="16" autocomplete="off" placeholder="CLONE TARGET CODE" style="display:block;width:100%!important;min-width:0!important;box-sizing:border-box"><button type="button" id="cloneRoomButton" style="width:134px!important;min-width:134px!important;margin:0!important">CLONE SELECTED</button></div>
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%"><input id="renameRoomCodeInput" aria-label="Renamed ROOM code" maxlength="16" autocomplete="off" placeholder="RENAME TO CODE" style="display:block;width:100%!important;min-width:0!important;box-sizing:border-box"><button type="button" id="renameRoomButton" style="width:134px!important;min-width:134px!important;margin:0!important">RENAME</button></div>
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;align-items:center;width:100%"><label style="display:flex;align-items:center;gap:7px;font-size:11px;color:#b7c9d8"><input type="checkbox" id="showArchivedRoomsInput" style="width:auto!important"> SHOW ARCHIVED</label><button type="button" id="archiveRoomButton" style="width:134px!important;min-width:134px!important;margin:0!important">ARCHIVE</button></div>
   <small id="roomManagerStatus" style="color:#a9bfd1">Owner rooms only · deletion is disabled in this version.</small>`;
 lobby.appendChild(roomManager);
 const ownedRoomList=roomManager.querySelector<HTMLElement>("#ownedRoomList")!;
 const newRoomCodeInput=roomManager.querySelector<HTMLInputElement>("#newRoomCodeInput")!;
 const cloneRoomCodeInput=roomManager.querySelector<HTMLInputElement>("#cloneRoomCodeInput")!;
+const renameRoomCodeInput=roomManager.querySelector<HTMLInputElement>("#renameRoomCodeInput")!;
 const createRoomButton=roomManager.querySelector<HTMLButtonElement>("#createRoomButton")!;
 const cloneRoomButton=roomManager.querySelector<HTMLButtonElement>("#cloneRoomButton")!;
+const renameRoomButton=roomManager.querySelector<HTMLButtonElement>("#renameRoomButton")!;
+const archiveRoomButton=roomManager.querySelector<HTMLButtonElement>("#archiveRoomButton")!;
+const showArchivedRoomsInput=roomManager.querySelector<HTMLInputElement>("#showArchivedRoomsInput")!;
 const refreshRoomsButton=roomManager.querySelector<HTMLButtonElement>("#refreshRoomsButton")!;
 const roomManagerStatus=roomManager.querySelector<HTMLElement>("#roomManagerStatus")!;
 let selectedOwnedRoomCode=(roomInput.value||"ART001").toUpperCase();
+let selectedOwnedRoomArchived=false;
 const roomApiBase=SERVER_URL.replace(/^wss:/i,"https:").replace(/^ws:/i,"http:").replace(/\/$/,"");
 const roomApiURL=(path:string)=>`${roomApiBase}${path}`;
 const cleanRoomCode=(value:string)=>value.toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16);
 async function refreshOwnedRooms(){
   refreshRoomsButton.disabled=true;roomManagerStatus.textContent="LOADING ROOMS…";
   try{
-    const response=await fetch(roomApiURL(`/rooms?clientId=${encodeURIComponent(persistentClientId)}`),{cache:"no-store",mode:"cors"});
+    const response=await fetch(roomApiURL(`/rooms?clientId=${encodeURIComponent(persistentClientId)}&includeArchived=${showArchivedRoomsInput.checked?"1":"0"}`),{cache:"no-store",mode:"cors"});
     const payload=await response.json();if(!response.ok||payload?.ok!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
     const rooms=Array.isArray(payload.rooms)?payload.rooms:[];ownedRoomList.replaceChildren();
     if(!rooms.length){const empty=document.createElement("small");empty.textContent="No owned ROOM snapshots yet.";ownedRoomList.appendChild(empty);}
     for(const room of rooms){
       const code=cleanRoomCode(String(room?.roomCode||""));if(!code)continue;
+      const archived=room?.archived===true;
       const button=document.createElement("button");button.type="button";button.dataset.roomCode=code;
+      button.dataset.archived=String(archived);
       button.style.cssText="display:grid;grid-template-columns:1fr auto;text-align:left;gap:3px 10px;padding:8px";
       const saved=room?.savedAt?new Date(String(room.savedAt)).toLocaleString():"not saved";
-      button.innerHTML=`<strong>${code}</strong><span>${Number(room?.mediaCount)||0} works</span><small>R${Number(room?.revision)||0} · ${saved}</small><small>checkpoint R${Number(room?.checkpointRevision)||0}</small>`;
-      button.addEventListener("click",()=>{selectedOwnedRoomCode=code;roomInput.value=code;
+      button.innerHTML=`<strong>${code}${archived?" · ARCHIVED":""}</strong><span>${Number(room?.mediaCount)||0} works</span><small>R${Number(room?.revision)||0} · ${saved}</small><small>checkpoint R${Number(room?.checkpointRevision)||0}</small>`;
+      button.addEventListener("click",()=>{selectedOwnedRoomCode=code;selectedOwnedRoomArchived=archived;roomInput.value=code;archiveRoomButton.textContent=archived?"RESTORE":"ARCHIVE";
         for(const item of ownedRoomList.querySelectorAll("button"))item.setAttribute("aria-pressed",String(item===button));
         roomManagerStatus.textContent=`SELECTED ${code} · press ENTER WORLD`;});
       button.addEventListener("dblclick",()=>{selectedOwnedRoomCode=code;roomInput.value=code;void enterWorld();});
@@ -1087,7 +1096,7 @@ async function confirmRoomInCatalog(target:string,expectedMediaCount:number){
   let lastError="ROOM was saved but is not visible in the catalog yet.";
   for(let attempt=1;attempt<=3;attempt++){
     try{
-      const response=await fetch(roomApiURL(`/rooms?clientId=${encodeURIComponent(persistentClientId)}&verify=${Date.now()}`),{cache:"no-store",mode:"cors"});
+      const response=await fetch(roomApiURL(`/rooms?clientId=${encodeURIComponent(persistentClientId)}&includeArchived=1&verify=${Date.now()}`),{cache:"no-store",mode:"cors"});
       const payload=await response.json();
       if(!response.ok||payload?.ok!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
       const match=(Array.isArray(payload.rooms)?payload.rooms:[]).find((room:any)=>cleanRoomCode(String(room?.roomCode||""))===target);
@@ -1103,7 +1112,7 @@ async function mutateRoomCatalog(action:"create"|"clone",targetValue:string){
   const source=cleanRoomCode(selectedOwnedRoomCode||roomInput.value);
   const auth=`clientId=${encodeURIComponent(persistentClientId)}`;
   const query=action==="create"?`${auth}&roomCode=${encodeURIComponent(target)}`:`${auth}&source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`;
-  createRoomButton.disabled=true;cloneRoomButton.disabled=true;roomManagerStatus.textContent=action==="create"?`CREATING ${target}…`:`CLONING ${source} → ${target}…`;
+  createRoomButton.disabled=true;cloneRoomButton.disabled=true;renameRoomButton.disabled=true;archiveRoomButton.disabled=true;roomManagerStatus.textContent=action==="create"?`CREATING ${target}…`:`CLONING ${source} → ${target}…`;
   try{
     const response=await fetch(roomApiURL(`/rooms/${action}?${query}`),{method:"POST",mode:"cors"});
     const payload=await response.json();if(!response.ok||payload?.ok!==true||payload?.verified!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
@@ -1112,13 +1121,42 @@ async function mutateRoomCatalog(action:"create"|"clone",targetValue:string){
     selectedOwnedRoomCode=target;roomInput.value=target;newRoomCodeInput.value="";cloneRoomCodeInput.value="";
     await refreshOwnedRooms();roomManagerStatus.textContent=`${action==="create"?"CREATED":"CLONED"} ${target} · ${expectedMediaCount} works · verified`;
   }catch(error){roomManagerStatus.textContent=`${action.toUpperCase()} FAILED · ${error instanceof Error?error.message:String(error)}`;}
-  finally{createRoomButton.disabled=false;cloneRoomButton.disabled=false;}
+  finally{createRoomButton.disabled=false;cloneRoomButton.disabled=false;renameRoomButton.disabled=false;archiveRoomButton.disabled=false;}
+}
+async function renameSelectedRoom(){
+  const source=cleanRoomCode(selectedOwnedRoomCode),target=cleanRoomCode(renameRoomCodeInput.value);
+  if(!source||!target){roomManagerStatus.textContent="Select a ROOM and enter its new code.";return;}
+  renameRoomButton.disabled=true;archiveRoomButton.disabled=true;roomManagerStatus.textContent=`RENAMING ${source} → ${target}…`;
+  try{
+    const query=`clientId=${encodeURIComponent(persistentClientId)}&source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`;
+    const response=await fetch(roomApiURL(`/rooms/rename?${query}`),{method:"POST",mode:"cors"});const payload=await response.json();
+    if(!response.ok||payload?.ok!==true||payload?.verified!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
+    await confirmRoomInCatalog(target,Number(payload?.mediaCount)||0);selectedOwnedRoomCode=target;roomInput.value=target;renameRoomCodeInput.value="";
+    await refreshOwnedRooms();roomManagerStatus.textContent=`RENAMED ${source} → ${target} · verified`;
+  }catch(error){roomManagerStatus.textContent=`RENAME FAILED · ${error instanceof Error?error.message:String(error)}`;}
+  finally{renameRoomButton.disabled=false;archiveRoomButton.disabled=false;}
+}
+async function toggleSelectedRoomArchive(){
+  const code=cleanRoomCode(selectedOwnedRoomCode);if(!code){roomManagerStatus.textContent="Select a ROOM first.";return;}
+  const archived=!selectedOwnedRoomArchived;archiveRoomButton.disabled=true;renameRoomButton.disabled=true;roomManagerStatus.textContent=`${archived?"ARCHIVING":"RESTORING"} ${code}…`;
+  try{
+    const query=`clientId=${encodeURIComponent(persistentClientId)}&roomCode=${encodeURIComponent(code)}&archived=${archived?"1":"0"}`;
+    const response=await fetch(roomApiURL(`/rooms/archive?${query}`),{method:"POST",mode:"cors"});const payload=await response.json();
+    if(!response.ok||payload?.ok!==true||payload?.verified!==true||payload?.archived!==archived)throw new Error(String(payload?.error||`HTTP ${response.status}`));
+    selectedOwnedRoomArchived=archived;archiveRoomButton.textContent=archived?"RESTORE":"ARCHIVE";await refreshOwnedRooms();
+    roomManagerStatus.textContent=`${archived?"ARCHIVED":"RESTORED"} ${code} · data retained`;
+  }catch(error){roomManagerStatus.textContent=`ARCHIVE FAILED · ${error instanceof Error?error.message:String(error)}`;}
+  finally{archiveRoomButton.disabled=false;renameRoomButton.disabled=false;}
 }
 refreshRoomsButton.addEventListener("click",()=>void refreshOwnedRooms());
 createRoomButton.addEventListener("click",()=>void mutateRoomCatalog("create",newRoomCodeInput.value));
 cloneRoomButton.addEventListener("click",()=>void mutateRoomCatalog("clone",cloneRoomCodeInput.value));
+renameRoomButton.addEventListener("click",()=>void renameSelectedRoom());
+archiveRoomButton.addEventListener("click",()=>void toggleSelectedRoomArchive());
+showArchivedRoomsInput.addEventListener("change",()=>void refreshOwnedRooms());
 newRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("create",newRoomCodeInput.value);}});
 cloneRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("clone",cloneRoomCodeInput.value);}});
+renameRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void renameSelectedRoom();}});
 window.setTimeout(()=>void refreshOwnedRooms(),500);
 let localPosition = new pc.Vec3();
 let lastSend = 0;
@@ -6705,7 +6743,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.1.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.23.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

@@ -43,6 +43,7 @@ function worldPath(code: string) { return join(worldDir, `${safeRoomCode(code)}.
 function previousPath(code: string) { return join(worldDir, `${safeRoomCode(code)}.previous.json`); }
 function stablePath(code: string) { return join(worldDir, `${safeRoomCode(code)}.stable.json`); }
 function checkpointPath(code: string) { return join(worldDir, `${safeRoomCode(code)}.checkpoint.json`); }
+function catalogPath(code:string) { return join(worldDir, `${safeRoomCode(code)}.catalog.json`); }
 
 function validateEnvelope(value: unknown, code: string): SavedWorldV2 {
   if (!value || typeof value !== "object") throw new Error("snapshot is not an object");
@@ -103,17 +104,31 @@ export function worldGenerationInfo(code:string) {
   return {current:inspect("current"),previous:inspect("previous"),stable:inspect("stable"),checkpoint};
 }
 
-export function listOwnedWorlds(clientId:string) {
+function readCatalogMeta(code:string):{archived:boolean} {
+  const path=catalogPath(code);if(!existsSync(path))return {archived:false};
+  try{const value=JSON.parse(readFileSync(path,"utf8"));return {archived:value?.archived===true};}
+  catch(error){console.warn("[ROOM CATALOG META INVALID]",safeRoomCode(code),error);return {archived:false};}
+}
+
+function writeCatalogMeta(code:string,meta:{archived:boolean}) {
+  const path=catalogPath(code),temporary=`${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  writeFileSync(temporary,JSON.stringify({version:1,archived:meta.archived===true,updatedAt:new Date().toISOString()}),{encoding:"utf8",mode:0o600});
+  try{const value=JSON.parse(readFileSync(temporary,"utf8"));if(value?.version!==1||typeof value?.archived!=="boolean")throw new Error("invalid catalog metadata");renameSync(temporary,path);}
+  catch(error){if(existsSync(temporary))unlinkSync(temporary);throw error;}
+}
+
+export function listOwnedWorlds(clientId:string,includeArchived=false) {
   const owner=safeClientId(clientId);const rooms:Array<Record<string,unknown>>=[];
   for(const name of readdirSync(worldDir).filter(value=>/^[A-Z0-9_-]{1,16}\.json$/.test(value)).sort()){
     const roomCode=name.slice(0,-5);
     try{
       const world=readSnapshot(worldPath(roomCode),roomCode);
       if(world.environmentOwnerClientId!==owner)continue;
+      const meta=readCatalogMeta(roomCode);if(meta.archived&&!includeArchived)continue;
       const checkpoint=worldGenerationInfo(roomCode).checkpoint;
       rooms.push({roomCode,revision:world.revision,savedAt:world.savedAt,
         mediaCount:world.mediaObjects.length,sceneCount:world.scenes.length,cueCount:world.cues.length,
-        checkpointRevision:checkpoint.valid?checkpoint.revision:0,checkpointSavedAt:checkpoint.valid?checkpoint.savedAt:""});
+        checkpointRevision:checkpoint.valid?checkpoint.revision:0,checkpointSavedAt:checkpoint.valid?checkpoint.savedAt:"",archived:meta.archived});
     }catch(error){console.warn("[ROOM CATALOG SKIP INVALID]",roomCode,error);}
     if(rooms.length>=50)break;
   }
@@ -172,6 +187,51 @@ function provisionOwnedWorld(roomCode:string,world:SavedWorldV2,owner:string) {
   }
 }
 
+export function setOwnedWorldArchived(code:string,clientId:string,archived:boolean) {
+  const roomCode=safeRoomCode(code),owner=safeClientId(clientId);
+  const world=loadWorldGeneration(roomCode,"current");
+  if(!world)throw new Error("room not found");
+  if(world.environmentOwnerClientId!==owner)throw new Error("owner required");
+  writeCatalogMeta(roomCode,{archived});
+  const verified=readCatalogMeta(roomCode);if(verified.archived!==archived)throw new Error("archive verification failed");
+  return {roomCode,archived:verified.archived};
+}
+
+function writeRenamedSnapshot(path:string,code:string,world:SavedWorldV2) {
+  const temporary=`${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  const json=JSON.stringify(validateEnvelope({...world,roomCode:code},code));
+  writeFileSync(temporary,json,{encoding:"utf8",mode:0o600});
+  try{readSnapshot(temporary,code);renameSync(temporary,path);}
+  catch(error){if(existsSync(temporary))unlinkSync(temporary);throw error;}
+}
+
+export function renameOwnedWorld(sourceCode:string,targetCode:string,clientId:string) {
+  const source=safeRoomCode(sourceCode),target=safeRoomCode(targetCode),owner=safeClientId(clientId);
+  if(source===target)throw new Error("source and target must differ");
+  const targetPaths=[worldPath(target),previousPath(target),stablePath(target),checkpointPath(target),catalogPath(target)];
+  if(targetPaths.some(existsSync))throw new Error("target room already exists");
+  const current=loadWorldGeneration(source,"current");
+  if(!current)throw new Error("source room not found");
+  if(current.environmentOwnerClientId!==owner)throw new Error("owner required");
+  const generations:Array<{source:string;target:string;world:SavedWorldV2|null}>=[
+    {source:worldPath(source),target:worldPath(target),world:current},
+    {source:previousPath(source),target:previousPath(target),world:loadWorldGeneration(source,"previous")},
+    {source:stablePath(source),target:stablePath(target),world:loadWorldGeneration(source,"stable")},
+    {source:checkpointPath(source),target:checkpointPath(target),world:loadWorldCheckpoint(source)}
+  ];
+  try{
+    for(const item of generations)if(item.world)writeRenamedSnapshot(item.target,target,item.world);
+    const meta=readCatalogMeta(source);writeCatalogMeta(target,meta);
+    const verified=loadWorldGeneration(target,"current");
+    if(!verified||verified.environmentOwnerClientId!==owner||verified.mediaObjects.length!==current.mediaObjects.length)throw new Error("rename verification failed");
+  }catch(error){for(const path of targetPaths){try{if(existsSync(path))unlinkSync(path);}catch{}}throw error;}
+  // The fully verified target exists before any source file is removed. A
+  // process interruption can therefore leave a duplicate, but never data loss.
+  for(const item of generations){if(existsSync(item.source))unlinkSync(item.source);}
+  const sourceCatalog=catalogPath(source);if(existsSync(sourceCatalog))unlinkSync(sourceCatalog);
+  return loadWorldGeneration(target,"current")!;
+}
+
 export function loadWorld(code: string): { world: SavedWorldV2 | null; recovered: boolean; source: WorldGeneration | "empty" } {
   const candidates:Array<{source:WorldGeneration;path:string}>=[
     {source:"current",path:worldPath(code)},
@@ -223,7 +283,7 @@ export function storageInfo() {
   return {
     root,
     persistentConfigured: Boolean(process.env.SHARED_WORLD_DATA_DIR),
-    storedWorlds: readdirSync(worldDir).filter(name => name.endsWith(".json") && !name.endsWith(".stable.json") && !name.endsWith(".previous.json") && !name.endsWith(".checkpoint.json")).length,
+    storedWorlds: readdirSync(worldDir).filter(name => /^[A-Z0-9_-]{1,16}\.json$/.test(name)).length,
     storedAssets: readdirSync(assetDir).length
   };
 }

@@ -1,4 +1,4 @@
-import { assetCount, cloneOwnedWorld, createOwnedWorld, listOwnedWorlds, readAsset, saveAsset } from "./persistence.js";
+import { assetCount, cloneOwnedWorld, createOwnedWorld, listOwnedWorlds, readAsset, renameOwnedWorld, saveAsset, setOwnedWorldArchived } from "./persistence.js";
 import { defineRoom, defineServer } from "colyseus";
 import { SharedWorldRoom } from "./SharedWorldRoom.js";
 import { createHash } from "node:crypto";
@@ -35,9 +35,11 @@ const server = defineServer({
     app.options("/rooms",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/create",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/clone",(_req,res)=>res.sendStatus(204));
+    app.options("/rooms/rename",(_req,res)=>res.sendStatus(204));
+    app.options("/rooms/archive",(_req,res)=>res.sendStatus(204));
     const roomClientId=(req:any)=>String(req.query?.clientId||req.get("X-Shared-Client-Id")||"");
     app.get("/rooms",(req,res)=>{
-      try{res.json({ok:true,rooms:listOwnedWorlds(roomClientId(req))});}
+      try{res.json({ok:true,rooms:listOwnedWorlds(roomClientId(req),String(req.query.includeArchived||"")==="1")});}
       catch(error){res.status(403).json({ok:false,error:error instanceof Error?error.message:"room list failed"});}
     });
     app.post("/rooms/create",(req,res)=>{
@@ -51,6 +53,18 @@ const server = defineServer({
         res.status(201).json({ok:true,verified:true,roomCode:world.roomCode,revision:world.revision,savedAt:world.savedAt,mediaCount:world.mediaObjects.length});}
       catch(error){const message=error instanceof Error?error.message:"room clone failed";
         res.status(message.includes("exists")?409:message.includes("owner")?403:400).json({ok:false,error:message});}
+    });
+    app.post("/rooms/rename",(req,res)=>{
+      try{const world=renameOwnedWorld(String(req.query.source||""),String(req.query.target||""),roomClientId(req));
+        res.json({ok:true,verified:true,roomCode:world.roomCode,revision:world.revision,savedAt:world.savedAt,mediaCount:world.mediaObjects.length});}
+      catch(error){const message=error instanceof Error?error.message:"room rename failed";
+        res.status(message.includes("exists")?409:message.includes("owner")?403:400).json({ok:false,error:message});}
+    });
+    app.post("/rooms/archive",(req,res)=>{
+      try{const archived=String(req.query.archived||"")==="1";const result=setOwnedWorldArchived(String(req.query.roomCode||""),roomClientId(req),archived);
+        res.json({ok:true,verified:true,...result});}
+      catch(error){const message=error instanceof Error?error.message:"room archive failed";
+        res.status(message.includes("owner")?403:400).json({ok:false,error:message});}
     });
     app.use("/assets", (_req, res, next) => {
       res.setHeader("Access-Control-Allow-Origin", "*");
@@ -153,7 +167,7 @@ const server = defineServer({
     app.get("/health", (_req, res) =>
       res.json({
         ok: true,
-        service: "shared-world-0.23.1-room-create-clone-stability",
+        service: "shared-world-0.23.2-room-rename-archive",
         storedAssets: assetCount()
       })
     );
@@ -162,4 +176,4 @@ const server = defineServer({
 
 server.listen(port);
 console.log(`Shared World server: http://localhost:${port}`);
-console.log("[Prototype 0.23.1] ROOM CREATE / CLONE STABILITY ready");
+console.log("[Prototype 0.23.2] ROOM RENAME / ARCHIVE ready");

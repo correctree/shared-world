@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.24.6 ACCESS-AWARE UI LOADED]");
+console.log("[PROTOTYPE 0.24.6.1 CLOSE BUTTON FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1063,7 +1063,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.24.6</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.24.6.1</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -6866,7 +6866,12 @@ document.body.appendChild(viewControlDock);
 const avatarFloatingHeader=document.createElement("div");avatarFloatingHeader.className="avatar-floating-header ui-drag-handle";
 avatarFloatingHeader.innerHTML=`<div><strong>AVATAR DESIGN</strong><span>IDENTITY & EXPRESSION</span></div><button type="button" aria-label="Close Avatar Design">×</button>`;
 avatarSettingsPanel.prepend(avatarFloatingHeader);
-avatarFloatingHeader.querySelector("button")!.addEventListener("click",()=>{avatarSettingsPanel.hidden=true;});
+avatarFloatingHeader.querySelector("button")!.addEventListener("click",()=>{
+  avatarSettingsPanel.hidden=true;
+  // AVATAR workspace CSS intentionally keeps the editor visible. Leaving the
+  // workspace makes the close action authoritative on desktop and mobile.
+  selectUIWorkspace("view");
+});
 
 // WORLD owns environment, scene/backup and portable world I/O. These proven
 // controls are moved out of CREATE without recreating their listeners.
@@ -6920,7 +6925,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.6</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.6.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -7090,6 +7095,7 @@ uiFoundationStyle.textContent=`
   #uiFoundationRoot{display:none;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff}
   #uiFoundationRoot.room-active{display:block}
   #uiFoundationRoot [hidden]{display:none!important}
+  body[data-ui-workspace="avatar"] #avatarSettingsPanel[hidden]{display:none!important}
   #uiWorkspaceBar{position:fixed;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:46;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:18px;width:min(850px,calc(100vw - 300px));min-height:52px;padding:6px 8px 6px 14px;box-sizing:border-box;border:1px solid rgba(130,157,180,.5);border-radius:15px;background:rgba(7,13,21,.9);backdrop-filter:blur(18px);box-shadow:0 12px 35px rgba(0,0,0,.2)}
   .ui-foundation-brand{display:flex;flex-direction:column;font-size:11px;line-height:1.15;letter-spacing:.08em;white-space:nowrap}.ui-foundation-brand span{margin-top:3px;color:#8fa8bb;font-size:9px}
   #room-persistence-status[data-state="ok"]{color:#75d6a3}#room-persistence-status[data-state="warning"]{color:#f2bd63}#room-persistence-status[data-state="error"]{color:#ff7d7d}

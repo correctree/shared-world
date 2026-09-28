@@ -1,4 +1,4 @@
-Shared World Prototype 0.24.6 - ACCESS-AWARE UI
+Shared World Prototype 0.24.6.1 - CLOSE BUTTON FIX
 
 CHANGES FROM 0.21.2.1
 - Replaces strict artwork-ID matching with original asset-filename matching.
@@ -670,3 +670,27 @@ ACCESS-AWARE UI TEST
 7. Restore the editor ACCESS ID, re-enter, and confirm CREATE, WORLD and DIRECT
    return without clearing the ROOM or its seven ART001 works.
 8. Reconfirm Render restart recovery before beginning 0.25.0.
+
+0.24.6.1 CLOSE BUTTON FIX
+
+- Fixes the AVATAR DESIGN close button being visually overridden by the active
+  AVATAR workspace's forced display rule.
+- Pressing the AVATAR DESIGN close button now closes the editor and returns the
+  interface to VIEW on desktop and mobile.
+- Adds an explicit hidden-state CSS rule so the panel cannot be forced visible
+  after its close action.
+- Reviews the existing WORLD SETTINGS, ARTWORK LIST, CUE EDITOR and DIRECTOR
+  close paths; their dedicated hidden-class rules remain unchanged.
+- Preserves the 0.24.6 OWNER / EDITOR / VISITOR menu visibility matrix and all
+  server-side permissions, ROOM persistence and artwork state.
+
+CLOSE BUTTON FIX TEST
+1. Deploy and confirm ROOM ENTRY and the in-world header show version 0.24.6.1.
+2. Enter as OWNER and open AVATAR.
+3. Press the × button in AVATAR DESIGN and confirm the panel closes and VIEW
+   becomes active.
+4. Open and close CREATE / ARTWORK LIST, WORLD SETTINGS, CUE EDITOR and
+   DIRECTOR CONTROL once each.
+5. Repeat AVATAR open / close on iPhone and confirm the MENU remains usable.
+6. Enter as VISITOR and confirm only VIEW and AVATAR remain visible.
+7. Confirm all seven ART001 works remain unchanged.

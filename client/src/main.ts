@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.24.5 STABLE CHECKPOINT LOADED]");
+console.log("[PROTOTYPE 0.24.6 ACCESS-AWARE UI LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1063,7 +1063,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.24.5</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.24.6</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -3829,6 +3829,7 @@ async function enterWorld() {
       console.warn("[ROOM PERMANENT LEAVE]",code,reason,room.sessionId);
       activeRoom=null;currentSessionId="";
       updateRoomRoleUI("");
+      environmentCanEdit=false;directorCanDirect=false;directorCanManage=false;refreshAccessAwareUI();
       if(sharedWorldReconcileTimer!==null){window.clearInterval(sharedWorldReconcileTimer);sharedWorldReconcileTimer=null;}
       sharedStateDiagnostic.connection="CLOSED";
       sharedStateDiagnostic.lastError=`ROOM LEFT · ${code} · ${reason||"closed"}`;
@@ -4101,7 +4102,7 @@ async function enterWorld() {
       directorParticipants=Array.isArray(payload?.participants)?payload.participants.map((person:any)=>({
         sessionId:String(person.sessionId||""),name:String(person.name||"Guest"),clientId:String(person.clientId||""),
         isOwner:person.isOwner===true,isDirector:person.isDirector===true
-      })):[];refreshDirectorPanel();
+      })):[];refreshDirectorPanel();refreshAccessAwareUI();
     });
     room.onMessage("director:result",(payload:any)=>{
       if(room!==activeRoom)return;directorActionStatus.textContent=payload?.ok?"DIRECTOR ACCESS UPDATED":`DIRECTOR UPDATE FAILED · ${String(payload?.reason||"unknown")}`;
@@ -5710,6 +5711,7 @@ function applyEnvironmentPermissions(payload:any) {
   environmentCanEdit=payload?.canEdit===true;
   const locked=payload?.locked===true,ownerPresent=payload?.ownerPresent===true,role=String(payload?.role||"visitor").toUpperCase();
   updateRoomRoleUI(role);
+  refreshAccessAwareUI();
   const status=environmentEditor.querySelector<HTMLElement>("[data-env-owner-status]")!;
   status.textContent=environmentCanEdit
     ?locked?`${role} — EDITING ENABLED`:"UNLOCKED — FIRST APPLY BECOMES OWNER"
@@ -6918,7 +6920,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.5</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.6</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -6952,6 +6954,7 @@ uiFoundationRoot.innerHTML=`
     </div>
   </section>`;
 document.body.appendChild(uiFoundationRoot);
+document.body.dataset.roomRole="pending";
 
 const uiContextTitle=uiFoundationRoot.querySelector<HTMLElement>("#uiContextTitle")!;
 const uiContextSubtitle=uiFoundationRoot.querySelector<HTMLElement>("#uiContextSubtitle")!;
@@ -6964,8 +6967,46 @@ function updateRoomRoleUI(roleValue:unknown){
   currentRoomRole=role==="OWNER"||role==="EDITOR"||role==="VISITOR"?role:"";
   roomAccessRole.textContent=currentRoomRole||"ROLE…";
   roomAccessRole.dataset.role=currentRoomRole.toLowerCase()||"pending";
+  document.body.dataset.roomRole=currentRoomRole.toLowerCase()||"pending";
   const code=cleanRoomCode(roomInput.value);
   if(code&&activeRoom)roomLabel.textContent=`ROOM ${code}${currentRoomRole?` · ${currentRoomRole}`:""}`;
+}
+
+// Prototype 0.24.6 / ACCESS-AWARE UI
+// Navigation follows the capabilities confirmed by the authoritative ROOM.
+// This is presentation hardening only: the server remains the final authority
+// for every authoring and director mutation.
+function canUseFoundationWorkspace(workspace:UIFoundationWorkspace){
+  if(workspace==="view"||workspace==="avatar")return true;
+  if(workspace==="create"||workspace==="world")return environmentCanEdit;
+  return directorCanDirect||directorCanManage;
+}
+function refreshAccessAwareUI(){
+  const role=currentRoomRole.toLowerCase()||"pending";
+  document.body.dataset.roomRole=role;
+  for(const button of uiFoundationRoot.querySelectorAll<HTMLButtonElement>("[data-workspace]")){
+    const workspace=String(button.dataset.workspace||"") as UIFoundationWorkspace;
+    const allowed=canUseFoundationWorkspace(workspace);
+    button.hidden=!allowed;
+    button.disabled=!allowed;
+    button.setAttribute("aria-hidden",String(!allowed));
+  }
+  if(!environmentCanEdit){
+    addArtworkPanel?.classList.add("hidden");
+    artworkPlacementPanel?.classList.add("hidden");
+    mediaManagerPanel.classList.add("hidden");
+    worldWorkspacePanel.classList.add("hidden");
+    cueFloatingPanel.classList.add("hidden");
+  }
+  if(!directorCanDirect&&!directorCanManage)directorPanel.classList.add("hidden");
+  if(!canUseFoundationWorkspace(activeUIWorkspace)){
+    activeUIWorkspace="view";
+    document.body.dataset.uiWorkspace="view";
+    closeFoundationPanels();renderFoundationContext();
+    for(const button of uiFoundationRoot.querySelectorAll<HTMLButtonElement>("[data-workspace]"))
+      button.classList.toggle("active",button.dataset.workspace==="view");
+    uiSaveState.textContent=currentRoomRole==="VISITOR"?"VIEW MODE":"VIEW";
+  }
 }
 
 const uiWorkspaceCopy:Record<UIFoundationWorkspace,{title:string;subtitle:string;actions:Array<[string,string]>}>={
@@ -6997,6 +7038,8 @@ function openWorldWorkspaceAt(target?:HTMLElement){
   requestAnimationFrame(()=>target?.scrollIntoView({block:"start",behavior:"smooth"}));
 }
 function runFoundationAction(action:string){
+  if((["add","objects","groups","environment","scenes","cue-editor"] as string[]).includes(action)&&!environmentCanEdit){uiSaveState.textContent="VIEW ONLY";return;}
+  if(action==="director"&&!directorCanDirect&&!directorCanManage){uiSaveState.textContent="DIRECTOR ACCESS REQUIRED";return;}
   if(action==="camera"){viewToggle.click();return;}
   if(action==="talk"){setMobileFoundationPanel("chat");return;}
   if(action==="photo"){setMobileFoundationPanel("photo");return;}
@@ -7019,7 +7062,7 @@ function renderFoundationContext(){
   for(const [action,label] of copy.actions){const button=document.createElement("button");button.type="button";button.dataset.uiAction=action;button.textContent=label;uiContextActions.appendChild(button);}
 }
 function selectUIWorkspace(workspace:UIFoundationWorkspace){
-  if(workspace==="direct"&&!directorCanDirect&&!directorCanManage){uiSaveState.textContent="DIRECTOR ACCESS REQUIRED";return;}
+  if(!canUseFoundationWorkspace(workspace)){uiSaveState.textContent=workspace==="direct"?"DIRECTOR ACCESS REQUIRED":"VIEW ONLY";return;}
   activeUIWorkspace=workspace;document.body.dataset.uiWorkspace=workspace;closeFoundationPanels();renderFoundationContext();
   for(const button of uiFoundationRoot.querySelectorAll<HTMLButtonElement>("[data-workspace]"))button.classList.toggle("active",button.dataset.workspace===workspace);
   if(workspace==="create")openMediaManagerAt(mediaManagerList);
@@ -7046,6 +7089,7 @@ const uiFoundationStyle=document.createElement("style");
 uiFoundationStyle.textContent=`
   #uiFoundationRoot{display:none;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff}
   #uiFoundationRoot.room-active{display:block}
+  #uiFoundationRoot [hidden]{display:none!important}
   #uiWorkspaceBar{position:fixed;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:46;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:18px;width:min(850px,calc(100vw - 300px));min-height:52px;padding:6px 8px 6px 14px;box-sizing:border-box;border:1px solid rgba(130,157,180,.5);border-radius:15px;background:rgba(7,13,21,.9);backdrop-filter:blur(18px);box-shadow:0 12px 35px rgba(0,0,0,.2)}
   .ui-foundation-brand{display:flex;flex-direction:column;font-size:11px;line-height:1.15;letter-spacing:.08em;white-space:nowrap}.ui-foundation-brand span{margin-top:3px;color:#8fa8bb;font-size:9px}
   #room-persistence-status[data-state="ok"]{color:#75d6a3}#room-persistence-status[data-state="warning"]{color:#f2bd63}#room-persistence-status[data-state="error"]{color:#ff7d7d}
@@ -7168,7 +7212,7 @@ enableFloatingPanelDrag(directorPanel,directorDragHeader);enableFloatingPanelDra
 for(const panel of [addArtworkPanel,artworkPlacementPanel])if(panel)new MutationObserver(()=>{if(!panel.classList.contains("hidden"))bringFloatingPanelToFront(panel);}).observe(panel,{attributes:true,attributeFilter:["class"]});
 window.addEventListener("resize",()=>requestAnimationFrame(restoreFloatingPanelLayout));
 restoreFloatingPanelLayout();
-document.body.dataset.uiWorkspace="view";renderFoundationContext();selectUIWorkspace("view");
+document.body.dataset.uiWorkspace="view";renderFoundationContext();selectUIWorkspace("view");refreshAccessAwareUI();
 
 deleteManagedMediaButton.addEventListener("click", () => {
   if (!selectedManagedMediaId) return;

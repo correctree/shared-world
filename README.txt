@@ -1,4 +1,4 @@
-Shared World Prototype 0.24.5 - STABLE CHECKPOINT
+Shared World Prototype 0.24.6 - ACCESS-AWARE UI
 
 CHANGES FROM 0.21.2.1
 - Replaces strict artwork-ID matching with original asset-filename matching.
@@ -636,3 +636,37 @@ NEXT PHASE
 - 0.25.0 EDIT HISTORY: command records and scoped UNDO / REDO.
 - 0.25.1 CUE TIMELINE: ordered and timed cue playback.
 - 0.25.2 DIRECTOR REMOTE: a second browser/device as performance controller.
+
+0.24.6 ACCESS-AWARE UI
+
+- Hides CREATE and WORLD navigation from VISITORs after the authoritative ROOM
+  role and edit capability are received.
+- Hides DIRECT unless the participant has live director or director-management
+  permission. A separately granted director can still use DIRECT without
+  receiving general WORLD editing access.
+- Keeps VIEW and AVATAR available to OWNER, EDITOR and VISITOR.
+- Keeps CREATE and WORLD available to both OWNER and registered EDITORs under
+  the existing server-authoritative access policy.
+- Applies the same visibility rules to desktop workspace tabs and the mobile
+  MENU sheet.
+- Closes authoring panels immediately if edit permission is removed and returns
+  the interface to VIEW when the active workspace is no longer permitted.
+- Rejects direct UI action dispatch to hidden authoring/director workspaces.
+- Does not weaken or replace server authorization; hidden navigation is a UX
+  layer over the existing authoritative mutation checks.
+- Persistent ROOM snapshots, assets, access sidecars and 0.24.5 behavior remain
+  unchanged.
+
+ACCESS-AWARE UI TEST
+1. Deploy and confirm ROOM ENTRY and the in-world header show version 0.24.6.
+2. Enter ART001 as OWNER and confirm VIEW, CREATE, WORLD, AVATAR and DIRECT.
+3. Enter TESTROOM from the registered second browser as EDITOR and confirm
+   VIEW, CREATE, WORLD, AVATAR and DIRECT.
+4. In PUBLIC VIEWING, remove that browser's editor ACCESS ID and re-enter as
+   VISITOR. Confirm only VIEW and AVATAR are visible on desktop.
+5. On iPhone as VISITOR, open MENU and confirm only VIEW and AVATAR are shown.
+6. Confirm the VISITOR can move, change view, communicate, take photos and edit
+   their own avatar, but cannot open artwork, environment or CUE editors.
+7. Restore the editor ACCESS ID, re-enter, and confirm CREATE, WORLD and DIRECT
+   return without clearing the ROOM or its seven ART001 works.
+8. Reconfirm Render restart recovery before beginning 0.25.0.

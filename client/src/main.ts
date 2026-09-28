@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.24.6.1 CLOSE BUTTON FIX LOADED]");
+console.log("[PROTOTYPE 0.24.6.2 PHOTO CAMERA MODE FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -853,6 +853,12 @@ type PhotoCameraMode="normal"|"selfie"|"group";
 let photoCameraMode:PhotoCameraMode="normal";
 
 function toggleViewMode() {
+  // PHOTO cameras temporarily override the normal VIEW camera. A direct VIEW
+  // action must therefore leave SELFIE/GROUP before changing 1ST/3RD.
+  if(photoCameraMode!=="normal") {
+    photoCameraMode="normal";
+    syncPhotoCameraModeUI();
+  }
   firstPersonMode = !firstPersonMode;
   if (firstPersonMode) {
     cameraPitch = 0;
@@ -1063,7 +1069,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.24.6.1</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.24.6.2</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -1818,11 +1824,22 @@ const takeWorldPhotoButton=communicationControls.querySelector<HTMLButtonElement
 const selfieModeButton=communicationControls.querySelector<HTMLButtonElement>("#selfieMode")!;
 const groupPhotoModeButton=communicationControls.querySelector<HTMLButtonElement>("#groupPhotoMode")!;
 const photoTimerSelect=communicationControls.querySelector<HTMLSelectElement>("#photoTimer")!;
-function setPhotoCameraMode(mode:PhotoCameraMode) {
-  photoCameraMode=photoCameraMode===mode?"normal":mode;
-  if(photoCameraMode!=="normal"&&firstPersonMode)toggleViewMode();
+function syncPhotoCameraModeUI() {
   selfieModeButton.classList.toggle("active",photoCameraMode==="selfie");
   groupPhotoModeButton.classList.toggle("active",photoCameraMode==="group");
+  document.querySelectorAll<HTMLButtonElement>('[data-photo-mode="selfie"]')
+    .forEach(button=>button.classList.toggle("active",photoCameraMode==="selfie"));
+  document.querySelectorAll<HTMLButtonElement>('[data-photo-mode="group"]')
+    .forEach(button=>button.classList.toggle("active",photoCameraMode==="group"));
+}
+function setPhotoCameraMode(mode:PhotoCameraMode) {
+  photoCameraMode=photoCameraMode===mode?"normal":mode;
+  if(photoCameraMode!=="normal"&&firstPersonMode) {
+    firstPersonMode=false;
+    cameraPitch=-35;
+    viewToggle.textContent="1ST";
+  }
+  syncPhotoCameraModeUI();
 }
 selfieModeButton.addEventListener("click",()=>setPhotoCameraMode("selfie"));
 groupPhotoModeButton.addEventListener("click",()=>setPhotoCameraMode("group"));
@@ -6925,7 +6942,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.6.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.6.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

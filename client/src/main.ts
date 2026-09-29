@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.0.2 ARTWORK LIST UX LOADED]");
+console.log("[PROTOTYPE 0.25.0.3 HEADER & NAV UX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1073,7 +1073,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.2</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.3</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -2464,6 +2464,7 @@ function removeAvatar(sessionId: string) {
 
 function updatePlayerCount() {
   playersLabel.textContent = `PLAYERS ${avatars.size} / 4`;
+  if(typeof uiPlayerCount!=="undefined")uiPlayerCount.textContent=`${avatars.size} / 4`;
 }
 
 // =========================================================
@@ -4417,6 +4418,8 @@ async function enterWorld() {
     }, 5000);
 
     roomLabel.textContent = `ROOM ${roomCode}`;
+    uiRoomCode.textContent=`ROOM ${roomCode}`;
+    uiPlayerCount.textContent=`${avatars.size} / 4`;
     status.textContent = "接続しました";
     enterButton.textContent=originalEnterButtonText;
     enterSelectedRoomButton.textContent=originalEnterButtonText;
@@ -7036,7 +7039,8 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.25.0.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.0.3</span></div>
+    <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -7044,8 +7048,9 @@ uiFoundationRoot.innerHTML=`
       <button type="button" data-workspace="avatar">AVATAR<span>自分</span></button>
       <button type="button" data-workspace="direct">DIRECT<span>演出</span></button>
     </div>
-    <div class="ui-access-state"><span id="roomAccessRole" data-role="pending">ROLE…</span><div id="uiSaveState" role="status">READY</div></div>
+    <div class="ui-status-cluster"><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span><div id="uiSaveState" role="status">READY</div><button type="button" id="uiHelpButton" aria-expanded="false" aria-controls="uiHelpPopover">? HELP</button></div>
   </nav>
+  <div id="uiHelpPopover" hidden><div><strong>CONTROLS</strong><button type="button" id="uiHelpClose" aria-label="Close help">×</button></div><p><b>WASD</b> MOVE · <b>SPACE</b> JUMP / UP · <b>F</b> FLY · <b>SHIFT</b> DOWN</p></div>
   <aside id="uiContextRail" aria-label="Workspace actions">
     <div class="ui-context-heading"><strong id="uiContextTitle">VIEW</strong><span id="uiContextSubtitle">EXPLORE & COMMUNICATE</span></div>
     <div id="uiContextActions"></div>
@@ -7067,6 +7072,7 @@ uiFoundationRoot.innerHTML=`
       <button type="button" data-workspace="world">WORLD<small>環境</small></button>
       <button type="button" data-workspace="avatar">AVATAR<small>自分</small></button>
       <button type="button" data-workspace="direct">DIRECT<small>演出</small></button>
+      <button type="button" data-ui-action="help">HELP<small>操作</small></button>
     </div>
   </section>`;
 document.body.appendChild(uiFoundationRoot);
@@ -7077,6 +7083,13 @@ const uiContextSubtitle=uiFoundationRoot.querySelector<HTMLElement>("#uiContextS
 const uiContextActions=uiFoundationRoot.querySelector<HTMLElement>("#uiContextActions")!;
 const uiSaveState=uiFoundationRoot.querySelector<HTMLElement>("#uiSaveState")!;
 const roomAccessRole=uiFoundationRoot.querySelector<HTMLElement>("#roomAccessRole")!;
+const uiRoomCode=uiFoundationRoot.querySelector<HTMLElement>("#uiRoomCode")!;
+const uiPlayerCount=uiFoundationRoot.querySelector<HTMLElement>("#uiPlayerCount")!;
+const uiHelpButton=uiFoundationRoot.querySelector<HTMLButtonElement>("#uiHelpButton")!;
+const uiHelpPopover=uiFoundationRoot.querySelector<HTMLElement>("#uiHelpPopover")!;
+function setFoundationHelp(open:boolean){uiHelpPopover.hidden=!open;uiHelpButton.setAttribute("aria-expanded",String(open));}
+uiHelpButton.addEventListener("click",()=>setFoundationHelp(uiHelpPopover.hidden));
+uiFoundationRoot.querySelector<HTMLButtonElement>("#uiHelpClose")!.addEventListener("click",()=>setFoundationHelp(false));
 let currentRoomRole="";
 function updateRoomRoleUI(roleValue:unknown){
   const role=String(roleValue||"").toUpperCase();
@@ -7085,7 +7098,7 @@ function updateRoomRoleUI(roleValue:unknown){
   roomAccessRole.dataset.role=currentRoomRole.toLowerCase()||"pending";
   document.body.dataset.roomRole=currentRoomRole.toLowerCase()||"pending";
   const code=cleanRoomCode(roomInput.value);
-  if(code&&activeRoom)roomLabel.textContent=`ROOM ${code}${currentRoomRole?` · ${currentRoomRole}`:""}`;
+  if(code&&activeRoom){roomLabel.textContent=`ROOM ${code}${currentRoomRole?` · ${currentRoomRole}`:""}`;uiRoomCode.textContent=`ROOM ${code}`;}
 }
 
 // Prototype 0.24.6 / ACCESS-AWARE UI
@@ -7128,7 +7141,7 @@ function refreshAccessAwareUI(){
 const uiWorkspaceCopy:Record<UIFoundationWorkspace,{title:string;subtitle:string;actions:Array<[string,string]>}>={
   view:{title:"VIEW",subtitle:"EXPLORE & COMMUNICATE",actions:[["camera","CAMERA VIEW"],["talk","VOICE / CHAT"],["photo","TAKE PHOTO"]]},
   create:{title:"CREATE",subtitle:"ARTWORK & BEHAVIOR",actions:[["add","+ ADD ARTWORK"],["objects","ARTWORK LIST"],["groups","GROUP / TAG"],["reset-layout","RESET LAYOUT"]]},
-  world:{title:"WORLD",subtitle:"ROOM ENVIRONMENT",actions:[["environment","ENVIRONMENT"],["scenes","SCENES / BACKUP"],["reset-layout","RESET LAYOUT"]]},
+  world:{title:"WORLD",subtitle:"ROOM ENVIRONMENT",actions:[["environment","◐  ENVIRONMENT"],["scenes","▤  SCENES / BACKUP"],["reset-layout","RESET LAYOUT"]]},
   avatar:{title:"AVATAR",subtitle:"IDENTITY & EXPRESSION",actions:[["avatar","AVATAR DESIGN"],["emote","EMOTES"],["flashlight","FLASHLIGHT"],["reset-layout","RESET LAYOUT"]]},
   direct:{title:"DIRECT",subtitle:"LIVE PERFORMANCE",actions:[["director","DIRECTOR CONTROL"],["cue-editor","CUE EDITOR"],["reset-layout","RESET LAYOUT"]]}
 };
@@ -7167,6 +7180,7 @@ function runFoundationAction(action:string){
   if(action==="avatar"){avatarSettingsPanel.hidden=false;avatarSettingsPanel.scrollTop=0;return;}
   if(action==="emote"){setMobileFoundationPanel("emote");return;}
   if(action==="flashlight"){flashlightButton.click();return;}
+  if(action==="help"){setFoundationHelp(true);return;}
   if(action==="director"){if(compactMobileQuery.matches)cueFloatingPanel.classList.add("hidden");directorPanel.classList.remove("hidden");requestDirectorData(true);refreshDirectorPanel();bringFloatingPanelToFront(directorPanel);return;}
   if(action==="cue-editor"){if(compactMobileQuery.matches)directorPanel.classList.add("hidden");cueFloatingPanel.classList.remove("hidden");requestDirectorData(true);bringFloatingPanelToFront(cueFloatingPanel);return;}
   if(action==="reset-layout"){resetDirectorPanelLayout();return;}
@@ -7199,25 +7213,28 @@ uiFoundationRoot.addEventListener("click",event=>{
   const workspaceButton=(event.target as HTMLElement).closest<HTMLButtonElement>("[data-workspace]");
   if(workspaceButton){selectUIWorkspace(String(workspaceButton.dataset.workspace) as UIFoundationWorkspace);return;}
   const actionButton=(event.target as HTMLElement).closest<HTMLButtonElement>("[data-ui-action]");
-  if(actionButton){const action=String(actionButton.dataset.uiAction||"");runFoundationAction(action);if(action==="flashlight"||action==="camera")setMobileFoundationPanel("");}
+  if(actionButton){const action=String(actionButton.dataset.uiAction||"");runFoundationAction(action);if(action==="flashlight"||action==="camera"||action==="help")setMobileFoundationPanel("");}
 });
 const uiFoundationStyle=document.createElement("style");
 uiFoundationStyle.textContent=`
   #uiFoundationRoot{display:none;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#fff}
   #uiFoundationRoot.room-active{display:block}
   #uiFoundationRoot [hidden]{display:none!important}
+  body[data-ui-workspace] #hud{display:none!important}
   body[data-ui-workspace="avatar"] #avatarSettingsPanel[hidden]{display:none!important}
-  #uiWorkspaceBar{position:fixed;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:46;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:18px;width:min(850px,calc(100vw - 300px));min-height:52px;padding:6px 8px 6px 14px;box-sizing:border-box;border:1px solid rgba(130,157,180,.5);border-radius:15px;background:rgba(7,13,21,.9);backdrop-filter:blur(18px);box-shadow:0 12px 35px rgba(0,0,0,.2)}
-  .ui-foundation-brand{display:flex;flex-direction:column;font-size:11px;line-height:1.15;letter-spacing:.08em;white-space:nowrap}.ui-foundation-brand span{margin-top:3px;color:#8fa8bb;font-size:9px}
+  #uiWorkspaceBar{position:fixed;top:max(10px,env(safe-area-inset-top));left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));z-index:46;display:grid;grid-template-columns:auto auto minmax(360px,1fr) auto;align-items:center;gap:12px;min-height:56px;padding:7px 9px 7px 13px;box-sizing:border-box;border:1px solid rgba(130,157,180,.5);border-radius:15px;background:rgba(7,13,21,.92);backdrop-filter:blur(18px);box-shadow:0 12px 35px rgba(0,0,0,.2)}
+  .ui-foundation-brand{display:flex;flex-direction:column;font-size:11px;line-height:1.15;letter-spacing:.08em;white-space:nowrap}.ui-foundation-brand span{margin-top:3px;color:#70899c;font-size:8px}
+  .ui-room-summary{display:grid;grid-template-columns:auto auto;gap:3px 6px;align-items:center;padding:5px 9px;border-left:1px solid rgba(255,255,255,.12);white-space:nowrap}.ui-room-summary>strong{grid-column:1/-1;font-size:10px;letter-spacing:.08em}.ui-room-summary>span{color:#91a8b9;font-size:8px;font-weight:850;letter-spacing:.06em}.ui-room-summary #roomAccessRole[data-role="owner"]{color:#72e2ff}.ui-room-summary #roomAccessRole[data-role="editor"]{color:#62e7bd}.ui-room-summary #roomAccessRole[data-role="visitor"]{color:#ffd18a}
   #room-persistence-status[data-state="ok"]{color:#75d6a3}#room-persistence-status[data-state="warning"]{color:#f2bd63}#room-persistence-status[data-state="error"]{color:#ff7d7d}
-  .ui-access-state{display:grid;gap:4px;min-width:76px}.ui-access-state #roomAccessRole{padding:5px 7px;border:1px solid #415568;border-radius:7px;background:#0e1a25;color:#9fb1c0;font-size:8px;font-weight:900;text-align:center;letter-spacing:.08em}.ui-access-state #roomAccessRole[data-role="owner"]{border-color:#66ddff;color:#72e2ff}.ui-access-state #roomAccessRole[data-role="editor"]{border-color:#51d9ad;color:#62e7bd}.ui-access-state #roomAccessRole[data-role="visitor"]{border-color:#b28a51;color:#ffd18a}
+  .ui-status-cluster{display:grid;grid-template-columns:auto auto;gap:3px 5px;align-items:center;min-width:126px}.ui-status-cluster #room-persistence-status{grid-column:1/-1;font-size:8px;font-weight:850;letter-spacing:.05em;text-align:right;white-space:nowrap}.ui-status-cluster #uiHelpButton{min-width:54px!important;min-height:27px!important;padding:4px 6px!important;border:1px solid #52697c!important;border-radius:7px!important;background:#0d1722!important;color:#cbd9e4!important;font-size:8px!important;font-weight:900!important}
   .ui-workspace-tabs{display:grid;grid-template-columns:repeat(5,minmax(70px,1fr));gap:4px}
   .ui-workspace-tabs button{min-height:40px;padding:5px 8px;border:1px solid transparent;border-radius:9px;background:transparent;color:#c8d4de;font-size:10px;font-weight:900;letter-spacing:.07em}.ui-workspace-tabs button span{display:block;margin-top:2px;color:#8195a5;font-size:8px;font-weight:600;letter-spacing:0}.ui-workspace-tabs button:hover,.ui-workspace-tabs button.active{border-color:#52d7ff;background:#102638;color:#fff}.ui-workspace-tabs button.active span{color:#74ddff}
   #uiSaveState{min-width:66px;padding:6px 8px;border-radius:8px;background:#13202b;color:#9ab0c1;font-size:8px;font-weight:800;text-align:center;letter-spacing:.06em}
-  #uiContextRail{position:fixed;top:84px;left:max(14px,env(safe-area-inset-left));z-index:39;width:206px;padding:13px;box-sizing:border-box;border:1px solid rgba(120,150,175,.46);border-radius:14px;background:rgba(7,13,21,.88);backdrop-filter:blur(15px)}
+  #uiContextRail{position:fixed;top:max(78px,calc(env(safe-area-inset-top) + 68px));left:max(12px,env(safe-area-inset-left));z-index:39;width:206px;padding:13px;box-sizing:border-box;border:1px solid rgba(120,150,175,.46);border-radius:14px;background:rgba(7,13,21,.9);backdrop-filter:blur(15px)}
   body[data-ui-workspace="view"] #uiContextRail{display:none!important}
   .ui-context-heading{display:flex;flex-direction:column;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12)}.ui-context-heading strong{font-size:13px;letter-spacing:.08em}.ui-context-heading span{margin-top:4px;color:#8ea5b7;font-size:8px;letter-spacing:.08em}
-  #uiContextActions{display:grid;gap:6px;margin-top:10px}#uiContextActions button{width:100%!important;min-height:38px;padding:8px 10px;border:1px solid #52697c;border-radius:9px;background:#0d1722;color:#fff;font-size:9px;font-weight:850;text-align:left;letter-spacing:.06em}#uiContextActions button:hover{border-color:#52d7ff;background:#132838}
+  #uiContextActions{display:grid;gap:6px;margin-top:10px}#uiContextActions button{width:100%!important;min-height:38px;padding:8px 10px;border:1px solid #52697c;border-radius:9px;background:#0d1722;color:#fff;font-size:9px;font-weight:850;text-align:left;letter-spacing:.06em}#uiContextActions button:hover{border-color:#52d7ff;background:#132838}#uiContextActions button[data-ui-action="reset-layout"]{min-height:28px;margin-top:5px;border-color:transparent;background:transparent;color:#7890a3;font-size:8px;text-align:center}#uiContextActions button[data-ui-action="reset-layout"]:hover{border-color:#52697c;color:#c7d5df}
+  #uiHelpPopover{position:fixed;top:max(76px,calc(env(safe-area-inset-top) + 66px));right:max(12px,env(safe-area-inset-right));z-index:90;width:min(390px,calc(100vw - 24px));padding:12px 14px;box-sizing:border-box;border:1px solid #52d7ff;border-radius:12px;background:rgba(7,13,21,.97);box-shadow:0 14px 36px rgba(0,0,0,.35);font-size:10px}#uiHelpPopover>div{display:flex;align-items:center;justify-content:space-between}#uiHelpPopover>div button{width:30px!important;height:30px!important;padding:0!important}#uiHelpPopover p{margin:8px 0 0;color:#b8c9d6;line-height:1.7;letter-spacing:.03em}
   body[data-ui-workspace] #addArtworkButton,body[data-ui-workspace] #mediaManagerButton,body[data-ui-workspace] #directorButton,body[data-ui-workspace] #avatarSettingsButton{display:none!important}
   body[data-ui-workspace] #avatarControls{width:auto}body[data-ui-workspace] #flashlightButton,body[data-ui-workspace] #emoteControls,body[data-ui-workspace] #communicationControls{display:none!important}
   body[data-ui-workspace] #sharedStateDiagnosticPanel{display:none!important}
@@ -7232,6 +7249,7 @@ uiFoundationStyle.textContent=`
   .media-manager-row{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:4px;align-items:center;padding:4px;border:1px solid #303b48;border-radius:11px;background:#0d141e;transition:border-color .14s,background .14s}.media-manager-row.selected{outline:2px solid #2f8cff;background:#172334}.media-manager-row.reordering{z-index:3;border-color:#52d7ff;background:#132838;box-shadow:0 8px 24px rgba(0,0,0,.35)}.media-manager-row .media-manager-item{width:100%!important;min-width:0!important;min-height:44px;border:0!important;background:transparent!important;text-align:left!important}.media-drag-handle{width:30px!important;min-width:30px!important;height:38px!important;padding:0!important;border:0!important;background:transparent!important;color:#8fa8bb!important;font-size:20px!important;cursor:grab;touch-action:none}.media-drag-handle:active{cursor:grabbing}.media-drag-handle:disabled{opacity:.25;cursor:not-allowed}.media-row-actions{display:flex;gap:3px;align-items:center}.media-row-actions button{display:grid!important;place-items:center;width:34px!important;min-width:34px!important;height:34px!important;min-height:34px!important;padding:0!important;border-radius:8px!important;font-size:8px!important}.media-action-icon{font-size:15px;line-height:1}.media-action-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.media-row-actions .danger{border-color:#ff5968!important;background:#35151b!important;color:#fff!important}.media-row-actions .danger:hover,.media-row-actions .danger:focus-visible{background:#c92f40!important;border-color:#ff8993!important}.media-manager-actions{display:none!important}
   .artwork-panel-header,.artwork-placement-header{cursor:grab;touch-action:none}.artwork-placement-header{display:flex!important;align-items:center;justify-content:space-between}.artwork-placement-header #closePlacementPanel{width:36px!important;height:36px!important;margin:0!important;border-radius:10px!important}
   .director-header.ui-drag-handle{position:sticky;top:-14px;z-index:4;margin:-14px -14px 10px;padding:14px;background:rgba(20,14,7,.99);cursor:grab;touch-action:none}
+  @media (min-width:761px) and (max-width:1080px){#uiWorkspaceBar{grid-template-columns:auto minmax(330px,1fr) auto}.ui-room-summary{position:absolute;top:62px;left:0;border:1px solid rgba(120,150,175,.46);border-radius:10px;background:rgba(7,13,21,.92)}#uiContextRail{top:max(132px,calc(env(safe-area-inset-top) + 122px))}}
   @media (min-width:761px) and (pointer:fine){
     body[data-ui-workspace="view"] #viewControlDock.room-active{display:grid;position:fixed;left:16px;right:16px;bottom:16px;z-index:45;grid-template-columns:minmax(72px,.6fr) minmax(300px,2.1fr) minmax(220px,1.45fr) minmax(320px,1.9fr) minmax(190px,1.2fr) minmax(120px,.8fr);gap:6px;padding:7px;overflow-x:auto;box-sizing:border-box;border:1px solid rgba(120,150,175,.56);border-radius:15px;background:rgba(7,13,21,.93);backdrop-filter:blur(18px);box-shadow:0 14px 38px rgba(0,0,0,.25)}
     .view-control-group{min-width:0;padding:6px 8px 7px;border:1px solid rgba(100,128,150,.34);border-radius:10px;background:rgba(12,21,31,.72)}.view-control-label{display:block;margin:0 0 5px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}.view-control-content{display:flex;align-items:center;gap:5px;min-height:38px}.view-control-content button,.view-control-content select{min-height:36px!important;padding:7px 8px!important;white-space:nowrap}.dock-view,.dock-light{width:100%!important}.dock-chat,.dock-voice,.dock-photo,.dock-actions{width:100%;display:flex;align-items:center;gap:4px}.dock-chat>input{min-width:105px;flex:1;box-sizing:border-box;padding:9px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff}.dock-quick{display:flex;gap:3px}.dock-quick button{padding:6px!important}.dock-voice button{min-width:68px}.dock-voice select{min-width:0;flex:1}.dock-photo select{min-width:96px}.dock-actions button{flex:1;min-width:0}.dock-light.active{border-color:#ffe08a!important;color:#ffe08a!important;box-shadow:0 0 14px rgba(255,224,138,.35)}

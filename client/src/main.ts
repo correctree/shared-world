@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.0.1 EDIT HISTORY STABILITY FIX LOADED]");
+console.log("[PROTOTYPE 0.25.0.2 ARTWORK LIST UX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1073,7 +1073,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.1</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.2</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -3763,6 +3763,7 @@ async function enterWorld() {
     }
     activeRoom = null;
     currentSessionId = "";
+    mediaOrderIds=[];
     applyEditHistoryState({});
     intentionalRoomLeave=false;
   }
@@ -3849,7 +3850,7 @@ async function enterWorld() {
     room.onLeave((code:number,reason:string)=>{
       if(room!==activeRoom)return;
       console.warn("[ROOM PERMANENT LEAVE]",code,reason,room.sessionId);
-      activeRoom=null;currentSessionId="";
+      activeRoom=null;currentSessionId="";mediaOrderIds=[];
       applyEditHistoryState({});
       updateRoomRoleUI("");
       environmentCanEdit=false;directorCanDirect=false;directorCanManage=false;refreshAccessAwareUI();
@@ -4027,6 +4028,16 @@ async function enterWorld() {
         const item=managedPlacedMedia.get(id);if(item)item.entity.enabled=payload?.visible!==false;
         console.warn("[MEDIA VISIBILITY REJECTED]",id,String(payload?.reason||"unknown"));
       }
+      refreshMediaManagerUI();
+    });
+    room.onMessage("media:order",(payload:any)=>{
+      if(room!==activeRoom||!Array.isArray(payload?.orderedIds))return;
+      mediaOrderIds=payload.orderedIds.map((id:unknown)=>String(id||""));refreshMediaManagerUI();
+    });
+    room.onMessage("media:reorder:result",(payload:any)=>{
+      if(room!==activeRoom)return;
+      if(Array.isArray(payload?.orderedIds))mediaOrderIds=payload.orderedIds.map((id:unknown)=>String(id||""));
+      if(payload?.ok!==true)console.warn("[ARTWORK ORDER REJECTED]",String(payload?.reason||"unknown"));
       refreshMediaManagerUI();
     });
 
@@ -5462,6 +5473,25 @@ let selectedArtworkInspector: HTMLElement | null = null;
 let selectedArtworkInspectorTitle: HTMLElement | null = null;
 let selectedArtworkInspectorMeta: HTMLElement | null = null;
 const pendingMediaVisibility=new Map<string,boolean>();
+let mediaOrderIds:string[]=[];
+let artworkDrag:{pointerId:number;row:HTMLElement}|null=null;
+
+function authoritativeArtworkOrder() {
+  const map:any=getAuthoritativeMediaMap();
+  return Array.from(managedPlacedMedia.values()).sort((a,b)=>{
+    const aRank=mediaOrderIds.indexOf(a.id),bRank=mediaOrderIds.indexOf(b.id);
+    if(aRank>=0||bRank>=0)return (aRank<0?Number.MAX_SAFE_INTEGER:aRank)-(bRank<0?Number.MAX_SAFE_INTEGER:bRank);
+    const av=Number(map?.get?.(a.id)?.sortOrder),bv=Number(map?.get?.(b.id)?.sortOrder);
+    return (Number.isFinite(av)?av:Number.MAX_SAFE_INTEGER)-(Number.isFinite(bv)?bv:Number.MAX_SAFE_INTEGER);
+  });
+}
+
+function commitArtworkOrderFromList() {
+  if(!activeRoom||!environmentCanEdit)return;
+  const orderedIds=Array.from(mediaManagerList.querySelectorAll<HTMLElement>(".media-manager-row[data-media-id]"),row=>String(row.dataset.mediaId||""));
+  if(orderedIds.length!==managedPlacedMedia.size||orderedIds.some(id=>!id))return;
+  mediaOrderIds=[...orderedIds];activeRoom.send("media:reorder",{orderedIds});
+}
 
 // Prototype 0.11 / Stage 3 / MEDIA OBJECT MANAGER
 // The panel is created at runtime so index.html/style.css do not need replacing.
@@ -6727,7 +6757,7 @@ function refreshMediaManagerUI() {
   for(const group of groups){const option=document.createElement("option");option.value=group;option.textContent=group;mediaGroupFilter.appendChild(option);}
   if(groups.includes(previousGroup))mediaGroupFilter.value=previousGroup;
   const groupFilter=mediaGroupFilter.value;const tagFilter=mediaTagFilter.value.trim().toLocaleLowerCase();
-  const objects = Array.from(managedPlacedMedia.values()).filter(item=>{
+  const objects = authoritativeArtworkOrder().filter(item=>{
     const meta=mediaMetadata.get(item.id)||{groupName:"",tags:[]};
     return (!groupFilter||meta.groupName===groupFilter)&&(!tagFilter||meta.tags.some(tag=>tag.toLocaleLowerCase().includes(tagFilter)));
   });
@@ -6738,8 +6768,15 @@ function refreshMediaManagerUI() {
     empty.textContent = "NO MEDIA OBJECTS";
     mediaManagerList.appendChild(empty);
   } else {
+    const reorderEnabled=!groupFilter&&!tagFilter&&environmentCanEdit&&objects.length>1;
     objects.forEach((item, index) => {
-      const row=document.createElement("div");row.className="media-manager-row"+(item.id===selectedManagedMediaId?" selected":"");
+      const row=document.createElement("div");row.className="media-manager-row"+(item.id===selectedManagedMediaId?" selected":"");row.dataset.mediaId=item.id;
+      const drag=document.createElement("button");drag.type="button";drag.className="media-drag-handle";drag.innerHTML='<span aria-hidden="true">⠿</span>';
+      drag.title=reorderEnabled?"Drag to reorder artwork":"Clear filters to reorder";drag.setAttribute("aria-label",drag.title);drag.disabled=!reorderEnabled;
+      drag.addEventListener("pointerdown",event=>{if(!reorderEnabled)return;event.preventDefault();artworkDrag={pointerId:event.pointerId,row};drag.setPointerCapture(event.pointerId);row.classList.add("reordering");});
+      drag.addEventListener("pointermove",event=>{if(!artworkDrag||artworkDrag.pointerId!==event.pointerId)return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest<HTMLElement>(".media-manager-row[data-media-id]");if(!target||target===artworkDrag.row||target.parentElement!==mediaManagerList)return;const box=target.getBoundingClientRect();mediaManagerList.insertBefore(artworkDrag.row,event.clientY<box.top+box.height/2?target:target.nextSibling);});
+      const finishDrag=(event:PointerEvent)=>{if(!artworkDrag||artworkDrag.pointerId!==event.pointerId)return;artworkDrag.row.classList.remove("reordering");artworkDrag=null;commitArtworkOrderFromList();};
+      drag.addEventListener("pointerup",finishDrag);drag.addEventListener("pointercancel",finishDrag);
       const button = document.createElement("button");button.type="button";button.className="media-manager-item";
       button.innerHTML = `<span class="media-manager-kind">${String(index + 1).padStart(2, "0")} ${item.kind.toUpperCase()}</span><span class="media-manager-title-wrap"><span class="media-manager-title"></span><span class="media-manager-meta"></span></span>`;
       const title = button.querySelector<HTMLElement>(".media-manager-title");
@@ -6756,11 +6793,11 @@ function refreshMediaManagerUI() {
       const actions=document.createElement("div");actions.className="media-row-actions";
       const visibility=document.createElement("button");visibility.type="button";visibility.className="media-row-visibility";
       const authoritative:any=getAuthoritativeMediaMap()?.get?.(item.id);const isVisible=pendingMediaVisibility.has(item.id)?pendingMediaVisibility.get(item.id)!:authoritative?.visible!==false;
-      visibility.textContent=isVisible?"👁 SHOW":"⊘ HIDDEN";visibility.setAttribute("aria-pressed",String(isVisible));
+      visibility.innerHTML=`<span class="media-action-icon" aria-hidden="true">${isVisible?"◉":"○"}</span><span class="media-action-label">${isVisible?"SHOW":"HIDDEN"}</span>`;visibility.title=isVisible?"Hide artwork":"Show artwork";visibility.setAttribute("aria-label",visibility.title);visibility.setAttribute("aria-pressed",String(isVisible));
       visibility.addEventListener("click",()=>setManagedMediaVisibility(item.id,!isVisible));
-      const edit=document.createElement("button");edit.type="button";edit.textContent="EDIT";edit.addEventListener("click",()=>{selectedManagedMediaId=item.id;refreshMediaManagerUI();editManagedMediaButton.click();});
-      const remove=document.createElement("button");remove.type="button";remove.textContent="DELETE";remove.className="danger";remove.addEventListener("click",()=>{selectedManagedMediaId=item.id;refreshMediaManagerUI();deleteManagedMediaButton.click();});
-      actions.append(visibility,edit,remove);row.append(button,actions);mediaManagerList.appendChild(row);
+      const edit=document.createElement("button");edit.type="button";edit.innerHTML='<span class="media-action-icon" aria-hidden="true">✎</span><span class="media-action-label">EDIT</span>';edit.title="Edit artwork";edit.setAttribute("aria-label",edit.title);edit.addEventListener("click",()=>{selectedManagedMediaId=item.id;refreshMediaManagerUI();editManagedMediaButton.click();});
+      const remove=document.createElement("button");remove.type="button";remove.innerHTML='<span class="media-action-icon" aria-hidden="true">×</span><span class="media-action-label">DELETE</span>';remove.title="Delete artwork";remove.setAttribute("aria-label",remove.title);remove.className="danger";remove.addEventListener("click",()=>{selectedManagedMediaId=item.id;refreshMediaManagerUI();deleteManagedMediaButton.click();});
+      actions.append(visibility,edit,remove);row.append(drag,button,actions);mediaManagerList.appendChild(row);
     });
   }
 
@@ -6999,7 +7036,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.25.0.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.25.0.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -7192,7 +7229,7 @@ uiFoundationStyle.textContent=`
   .cue-floating-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(20,14,7,.99);border-bottom:1px solid rgba(255,181,74,.28);cursor:grab;touch-action:none}.cue-floating-header:active,.director-header:active{cursor:grabbing}.cue-floating-header>div{display:flex;flex-direction:column}.cue-floating-header strong{font-size:12px;letter-spacing:.08em}.cue-floating-header span{margin-top:3px;color:#d6b27e;font-size:8px;letter-spacing:.08em}.cue-floating-header button{width:36px!important;height:36px!important;border-radius:10px!important}
   #cueFloatingPanel .cue-manager{margin:0!important}
   #worldWorkspacePanel{position:fixed;z-index:81;width:min(390px,calc(100vw - 32px));max-height:calc(100vh - 100px);overflow:auto;box-sizing:border-box;padding:0 14px 14px;border:1px solid #54718c;border-radius:16px;background:rgba(9,13,19,.97);color:#fff;backdrop-filter:blur(16px);font-family:system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.3)}#worldWorkspacePanel.hidden{display:none!important}.world-workspace-header{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(9,13,19,.99);border-bottom:1px solid rgba(84,113,140,.55);cursor:grab;touch-action:none}.world-workspace-header>div{display:flex;flex-direction:column}.world-workspace-header strong{font-size:12px;letter-spacing:.08em}.world-workspace-header span{margin-top:3px;color:#8fa8bb;font-size:8px}.world-workspace-header button{width:36px!important;height:36px!important;border-radius:10px!important}.world-workspace-body{display:block}
-  .media-manager-row{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;align-items:stretch;padding:5px;border:1px solid #303b48;border-radius:12px;background:#0d141e}.media-manager-row.selected{outline:2px solid #2f8cff;background:#172334}.media-manager-row .media-manager-item{width:100%!important;min-height:48px;border:0!important;background:transparent!important}.media-row-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;align-items:center}.media-row-actions button{width:100%!important;min-width:0!important;min-height:34px!important;padding:6px 3px!important;font-size:8px!important}.media-row-actions .danger{border-color:#7b3940!important;color:#ffd6d9!important}.media-manager-actions{display:none!important}
+  .media-manager-row{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:4px;align-items:center;padding:4px;border:1px solid #303b48;border-radius:11px;background:#0d141e;transition:border-color .14s,background .14s}.media-manager-row.selected{outline:2px solid #2f8cff;background:#172334}.media-manager-row.reordering{z-index:3;border-color:#52d7ff;background:#132838;box-shadow:0 8px 24px rgba(0,0,0,.35)}.media-manager-row .media-manager-item{width:100%!important;min-width:0!important;min-height:44px;border:0!important;background:transparent!important;text-align:left!important}.media-drag-handle{width:30px!important;min-width:30px!important;height:38px!important;padding:0!important;border:0!important;background:transparent!important;color:#8fa8bb!important;font-size:20px!important;cursor:grab;touch-action:none}.media-drag-handle:active{cursor:grabbing}.media-drag-handle:disabled{opacity:.25;cursor:not-allowed}.media-row-actions{display:flex;gap:3px;align-items:center}.media-row-actions button{display:grid!important;place-items:center;width:34px!important;min-width:34px!important;height:34px!important;min-height:34px!important;padding:0!important;border-radius:8px!important;font-size:8px!important}.media-action-icon{font-size:15px;line-height:1}.media-action-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.media-row-actions .danger{border-color:#ff5968!important;background:#35151b!important;color:#fff!important}.media-row-actions .danger:hover,.media-row-actions .danger:focus-visible{background:#c92f40!important;border-color:#ff8993!important}.media-manager-actions{display:none!important}
   .artwork-panel-header,.artwork-placement-header{cursor:grab;touch-action:none}.artwork-placement-header{display:flex!important;align-items:center;justify-content:space-between}.artwork-placement-header #closePlacementPanel{width:36px!important;height:36px!important;margin:0!important;border-radius:10px!important}
   .director-header.ui-drag-handle{position:sticky;top:-14px;z-index:4;margin:-14px -14px 10px;padding:14px;background:rgba(20,14,7,.99);cursor:grab;touch-action:none}
   @media (min-width:761px) and (pointer:fine){
@@ -7226,7 +7263,7 @@ uiFoundationStyle.textContent=`
     body.mobile-compact #mediaManagerPanel,body.mobile-compact #directorPanel{top:max(10px,env(safe-area-inset-top));bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));max-height:none}
     body.mobile-compact #cueFloatingPanel{position:fixed!important;left:8px!important;right:8px!important;top:max(10px,env(safe-area-inset-top))!important;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px))!important;width:auto!important;max-height:none!important;padding-bottom:calc(18px + env(safe-area-inset-bottom))!important}
     body.mobile-compact #worldWorkspacePanel{position:fixed!important;left:8px!important;right:8px!important;top:max(10px,env(safe-area-inset-top))!important;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px))!important;width:auto!important;max-height:none!important}
-    body.mobile-compact .media-manager-row{grid-template-columns:1fr}.media-row-actions{grid-template-columns:repeat(3,1fr)}.media-row-actions button{width:100%!important}
+    body.mobile-compact .media-manager-row{grid-template-columns:34px minmax(0,1fr);padding:5px}.media-row-actions{grid-column:2;display:grid;grid-template-columns:repeat(3,1fr)}.media-row-actions button{display:flex!important;gap:4px;width:100%!important}.media-action-label{position:static;width:auto;height:auto;overflow:visible;clip-path:none}.media-drag-handle{grid-row:1 / span 2;height:100%!important;min-height:74px!important}
     body.mobile-compact .cue-floating-header{cursor:default}
     body.mobile-compact #avatarSettingsPanel{position:fixed;left:8px;right:8px;top:max(74px,calc(env(safe-area-inset-top) + 58px));bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));z-index:65;width:auto;max-height:none;margin:0;padding-bottom:calc(18px + env(safe-area-inset-bottom))}
   }

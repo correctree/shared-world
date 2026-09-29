@@ -49,6 +49,7 @@ type CueDefinition = {
 type MediaHistorySnapshot = {
   id:string;title:string;type:string;assetRef:string;fallbackRef:string;
   ownerSessionId:string;ownerClientId:string;groupName:string;tags:string;visible:boolean;
+  sortOrder:number;
   x:number;y:number;z:number;rotationX:number;rotationY:number;rotationZ:number;scale:number;
   behavior:Record<string,unknown>|null;
 };
@@ -101,6 +102,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     return {id,title:media.title,type:media.type,assetRef:media.assetRef,fallbackRef:media.fallbackRef,
       ownerSessionId:media.ownerSessionId,ownerClientId:media.ownerClientId,
       groupName:media.groupName,tags:media.tags,visible:media.visible,
+      sortOrder:media.sortOrder,
       x:media.x,y:media.y,z:media.z,rotationX:media.rotationX,rotationY:media.rotationY,
       rotationZ:media.rotationZ,scale:media.scale,
       behavior:this.mediaBehaviors.has(id)?{...(this.mediaBehaviors.get(id)||{})}:null};
@@ -139,6 +141,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       media=new SharedMediaObject({title:snapshot.title,type:snapshot.type,assetRef:snapshot.assetRef,
         fallbackRef:snapshot.fallbackRef,ownerSessionId:snapshot.ownerSessionId,ownerClientId:snapshot.ownerClientId,
         groupName:snapshot.groupName,tags:snapshot.tags,visible:snapshot.visible,
+        sortOrder:snapshot.sortOrder,
         x:snapshot.x,y:snapshot.y,z:snapshot.z,rotationX:snapshot.rotationX,rotationY:snapshot.rotationY,
         rotationZ:snapshot.rotationZ,scale:snapshot.scale});
       this.state.mediaObjects.set(targetId,media);
@@ -146,7 +149,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       media.title=snapshot.title;media.type=snapshot.type;media.assetRef=snapshot.assetRef;
       media.fallbackRef=snapshot.fallbackRef;media.ownerSessionId=snapshot.ownerSessionId;
       media.ownerClientId=snapshot.ownerClientId;media.groupName=snapshot.groupName;media.tags=snapshot.tags;
-      media.visible=snapshot.visible;media.x=snapshot.x;media.y=snapshot.y;media.z=snapshot.z;
+      media.visible=snapshot.visible;media.sortOrder=snapshot.sortOrder;media.x=snapshot.x;media.y=snapshot.y;media.z=snapshot.z;
       media.rotationX=snapshot.rotationX;media.rotationY=snapshot.rotationY;
       media.rotationZ=snapshot.rotationZ;media.scale=snapshot.scale;
     }
@@ -189,6 +192,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     const mediaObjects = Array.from(this.state.mediaObjects, ([id, media]) => ({
       id, title:media.title, type:media.type, assetRef:media.assetRef, fallbackRef:media.fallbackRef,
       ownerClientId:media.ownerClientId, groupName:media.groupName, tags:media.tags, visible:media.visible,
+      sortOrder:media.sortOrder,
       x:media.x, y:media.y, z:media.z, rotationX:media.rotationX, rotationY:media.rotationY,
       rotationZ:media.rotationZ, scale:media.scale, behavior:this.mediaBehaviors.get(id)||null
     }));
@@ -247,7 +251,8 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.environmentOwnerClientId=String(saved.environmentOwnerClientId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
     this.directorClientIds=new Set(saved.directorClientIds.map(value=>
       String(value||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80)).filter(Boolean).slice(0,12));
-    for(const raw of saved.mediaObjects){
+    for(let restoredIndex=0;restoredIndex<saved.mediaObjects.length;restoredIndex++){
+      const raw=saved.mediaObjects[restoredIndex];
       const id=String(raw.id||"").slice(0,80);const type=String(raw.type||"");
       const values=[raw.x,raw.y,raw.z,raw.rotationX,raw.rotationY,raw.rotationZ,raw.scale].map(Number);
       if(!/^[a-zA-Z0-9_-]{1,80}$/.test(id)||!["sprite","glb","webm","audio"].includes(type)||!values.every(Number.isFinite))continue;
@@ -257,6 +262,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         assetRef:String(raw.assetRef||"").slice(0,240),fallbackRef:String(raw.fallbackRef||"").slice(0,240),
         ownerSessionId:"",ownerClientId:String(raw.ownerClientId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80),
         groupName:this.cleanMediaGroup(raw.groupName),tags:this.cleanMediaTags(raw.tags),visible:raw.visible!==false,
+        sortOrder:Number.isFinite(Number(raw.sortOrder))?Number(raw.sortOrder):restoredIndex,
         x,y,z,rotationX,rotationY,rotationZ,scale:Math.max(.05,Math.min(20,scale))
       }));
       if(raw.behavior&&typeof raw.behavior==="object")this.mediaBehaviors.set(id,{...(raw.behavior as Record<string,unknown>)});
@@ -890,6 +896,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         groupName: this.cleanMediaGroup(payload?.groupName),
         tags: this.cleanMediaTags(payload?.tags),
         visible: payload?.visible !== false,
+        sortOrder:Array.from(this.state.mediaObjects.values()).reduce((highest,item)=>Math.max(highest,Number(item.sortOrder)||0),-1)+1,
         x: Math.max(-this.worldLimit(), Math.min(this.worldLimit(), x)),
         y: Math.max(-10, Math.min(20, y)),
         z: Math.max(-this.worldLimit(), Math.min(this.worldLimit(), z)),
@@ -903,6 +910,24 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.mediaBehaviors.set(id, { trigger:"user-proximity", distance:3, enterAction:"play", leaveAction:"stop", enabled:true });
       this.recordMediaHistory(client,`ADD · ${String(payload?.title||"ARTWORK").slice(0,32)}`,null,this.captureMediaHistorySnapshot(id));
       this.schedulePersistence("media-add");
+    });
+
+    // 0.25.0.2 / Server-authoritative artwork list order. Only OWNER and
+    // registered EDITOR roles may reorder; the complete ID set prevents a
+    // filtered or stale client from accidentally dropping entries.
+    this.onMessage("media:reorder",(client:Client,payload:any)=>{
+      const orderedIds=Array.isArray(payload?.orderedIds)?payload.orderedIds.map((value:unknown)=>String(value||"")):[];
+      const currentIds=Array.from(this.state.mediaObjects.entries()).sort((a,b)=>a[1].sortOrder-b[1].sortOrder).map(([id])=>id);
+      const valid=orderedIds.length===currentIds.length&&orderedIds.length<=MAX_MEDIA_OBJECTS&&
+        new Set(orderedIds).size===orderedIds.length&&orderedIds.every(id=>this.state.mediaObjects.has(id));
+      if(!this.canEditEnvironment(client,false)){
+        client.send("media:reorder:result",{ok:false,reason:"editor-required",orderedIds:currentIds});return;
+      }
+      if(!valid){client.send("media:reorder:result",{ok:false,reason:"stale-list",orderedIds:currentIds});return;}
+      orderedIds.forEach((id,index)=>{const media=this.state.mediaObjects.get(id);if(media)media.sortOrder=index;});
+      this.broadcast("media:order",{orderedIds});
+      client.send("media:reorder:result",{ok:true,orderedIds});
+      this.schedulePersistence("media-reorder");
     });
 
     // 0.20.7 / GROUP + TAG metadata. The room environment owner curates the
@@ -1216,6 +1241,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           assetRef: media.assetRef,
           fallbackRef: media.fallbackRef,
           groupName: media.groupName, tags: media.tags, visible:media.visible,
+          sortOrder: media.sortOrder,
           x: media.x, y: media.y, z: media.z,
           rotationX: media.rotationX, rotationY: media.rotationY, rotationZ: media.rotationZ, scale: media.scale,
           behavior: this.mediaBehaviors.get(id) || null
@@ -1258,6 +1284,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         id, title: media.title, type: media.type, assetRef: media.assetRef,
         fallbackRef: media.fallbackRef, x: media.x, y: media.y, z: media.z,
         groupName:media.groupName, tags:media.tags, visible:media.visible,
+        sortOrder:media.sortOrder,
         rotationX: media.rotationX, rotationY: media.rotationY, rotationZ: media.rotationZ, scale: media.scale,
         behavior: this.mediaBehaviors.get(id) || null
       }));
@@ -1302,6 +1329,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           assetRef:String(item.assetRef).slice(0,240),fallbackRef:String(item.fallbackRef||"").slice(0,240),
           ownerClientId:player.clientId,groupName:this.cleanMediaGroup(item?.groupName),tags:this.cleanMediaTags(item?.tags),
           visible:item?.visible!==false,x:bounded(x,0,-1000,1000),y:bounded(y,1.8,-10,20),z:bounded(z,-3,-1000,1000),
+          sortOrder:Number.isFinite(Number(item?.sortOrder))?Number(item.sortOrder):i,
           rotationX,rotationY,rotationZ,scale:bounded(scale,1,.05,20),
           behavior:item?.behavior&&typeof item.behavior==="object"?{...item.behavior}:null});
       }
@@ -1325,6 +1353,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       for(const raw of mediaObjects){const id=String(raw.id),media=new SharedMediaObject({
         title:String(raw.title),type:String(raw.type),assetRef:String(raw.assetRef),fallbackRef:String(raw.fallbackRef),
         ownerSessionId:client.sessionId,ownerClientId:player.clientId,groupName:String(raw.groupName),tags:String(raw.tags),visible:raw.visible!==false,
+        sortOrder:Number(raw.sortOrder)||0,
         x:Number(raw.x),y:Number(raw.y),z:Number(raw.z),rotationX:Number(raw.rotationX),rotationY:Number(raw.rotationY),rotationZ:Number(raw.rotationZ),scale:Number(raw.scale)
       });this.state.mediaObjects.set(id,media);if(raw.behavior&&typeof raw.behavior==="object")this.mediaBehaviors.set(id,{...(raw.behavior as Record<string,unknown>)});}
       for(const raw of scenes){const id=String(raw?.id||"").slice(0,80),name=String(raw?.name||"").slice(0,32),env=this.cleanEnvironment(raw?.environment);
@@ -1390,6 +1419,7 @@ export class SharedWorldRoom extends Room<WorldState> {
           fallbackRef:item.fallbackRef, ownerSessionId:client.sessionId,
           ownerClientId:player.clientId,
           groupName:this.cleanMediaGroup(item.groupName), tags:this.cleanMediaTags(item.tags), visible:item.visible!==false,
+          sortOrder:this.state.mediaObjects.size+i,
           x:bounded(x,0,-importLimit,importLimit), y:bounded(y,1.8,-10,20),
           z:bounded(z,-3,-importLimit,importLimit), rotationX, rotationY, rotationZ,
           scale:bounded(scale,1,.05,20)

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.24.6.2 PHOTO CAMERA MODE FIX LOADED]");
+console.log("[PROTOTYPE 0.25.0 EDIT HISTORY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1069,7 +1069,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.24.6.2</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -3759,6 +3759,7 @@ async function enterWorld() {
     }
     activeRoom = null;
     currentSessionId = "";
+    applyEditHistoryState({});
     intentionalRoomLeave=false;
   }
   resetClientWorldForReentry();
@@ -3845,6 +3846,7 @@ async function enterWorld() {
       if(room!==activeRoom)return;
       console.warn("[ROOM PERMANENT LEAVE]",code,reason,room.sessionId);
       activeRoom=null;currentSessionId="";
+      applyEditHistoryState({});
       updateRoomRoleUI("");
       environmentCanEdit=false;directorCanDirect=false;directorCanManage=false;refreshAccessAwareUI();
       if(sharedWorldReconcileTimer!==null){window.clearInterval(sharedWorldReconcileTimer);sharedWorldReconcileTimer=null;}
@@ -4174,6 +4176,22 @@ async function enterWorld() {
       if (payload?.ok) console.log("[MEDIA EDIT SYNC ACCEPTED]", String(payload.id || ""));
       else console.warn("[MEDIA EDIT SYNC REJECTED]", String(payload?.id || ""), String(payload?.reason || "unknown"));
     });
+    room.onMessage("history:state",(payload:any)=>{
+      if(room!==activeRoom)return;applyEditHistoryState(payload);
+    });
+    room.onMessage("history:result",(payload:any)=>{
+      if(room!==activeRoom)return;
+      if(payload?.ok===true){
+        const direction=String(payload?.direction||"").toUpperCase();
+        if(direction==="UNDO"||direction==="REDO")editHistoryStatus.textContent=`${direction} COMPLETE · ${String(payload?.label||"EDIT")}`;
+      } else {
+        const reason=String(payload?.reason||"unknown");
+        editHistoryStatus.textContent=reason==="target-changed"?"UNDO BLOCKED · ARTWORK CHANGED BY ANOTHER EDIT":
+          reason==="history-empty"?"NO EDIT HISTORY":reason==="not-authorized"?"UNDO NOT AUTHORIZED":`HISTORY · ${reason.toUpperCase()}`;
+      }
+      room.send("history:get",{});
+    });
+    room.send("history:get",{});
     room.onMessage("media:asset-relinked",(payload:any)=>{
       if(room!==activeRoom)return;const id=String(payload?.id||"");if(!id)return;
       removeSharedMediaLifecycle(id,"asset-relinked-broadcast");
@@ -5606,6 +5624,12 @@ mediaManagerPanel.innerHTML = `
     </div>
   </div>
 
+  <div id="editHistoryControls" class="edit-history-controls">
+    <div class="edit-history-title"><strong>EDIT HISTORY</strong><span>YOUR ROOM-SESSION EDITS</span></div>
+    <div class="edit-history-actions"><button id="undoEditHistoryButton" type="button" disabled>UNDO</button><button id="redoEditHistoryButton" type="button" disabled>REDO</button></div>
+    <div id="editHistoryStatus" class="edit-history-status">NO EDIT HISTORY</div>
+  </div>
+
   <div id="mediaManagerList"></div>
 
   <div class="media-manager-actions">
@@ -5945,9 +5969,9 @@ function refreshManagedAudioSpatialUI(){managedAudioSpatialState.textContent=man
 managedAudioSpatial.addEventListener("change",refreshManagedAudioSpatialUI);
 function currentAudioAssetRef(id:string){const map:any=getAuthoritativeMediaMap();try{return String(map?.get?.(id)?.assetRef||"");}catch{return "";}}
 function openManagedAudioEditor(id:string){const el=audioElements.get(id);if(!el)return;const a=el as any;managedAudioVolume.value=String(Number(a.__xrBaseVolume??.8));managedAudioLoop.checked=!!el.loop;managedAudioSpatial.checked=!!a.__xrSpatial;managedAudioDistance.value=String(Number(a.__xrDistance??12));managedAudioReactiveAction.value=String(a.__xrReactiveAction||"off");managedAudioReactiveStrength.value=String(Number(a.__xrReactiveStrength??1));managedAudioReactiveSmoothing.value=String(Number(a.__xrReactiveSmoothing??.7));refreshManagedAudioSpatialUI();managedAudioEditPanel.classList.remove("hidden");const section=managedAudioEditPanel.closest<HTMLDetailsElement>("details");if(section)section.open=true;managedAudioEditPanel.scrollIntoView({block:"start",behavior:"smooth"});}
-function applyManagedAudioConfig(id:string){const el=audioElements.get(id);const item=managedPlacedMedia.get(id);if(!el||!item)return;const a=el as any;a.__xrBaseVolume=Number(managedAudioVolume.value);el.loop=managedAudioLoop.checked;a.__xrSpatial=managedAudioSpatial.checked;a.__xrDistance=Number(managedAudioDistance.value);a.__xrReactiveAction=managedAudioReactiveAction.value as AudioReactiveAction;a.__xrReactiveStrength=Number(managedAudioReactiveStrength.value);a.__xrReactiveSmoothing=Number(managedAudioReactiveSmoothing.value);a.__xrReactiveRotation=0;a.__xrReactiveLevel=0;if(a.__xrReactiveBase){const b=a.__xrReactiveBase;item.entity.setPosition(b.position);item.entity.setEulerAngles(b.euler);item.entity.setLocalScale(b.scale);}a.__xrReactiveBase={position:item.entity.getPosition().clone(),euler:item.entity.getEulerAngles().clone(),scale:item.entity.getLocalScale().clone()};el.volume=Number(managedAudioVolume.value);const oldRef=currentAudioAssetRef(id);if(activeRoom&&oldRef){const u=new URL(oldRef,window.location.href);u.searchParams.set("volume",managedAudioVolume.value);u.searchParams.set("loop",managedAudioLoop.checked?"1":"0");u.searchParams.set("spatial",managedAudioSpatial.checked?"1":"0");u.searchParams.set("distance",managedAudioDistance.value);u.searchParams.set("reactive",managedAudioReactiveAction.value);u.searchParams.set("strength",managedAudioReactiveStrength.value);u.searchParams.set("smoothing",managedAudioReactiveSmoothing.value);const p=item.entity.getPosition(),r=item.entity.getEulerAngles(),sc=item.entity.getLocalScale();activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:sc.x,assetRef:u.toString()});}managedAudioEditPanel.classList.add("hidden");console.log("[0.16.1.3 AUDIO CONFIG APPLIED]",id);}
+function applyManagedAudioConfig(id:string){const el=audioElements.get(id);const item=managedPlacedMedia.get(id);if(!el||!item)return;const a=el as any;a.__xrBaseVolume=Number(managedAudioVolume.value);el.loop=managedAudioLoop.checked;a.__xrSpatial=managedAudioSpatial.checked;a.__xrDistance=Number(managedAudioDistance.value);a.__xrReactiveAction=managedAudioReactiveAction.value as AudioReactiveAction;a.__xrReactiveStrength=Number(managedAudioReactiveStrength.value);a.__xrReactiveSmoothing=Number(managedAudioReactiveSmoothing.value);a.__xrReactiveRotation=0;a.__xrReactiveLevel=0;if(a.__xrReactiveBase){const b=a.__xrReactiveBase;item.entity.setPosition(b.position);item.entity.setEulerAngles(b.euler);item.entity.setLocalScale(b.scale);}a.__xrReactiveBase={position:item.entity.getPosition().clone(),euler:item.entity.getEulerAngles().clone(),scale:item.entity.getLocalScale().clone()};el.volume=Number(managedAudioVolume.value);const oldRef=currentAudioAssetRef(id);if(activeRoom&&oldRef){const u=new URL(oldRef,window.location.href);u.searchParams.set("volume",managedAudioVolume.value);u.searchParams.set("loop",managedAudioLoop.checked?"1":"0");u.searchParams.set("spatial",managedAudioSpatial.checked?"1":"0");u.searchParams.set("distance",managedAudioDistance.value);u.searchParams.set("reactive",managedAudioReactiveAction.value);u.searchParams.set("strength",managedAudioReactiveStrength.value);u.searchParams.set("smoothing",managedAudioReactiveSmoothing.value);const p=item.entity.getPosition(),r=item.entity.getEulerAngles(),sc=item.entity.getLocalScale();activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:sc.x,assetRef:u.toString()});}activeRoom?.send("history:media:commit",{id});editingManagedMediaId=null;managedAudioEditPanel.classList.add("hidden");console.log("[0.25.0 AUDIO CONFIG APPLIED / HISTORY COMMITTED]",id);}
 managedAudioApply.addEventListener("click",()=>{if(selectedManagedMediaId)applyManagedAudioConfig(selectedManagedMediaId);});
-managedAudioCancel.addEventListener("click",()=>managedAudioEditPanel.classList.add("hidden"));
+managedAudioCancel.addEventListener("click",()=>{const id=editingManagedMediaId;if(id)activeRoom?.send("history:media:cancel",{id});editingManagedMediaId=null;managedAudioEditPanel.classList.add("hidden");});
 
 const mediaManagerStyle = document.createElement("style");
 mediaManagerStyle.textContent = `
@@ -6076,6 +6100,14 @@ mediaManagerStyle.textContent = `
   .transform-action-controls { margin:10px 0; padding:10px; border:1px solid #2a5f88; border-radius:10px; background:rgba(15,36,52,.55); }
   .transform-action-controls.hidden { display:none !important; }
   .transform-action-title { margin-bottom:8px; font-size:10px; font-weight:800; letter-spacing:.1em; opacity:.75; }
+  .edit-history-controls { margin:10px 0; padding:10px; border:1px solid rgba(110,217,255,.38); border-radius:11px; background:rgba(17,39,54,.52); }
+  .edit-history-title { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+  .edit-history-title strong { color:#dff7ff; font-size:10px; letter-spacing:.11em; }
+  .edit-history-title span { color:#82a8bd; font-size:8px; letter-spacing:.06em; }
+  .edit-history-actions { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:8px; }
+  .edit-history-actions button { min-height:36px; }
+  .edit-history-actions button:disabled { opacity:.35; cursor:not-allowed; }
+  .edit-history-status { min-height:14px; margin-top:7px; color:#9fc6d8; font-size:9px; line-height:1.35; letter-spacing:.04em; }
   .behavior-test-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
   .behavior-test-actions button { width:100% !important; padding:8px 6px; font-size:10px; }
   .behavior-status {
@@ -6177,6 +6209,21 @@ const closeMediaManagerButton = mediaManagerPanel.querySelector<HTMLButtonElemen
 const mediaManagerList = mediaManagerPanel.querySelector<HTMLElement>("#mediaManagerList")!;
 const editManagedMediaButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#editManagedMediaButton")!;
 const deleteManagedMediaButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#deleteManagedMediaButton")!;
+const undoEditHistoryButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#undoEditHistoryButton")!;
+const redoEditHistoryButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#redoEditHistoryButton")!;
+const editHistoryStatus = mediaManagerPanel.querySelector<HTMLElement>("#editHistoryStatus")!;
+function applyEditHistoryState(payload:any){
+  const undoCount=Math.max(0,Number(payload?.undoCount)||0),redoCount=Math.max(0,Number(payload?.redoCount)||0);
+  const undoLabel=String(payload?.undoLabel||""),redoLabel=String(payload?.redoLabel||"");
+  undoEditHistoryButton.disabled=!activeRoom||undoCount<1;
+  redoEditHistoryButton.disabled=!activeRoom||redoCount<1;
+  undoEditHistoryButton.textContent=undoCount?`UNDO · ${undoCount}`:"UNDO";
+  redoEditHistoryButton.textContent=redoCount?`REDO · ${redoCount}`:"REDO";
+  editHistoryStatus.textContent=String(payload?.message||"")||
+    (undoLabel?`NEXT UNDO · ${undoLabel}`:redoLabel?`NEXT REDO · ${redoLabel}`:"NO EDIT HISTORY");
+}
+undoEditHistoryButton.addEventListener("click",()=>{if(activeRoom&&!undoEditHistoryButton.disabled){undoEditHistoryButton.disabled=true;activeRoom.send("history:undo",{});}});
+redoEditHistoryButton.addEventListener("click",()=>{if(activeRoom&&!redoEditHistoryButton.disabled){redoEditHistoryButton.disabled=true;activeRoom.send("history:redo",{});}});
 const mediaMetadataStatus=mediaManagerPanel.querySelector<HTMLElement>("#mediaMetadataStatus")!;
 const mediaMetadataControls=mediaManagerPanel.querySelector<HTMLElement>("#mediaMetadataControls")!;
 const mediaGroupInput=mediaManagerPanel.querySelector<HTMLInputElement>("#mediaGroupInput")!;
@@ -6942,7 +6989,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.24.6.2</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.25.0</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>
@@ -7246,6 +7293,8 @@ editManagedMediaButton.addEventListener("click", () => {
   if (!selectedManagedMediaId) return;
   const item = managedPlacedMedia.get(selectedManagedMediaId);
   if (!item) return;
+
+  activeRoom?.send("history:media:begin",{id:item.id,label:item.kind==="audio"?"AUDIO SETTINGS":"TRANSFORM"});
 
   if (item.kind === "audio") {
     editingManagedMediaId = item.id;
@@ -8273,6 +8322,7 @@ placeArtworkButton?.addEventListener("click", () => {
     importedArtworkKind = null;
     selectedManagedMediaId = editedId;
     flushSharedMediaTransform(editedId);
+    activeRoom?.send("history:media:commit",{id:editedId});
     refreshMediaManagerUI();
     artworkPlacementPanel?.classList.add("hidden");
     console.log("[0.14.6.1 EDIT CONFIRMED / PLAYBACK PRESERVED]", editedId);
@@ -8286,8 +8336,13 @@ placeArtworkButton?.addEventListener("click", () => {
 
 cancelPlacementButton?.addEventListener("click", () => {
   if (editingManagedMediaId) {
-    // Stage 3 CANCEL exits edit mode. (Transform undo is reserved for a later stage.)
-    flushSharedMediaTransform(editingManagedMediaId);
+    // 0.25.0: CANCEL restores the authoritative transform captured at EDIT.
+    const canceledId=editingManagedMediaId;
+    if (pendingMediaTransformTimer !== undefined) {
+      window.clearTimeout(pendingMediaTransformTimer);
+      pendingMediaTransformTimer=undefined;
+    }
+    activeRoom?.send("history:media:cancel",{id:canceledId});
     editingManagedMediaId = null;
     importedArtworkEntity = null;
     importedArtworkKind = null;

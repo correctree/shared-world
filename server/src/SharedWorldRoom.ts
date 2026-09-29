@@ -46,6 +46,17 @@ type CueDefinition = {
   action:"recall"|"play"|"stop"|"move"|"rotate"|"scale"|"float"|"orbit"|"shake";
   updatedAt:number;
 };
+type MediaHistorySnapshot = {
+  id:string;title:string;type:string;assetRef:string;fallbackRef:string;
+  ownerSessionId:string;ownerClientId:string;groupName:string;tags:string;visible:boolean;
+  x:number;y:number;z:number;rotationX:number;rotationY:number;rotationZ:number;scale:number;
+  behavior:Record<string,unknown>|null;
+};
+type EditHistoryEntry = {
+  id:string;targetId:string;label:string;createdAt:number;
+  before:MediaHistorySnapshot|null;after:MediaHistorySnapshot|null;
+};
+type ActorEditHistory = {undo:EditHistoryEntry[];redo:EditHistoryEntry[]};
 
 export class SharedWorldRoom extends Room<WorldState> {
   private roomCode = "ART001";
@@ -73,6 +84,107 @@ export class SharedWorldRoom extends Room<WorldState> {
     fogEnabled:false,fogColor:"#b8cbd9",fogDensity:0.75,fogDistance:12,
     groundRepeat:1,groundRotation:0
   };
+  private editHistories = new Map<string,ActorEditHistory>();
+  private mediaEditScopes = new Map<string,{targetId:string;before:MediaHistorySnapshot;label:string}>();
+  private editHistorySequence = 0;
+  private editHistoryActorId(client:Client) {
+    return this.environmentActorId(client);
+  }
+  private editHistoryFor(client:Client) {
+    const actorId=this.editHistoryActorId(client);
+    let history=this.editHistories.get(actorId);
+    if(!history){history={undo:[],redo:[]};this.editHistories.set(actorId,history);}
+    return history;
+  }
+  private captureMediaHistorySnapshot(id:string):MediaHistorySnapshot|null {
+    const media=this.state.mediaObjects.get(id);if(!media)return null;
+    return {id,title:media.title,type:media.type,assetRef:media.assetRef,fallbackRef:media.fallbackRef,
+      ownerSessionId:media.ownerSessionId,ownerClientId:media.ownerClientId,
+      groupName:media.groupName,tags:media.tags,visible:media.visible,
+      x:media.x,y:media.y,z:media.z,rotationX:media.rotationX,rotationY:media.rotationY,
+      rotationZ:media.rotationZ,scale:media.scale,
+      behavior:this.mediaBehaviors.has(id)?{...(this.mediaBehaviors.get(id)||{})}:null};
+  }
+  private mediaHistorySnapshotsEqual(a:MediaHistorySnapshot|null,b:MediaHistorySnapshot|null) {
+    return JSON.stringify(a)===JSON.stringify(b);
+  }
+  private sendEditHistoryState(client:Client,message="") {
+    const history=this.editHistoryFor(client),undo=history.undo.at(-1),redo=history.redo.at(-1);
+    client.send("history:state",{undoCount:history.undo.length,redoCount:history.redo.length,
+      undoLabel:undo?.label||"",redoLabel:redo?.label||"",message});
+  }
+  private recordMediaHistory(client:Client,label:string,before:MediaHistorySnapshot|null,after:MediaHistorySnapshot|null) {
+    if(this.mediaHistorySnapshotsEqual(before,after))return;
+    const history=this.editHistoryFor(client);
+    history.undo.push({id:`edit-${Date.now().toString(36)}-${++this.editHistorySequence}`,
+      targetId:String(after?.id||before?.id||""),label:String(label||"ARTWORK EDIT").slice(0,60),
+      createdAt:Date.now(),before,after});
+    if(history.undo.length>40)history.undo.splice(0,history.undo.length-40);
+    history.redo=[];this.sendEditHistoryState(client,"EDIT RECORDED");
+  }
+  private canApplyHistorySnapshot(client:Client,current:MediaHistorySnapshot|null,desired:MediaHistorySnapshot|null) {
+    const target=current||desired;if(!target)return false;
+    const player=this.state.players.get(client.sessionId);
+    const owns=target.ownerSessionId===client.sessionId||
+      (!!target.ownerClientId&&!!player?.clientId&&target.ownerClientId===player.clientId);
+    return owns||this.canEditEnvironment(client,false);
+  }
+  private applyMediaHistorySnapshot(snapshot:MediaHistorySnapshot|null,targetId:string) {
+    if(!snapshot){
+      this.state.mediaObjects.delete(targetId);this.mediaBehaviors.delete(targetId);this.proximityActors.delete(targetId);
+      this.sendCueList();return;
+    }
+    let media=this.state.mediaObjects.get(targetId);
+    if(!media){
+      media=new SharedMediaObject({title:snapshot.title,type:snapshot.type,assetRef:snapshot.assetRef,
+        fallbackRef:snapshot.fallbackRef,ownerSessionId:snapshot.ownerSessionId,ownerClientId:snapshot.ownerClientId,
+        groupName:snapshot.groupName,tags:snapshot.tags,visible:snapshot.visible,
+        x:snapshot.x,y:snapshot.y,z:snapshot.z,rotationX:snapshot.rotationX,rotationY:snapshot.rotationY,
+        rotationZ:snapshot.rotationZ,scale:snapshot.scale});
+      this.state.mediaObjects.set(targetId,media);
+    } else {
+      media.title=snapshot.title;media.type=snapshot.type;media.assetRef=snapshot.assetRef;
+      media.fallbackRef=snapshot.fallbackRef;media.ownerSessionId=snapshot.ownerSessionId;
+      media.ownerClientId=snapshot.ownerClientId;media.groupName=snapshot.groupName;media.tags=snapshot.tags;
+      media.visible=snapshot.visible;media.x=snapshot.x;media.y=snapshot.y;media.z=snapshot.z;
+      media.rotationX=snapshot.rotationX;media.rotationY=snapshot.rotationY;
+      media.rotationZ=snapshot.rotationZ;media.scale=snapshot.scale;
+    }
+    if(snapshot.behavior)this.mediaBehaviors.set(targetId,{...snapshot.behavior});else this.mediaBehaviors.delete(targetId);
+    this.proximityActors.delete(targetId);
+    this.broadcast("media:transform",{id:targetId,x:media.x,y:media.y,z:media.z,
+      rotationX:media.rotationX,rotationY:media.rotationY,rotationZ:media.rotationZ,scale:media.scale});
+    this.broadcast("media:metadata",{id:targetId,groupName:media.groupName,tags:media.tags});
+    this.broadcast("media:visibility",{id:targetId,visible:media.visible});
+    this.broadcast("media:behavior",{id:targetId,behavior:snapshot.behavior||{}});
+    if(media.type==="audio")this.broadcast("media:config",{id:targetId,assetRef:media.assetRef});
+    this.sendCueList();
+  }
+  private runEditHistory(client:Client,direction:"undo"|"redo") {
+    const history=this.editHistoryFor(client),source=direction==="undo"?history.undo:history.redo;
+    const destination=direction==="undo"?history.redo:history.undo;
+    const entry=source.at(-1);
+    if(!entry){client.send("history:result",{ok:false,direction,reason:"history-empty"});this.sendEditHistoryState(client);return;}
+    const expected=direction==="undo"?entry.after:entry.before;
+    const desired=direction==="undo"?entry.before:entry.after;
+    const current=this.captureMediaHistorySnapshot(entry.targetId);
+    if(!this.mediaHistorySnapshotsEqual(current,expected)){
+      client.send("history:result",{ok:false,direction,reason:"target-changed",label:entry.label});
+      this.sendEditHistoryState(client,"TARGET CHANGED · UNDO BLOCKED");return;
+    }
+    if(!this.canApplyHistorySnapshot(client,current,desired)){
+      client.send("history:result",{ok:false,direction,reason:"not-authorized",label:entry.label});
+      this.sendEditHistoryState(client,"NOT AUTHORIZED");return;
+    }
+    source.pop();this.applyMediaHistorySnapshot(desired,entry.targetId);destination.push(entry);
+    this.schedulePersistence(`history-${direction}`);
+    client.send("history:result",{ok:true,direction,label:entry.label,targetId:entry.targetId});
+    this.sendEditHistoryState(client,`${direction.toUpperCase()} · ${entry.label}`);
+  }
+  private resetEditHistory() {
+    this.editHistories.clear();this.mediaEditScopes.clear();
+    for(const client of this.clients)this.sendEditHistoryState(client,"HISTORY RESET");
+  }
   private buildPersistentSnapshot(): SavedWorldV2 {
     const mediaObjects = Array.from(this.state.mediaObjects, ([id, media]) => ({
       id, title:media.title, type:media.type, assetRef:media.assetRef, fallbackRef:media.fallbackRef,
@@ -129,7 +241,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     const saved=loaded.world;
     if(!saved)return;
     this.persistentRoomAvailable=true;
-    this.state.mediaObjects.clear();this.mediaBehaviors.clear();this.scenes.clear();this.cues.clear();
+    this.state.mediaObjects.clear();this.mediaBehaviors.clear();this.scenes.clear();this.cues.clear();this.resetEditHistory();
     const restoredEnvironment=this.cleanEnvironment(saved.environment);
     if(restoredEnvironment)this.environment=restoredEnvironment;
     this.environmentOwnerClientId=String(saved.environmentOwnerClientId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
@@ -481,6 +593,41 @@ export class SharedWorldRoom extends Room<WorldState> {
       client.send("room:pong",{at:Number(payload?.at)||Date.now(),serverAt:Date.now()});
     });
     this.onMessage("persistence:get",(client:Client)=>this.sendPersistenceState(client));
+    this.onMessage("history:get",(client:Client)=>this.sendEditHistoryState(client));
+    this.onMessage("history:undo",(client:Client)=>this.runEditHistory(client,"undo"));
+    this.onMessage("history:redo",(client:Client)=>this.runEditHistory(client,"redo"));
+    this.onMessage("history:media:begin",(client:Client,payload:any)=>{
+      const targetId=String(payload?.id||"").trim().slice(0,80);
+      const before=this.captureMediaHistorySnapshot(targetId);
+      if(!before||!this.canApplyHistorySnapshot(client,before,before)){
+        client.send("history:result",{ok:false,direction:"begin",reason:before?"not-authorized":"media-not-found"});return;
+      }
+      this.mediaEditScopes.set(client.sessionId,{targetId,before,label:String(payload?.label||"TRANSFORM").slice(0,60)});
+      client.send("history:result",{ok:true,direction:"begin",targetId});
+    });
+    this.onMessage("history:media:commit",(client:Client,payload:any)=>{
+      const scope=this.mediaEditScopes.get(client.sessionId);
+      const targetId=String(payload?.id||"").trim().slice(0,80);
+      if(!scope||scope.targetId!==targetId){client.send("history:result",{ok:false,direction:"commit",reason:"edit-scope-missing"});return;}
+      this.mediaEditScopes.delete(client.sessionId);
+      const after=this.captureMediaHistorySnapshot(targetId);
+      if(!after){client.send("history:result",{ok:false,direction:"commit",reason:"media-not-found"});return;}
+      this.recordMediaHistory(client,scope.label,scope.before,after);
+      client.send("history:result",{ok:true,direction:"commit",targetId,label:scope.label});
+    });
+    this.onMessage("history:media:cancel",(client:Client,payload:any)=>{
+      const scope=this.mediaEditScopes.get(client.sessionId);
+      const targetId=String(payload?.id||"").trim().slice(0,80);
+      if(!scope||scope.targetId!==targetId){client.send("history:result",{ok:false,direction:"cancel",reason:"edit-scope-missing"});return;}
+      const current=this.captureMediaHistorySnapshot(targetId);
+      if(!this.canApplyHistorySnapshot(client,current,scope.before)){
+        client.send("history:result",{ok:false,direction:"cancel",reason:"not-authorized"});return;
+      }
+      this.mediaEditScopes.delete(client.sessionId);this.applyMediaHistorySnapshot(scope.before,targetId);
+      this.schedulePersistence("history-edit-cancel");
+      client.send("history:result",{ok:true,direction:"cancel",targetId,label:scope.label});
+      this.sendEditHistoryState(client,"EDIT CANCELED");
+    });
     this.onMessage("persistence:save",(client:Client)=>{
       if(!this.canEditEnvironment(client,true)){client.send("persistence:result",{ok:false,reason:"owner-required"});return;}
       this.persistNow("manual-save");
@@ -754,6 +901,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
       console.log("[media:add stored]", id, "total:", this.state.mediaObjects.size);
       this.mediaBehaviors.set(id, { trigger:"user-proximity", distance:3, enterAction:"play", leaveAction:"stop", enabled:true });
+      this.recordMediaHistory(client,`ADD · ${String(payload?.title||"ARTWORK").slice(0,32)}`,null,this.captureMediaHistorySnapshot(id));
       this.schedulePersistence("media-add");
     });
 
@@ -767,6 +915,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         client.send("media:metadata:result",{id,ok:false,reason:"owner-locked"});
         this.sendEnvironmentPermissions(client);return;
       }
+      const historyBefore=this.captureMediaHistorySnapshot(id);
       media.groupName=this.cleanMediaGroup(payload?.groupName);
       media.tags=this.cleanMediaTags(payload?.tags);
       const metadata={id,groupName:media.groupName,tags:media.tags};
@@ -774,6 +923,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       client.send("media:metadata:result",{...metadata,ok:true});
       this.sendCueList();this.sendAuthoringState();
       this.sendEnvironmentPermissions();
+      this.recordMediaHistory(client,"GROUP / TAG",historyBefore,this.captureMediaHistorySnapshot(id));
       this.schedulePersistence("media-metadata");
     });
 
@@ -871,6 +1021,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       if (!triggers.includes(trigger) || !actions.includes(enterAction) || !actions.includes(leaveAction)) {
         client.send("media:behavior:result",{id,ok:false,reason:"invalid-behavior"});return;
       }
+      const historyBefore=this.captureMediaHistorySnapshot(id);
       const bounded = (v:unknown, fallback:number, min:number, max:number) => {
         const n=Number(v); return Number.isFinite(n)?Math.min(max,Math.max(min,n)):fallback;
       };
@@ -888,6 +1039,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.proximityActors.delete(id);
       this.broadcast("media:behavior", {id, behavior});
       client.send("media:behavior:result", {id,ok:true,behavior});
+      this.recordMediaHistory(client,"INTERACTIVE BEHAVIOR",historyBefore,this.captureMediaHistorySnapshot(id));
       this.schedulePersistence("media-behavior");
     });
 
@@ -908,9 +1060,11 @@ export class SharedWorldRoom extends Room<WorldState> {
         client.send("media:visibility:result",{id,ok:false,visible:media?.visible!==false,reason:media?"not-authorized":"media-not-found"});
         return;
       }
+      const historyBefore=this.captureMediaHistorySnapshot(id);
       media.visible=payload?.visible!==false;
       this.broadcast("media:visibility",{id,visible:media.visible});
       client.send("media:visibility:result",{id,ok:true,visible:media.visible});
+      this.recordMediaHistory(client,media.visible?"SHOW ARTWORK":"HIDE ARTWORK",historyBefore,this.captureMediaHistorySnapshot(id));
       this.schedulePersistence("media-visibility");
     });
 
@@ -934,6 +1088,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         client.send("media:update:result", {id, ok:false, reason:"invalid-transform"});
         return;
       }
+      const historyBefore=this.captureMediaHistorySnapshot(id);
       media.x=Math.max(-this.worldLimit(),Math.min(this.worldLimit(),x));
       media.y=Math.max(-10,Math.min(20,y));
       media.z=Math.max(-this.worldLimit(),Math.min(this.worldLimit(),z));
@@ -955,6 +1110,10 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
       console.log("[media:update stored]", id);
       client.send("media:update:result", {id, ok:true});
+      const editScope=this.mediaEditScopes.get(client.sessionId);
+      if(!editScope||editScope.targetId!==id)
+        this.recordMediaHistory(client,typeof payload?.assetRef==="string"?"AUDIO SETTINGS":"TRANSFORM",
+          historyBefore,this.captureMediaHistorySnapshot(id));
       this.schedulePersistence("media-update");
     });
 
@@ -1159,7 +1318,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         environment:{...environment},environmentOwnerClientId:player.clientId,
         directorClientIds:Array.from(this.directorClientIds).filter(value=>value!==player.clientId),mediaObjects,scenes,cues};
       try{saveWorld(this.roomCode,proposed);}catch(error){console.error("[ROOM V2 RESTORE SAVE FAILED]",error);fail("snapshot-save-failed");return;}
-      this.state.mediaObjects.clear();this.mediaBehaviors.clear();this.scenes.clear();this.cues.clear();
+      this.state.mediaObjects.clear();this.mediaBehaviors.clear();this.scenes.clear();this.cues.clear();this.resetEditHistory();
       this.environment=environment;this.environmentOwnerClientId=player.clientId;this.persistenceRevision=revision;
       this.lastSavedAt=savedAt;this.lastSaveError="";
       this.persistenceDirty=false;this.recoverySource="current";
@@ -1313,12 +1472,14 @@ export class SharedWorldRoom extends Room<WorldState> {
         client.send("media:delete:result", {id, ok:false, reason:media ? "owner-mismatch" : "media-not-found"});
         return;
       }
+      const historyBefore=this.captureMediaHistorySnapshot(id);
       this.state.mediaObjects.delete(id);
       this.mediaBehaviors.delete(id);
       this.proximityActors.delete(id);
       this.sendCueList();
       console.log("[media:delete stored]", id, "total:", this.state.mediaObjects.size);
       client.send("media:delete:result", {id, ok:true});
+      this.recordMediaHistory(client,`DELETE · ${String(historyBefore?.title||"ARTWORK").slice(0,32)}`,historyBefore,null);
       this.schedulePersistence("media-delete");
     });
 
@@ -1350,6 +1511,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.sendEnvironmentPermissions();
     this.sendDirectorState();
     this.sendPersistenceState(client);
+    this.sendEditHistoryState(client);
 
     console.log(`[join] ${safeName} / ${client.sessionId} / client:${clientId || "legacy"}`);
     console.log("[AUTHORITATIVE SNAPSHOT]", {
@@ -1369,10 +1531,12 @@ export class SharedWorldRoom extends Room<WorldState> {
     console.log("[SESSION RECONNECTED]",client.sessionId);
     this.sendEnvironmentPermissions();
     this.sendDirectorState();
+    this.sendEditHistoryState(client);
   }
 
   // Called only after a consented leave or reconnection failure/timeout.
   onLeave(client: Client, code: number) {
+    this.mediaEditScopes.delete(client.sessionId);
     this.leaveProximity(client.sessionId);
     this.broadcast("voice:leave",{sessionId:client.sessionId},{except:client});
     this.avatarEmoteLastAt.delete(client.sessionId);

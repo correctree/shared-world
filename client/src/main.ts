@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.0.3 HEADER & NAV UX LOADED]");
+console.log("[PROTOTYPE 0.25.0.4 INLINE ARTWORK INSPECTOR LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1073,7 +1073,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.3</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.4</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -5495,6 +5495,9 @@ function commitArtworkOrderFromList() {
   if(orderedIds.length!==managedPlacedMedia.size||orderedIds.some(id=>!id))return;
   mediaOrderIds=[...orderedIds];activeRoom.send("media:reorder",{orderedIds});
 }
+function scrollInlineArtworkIntoView(id:string) {
+  window.setTimeout(()=>mediaManagerList.querySelector<HTMLElement>(`.media-manager-row[data-media-id="${CSS.escape(id)}"]`)?.scrollIntoView({block:"nearest",behavior:"smooth"}),0);
+}
 
 // Prototype 0.11 / Stage 3 / MEDIA OBJECT MANAGER
 // The panel is created at runtime so index.html/style.css do not need replacing.
@@ -6064,9 +6067,12 @@ mediaManagerStyle.textContent = `
   .media-manager-kind { opacity:.62; font-size:10px; font-weight:800; }
   .media-manager-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   .media-manager-empty { opacity:.55; padding:18px 6px; text-align:center; font-size:12px; }
-  .selected-artwork-inspector { margin-top:14px;padding:12px;border:1px solid #526276;border-radius:14px;background:#0b1119; }
-  .selected-artwork-heading { margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12); }
+  .selected-artwork-inspector { grid-column:1/-1;margin:4px 0 0;padding:12px;border:1px solid #526276;border-radius:11px;background:#0b1119;animation:inlineInspectorOpen .14s ease-out; }
+  .selected-artwork-inspector.reorder-suspended { display:none!important; }
+  @keyframes inlineInspectorOpen { from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none} }
+  .selected-artwork-heading { display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12); }
   .selected-artwork-heading div { min-width:0;display:grid;gap:3px; }
+  .selected-artwork-heading button { flex:0 0 30px;width:30px!important;height:30px!important;min-height:30px!important;padding:0!important;border-radius:8px!important; }
   .selected-artwork-heading span { color:#6ed9ff;font-size:9px;font-weight:900;letter-spacing:.14em; }
   .selected-artwork-heading strong { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px; }
   .selected-artwork-heading small { color:#9caabc;font-size:9px; }
@@ -6776,9 +6782,9 @@ function refreshMediaManagerUI() {
       const row=document.createElement("div");row.className="media-manager-row"+(item.id===selectedManagedMediaId?" selected":"");row.dataset.mediaId=item.id;
       const drag=document.createElement("button");drag.type="button";drag.className="media-drag-handle";drag.innerHTML='<span aria-hidden="true">⠿</span>';
       drag.title=reorderEnabled?"Drag to reorder artwork":"Clear filters to reorder";drag.setAttribute("aria-label",drag.title);drag.disabled=!reorderEnabled;
-      drag.addEventListener("pointerdown",event=>{if(!reorderEnabled)return;event.preventDefault();artworkDrag={pointerId:event.pointerId,row};drag.setPointerCapture(event.pointerId);row.classList.add("reordering");});
+      drag.addEventListener("pointerdown",event=>{if(!reorderEnabled)return;event.preventDefault();selectedArtworkInspector?.classList.add("reorder-suspended");artworkDrag={pointerId:event.pointerId,row};drag.setPointerCapture(event.pointerId);row.classList.add("reordering");});
       drag.addEventListener("pointermove",event=>{if(!artworkDrag||artworkDrag.pointerId!==event.pointerId)return;event.preventDefault();const target=document.elementFromPoint(event.clientX,event.clientY)?.closest<HTMLElement>(".media-manager-row[data-media-id]");if(!target||target===artworkDrag.row||target.parentElement!==mediaManagerList)return;const box=target.getBoundingClientRect();mediaManagerList.insertBefore(artworkDrag.row,event.clientY<box.top+box.height/2?target:target.nextSibling);});
-      const finishDrag=(event:PointerEvent)=>{if(!artworkDrag||artworkDrag.pointerId!==event.pointerId)return;artworkDrag.row.classList.remove("reordering");artworkDrag=null;commitArtworkOrderFromList();};
+      const finishDrag=(event:PointerEvent)=>{if(!artworkDrag||artworkDrag.pointerId!==event.pointerId)return;artworkDrag.row.classList.remove("reordering");selectedArtworkInspector?.classList.remove("reorder-suspended");artworkDrag=null;commitArtworkOrderFromList();};
       drag.addEventListener("pointerup",finishDrag);drag.addEventListener("pointercancel",finishDrag);
       const button = document.createElement("button");button.type="button";button.className="media-manager-item";
       button.innerHTML = `<span class="media-manager-kind">${String(index + 1).padStart(2, "0")} ${item.kind.toUpperCase()}</span><span class="media-manager-title-wrap"><span class="media-manager-title"></span><span class="media-manager-meta"></span></span>`;
@@ -6791,20 +6797,25 @@ function refreshMediaManagerUI() {
         if(selectedManagedMediaId!==item.id)metadataEditorDirty=false;
         selectedManagedMediaId = item.id;
         refreshMediaManagerUI();
-        window.setTimeout(() => selectedArtworkInspector?.scrollIntoView({ block: "start", behavior: "smooth" }), 0);
+        scrollInlineArtworkIntoView(item.id);
       });
       const actions=document.createElement("div");actions.className="media-row-actions";
       const visibility=document.createElement("button");visibility.type="button";visibility.className="media-row-visibility";
       const authoritative:any=getAuthoritativeMediaMap()?.get?.(item.id);const isVisible=pendingMediaVisibility.has(item.id)?pendingMediaVisibility.get(item.id)!:authoritative?.visible!==false;
       visibility.innerHTML=`<span class="media-action-icon" aria-hidden="true">${isVisible?"◉":"○"}</span><span class="media-action-label">${isVisible?"SHOW":"HIDDEN"}</span>`;visibility.title=isVisible?"Hide artwork":"Show artwork";visibility.setAttribute("aria-label",visibility.title);visibility.setAttribute("aria-pressed",String(isVisible));
       visibility.addEventListener("click",()=>setManagedMediaVisibility(item.id,!isVisible));
-      const edit=document.createElement("button");edit.type="button";edit.innerHTML='<span class="media-action-icon" aria-hidden="true">✎</span><span class="media-action-label">EDIT</span>';edit.title="Edit artwork";edit.setAttribute("aria-label",edit.title);edit.addEventListener("click",()=>{selectedManagedMediaId=item.id;refreshMediaManagerUI();editManagedMediaButton.click();});
+      const edit=document.createElement("button");edit.type="button";edit.innerHTML='<span class="media-action-icon" aria-hidden="true">✎</span><span class="media-action-label">EDIT</span>';edit.title="Edit artwork";edit.setAttribute("aria-label",edit.title);edit.addEventListener("click",()=>{selectedManagedMediaId=item.id;refreshMediaManagerUI();editManagedMediaButton.click();scrollInlineArtworkIntoView(item.id);});
       const remove=document.createElement("button");remove.type="button";remove.innerHTML='<span class="media-action-icon" aria-hidden="true">×</span><span class="media-action-label">DELETE</span>';remove.title="Delete artwork";remove.setAttribute("aria-label",remove.title);remove.className="danger";remove.addEventListener("click",()=>{selectedManagedMediaId=item.id;refreshMediaManagerUI();deleteManagedMediaButton.click();});
       actions.append(visibility,edit,remove);row.append(drag,button,actions);mediaManagerList.appendChild(row);
     });
   }
 
   const hasSelection = !!selectedManagedMediaId && managedPlacedMedia.has(selectedManagedMediaId);
+  const selectedRow=hasSelection?mediaManagerList.querySelector<HTMLElement>(`.media-manager-row[data-media-id="${CSS.escape(String(selectedManagedMediaId))}"]`):null;
+  if(selectedArtworkInspector){
+    if(selectedRow)selectedRow.appendChild(selectedArtworkInspector);
+    else selectedArtworkInspector.remove();
+  }
   editManagedMediaButton.disabled = !hasSelection;
   deleteManagedMediaButton.disabled = !hasSelection;
   if(selectedArtworkInspector){
@@ -7004,10 +7015,12 @@ selectedArtworkInspector.className="selected-artwork-inspector no-selection";
 selectedArtworkInspector.innerHTML=`
   <div class="selected-artwork-heading">
     <div><span>SELECTED ARTWORK</span><strong id="selectedArtworkInspectorTitle">NO ARTWORK SELECTED</strong><small id="selectedArtworkInspectorMeta">Select an artwork from the list to edit its settings.</small></div>
+    <button type="button" id="closeInlineArtworkInspector" aria-label="Close artwork inspector">×</button>
   </div>
   <div class="selected-artwork-empty">Choose one artwork above. GROUP / TAG and INTERACTIVE BEHAVIOR will appear here.</div>`;
 selectedArtworkInspectorTitle=selectedArtworkInspector.querySelector<HTMLElement>("#selectedArtworkInspectorTitle");
 selectedArtworkInspectorMeta=selectedArtworkInspector.querySelector<HTMLElement>("#selectedArtworkInspectorMeta");
+selectedArtworkInspector.querySelector<HTMLButtonElement>("#closeInlineArtworkInspector")!.addEventListener("click",()=>{selectedManagedMediaId=null;metadataEditorDirty=false;refreshMediaManagerUI();});
 function createArtworkInspectorSection(label:string,node:HTMLElement,open=false){
   const details=document.createElement("details");details.className="artwork-inspector-section";details.open=open;
   const summary=document.createElement("summary");summary.textContent=label;
@@ -7019,7 +7032,7 @@ const behaviorInspectorSection=createArtworkInspectorSection("INTERACTIVE BEHAVI
 const audioInspectorSection=createArtworkInspectorSection("AUDIO SETTINGS",managedAudioEditPanel,false);
 audioInspectorSection.id="audioArtworkInspectorSection";
 selectedArtworkInspector.append(metadataInspectorSection,behaviorInspectorSection,audioInspectorSection,mediaManagerActions);
-mediaManagerPanel.append(mediaFilterBar,mediaManagerList,selectedArtworkInspector);
+mediaManagerPanel.append(mediaFilterBar,mediaManagerList);
 const worldWorkspaceHeader=document.createElement("div");worldWorkspaceHeader.className="world-workspace-header ui-drag-handle";
 worldWorkspaceHeader.innerHTML=`<div><strong>WORLD SETTINGS</strong><span>ENVIRONMENT · SCENES · IMPORT / EXPORT</span></div><button type="button" aria-label="Close World Settings">×</button>`;
 const worldWorkspaceBody=document.createElement("div");worldWorkspaceBody.className="world-workspace-body";
@@ -7039,7 +7052,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.0.3</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.0.4</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
@@ -7246,7 +7259,7 @@ uiFoundationStyle.textContent=`
   .cue-floating-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(20,14,7,.99);border-bottom:1px solid rgba(255,181,74,.28);cursor:grab;touch-action:none}.cue-floating-header:active,.director-header:active{cursor:grabbing}.cue-floating-header>div{display:flex;flex-direction:column}.cue-floating-header strong{font-size:12px;letter-spacing:.08em}.cue-floating-header span{margin-top:3px;color:#d6b27e;font-size:8px;letter-spacing:.08em}.cue-floating-header button{width:36px!important;height:36px!important;border-radius:10px!important}
   #cueFloatingPanel .cue-manager{margin:0!important}
   #worldWorkspacePanel{position:fixed;z-index:81;width:min(390px,calc(100vw - 32px));max-height:calc(100vh - 100px);overflow:auto;box-sizing:border-box;padding:0 14px 14px;border:1px solid #54718c;border-radius:16px;background:rgba(9,13,19,.97);color:#fff;backdrop-filter:blur(16px);font-family:system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.3)}#worldWorkspacePanel.hidden{display:none!important}.world-workspace-header{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(9,13,19,.99);border-bottom:1px solid rgba(84,113,140,.55);cursor:grab;touch-action:none}.world-workspace-header>div{display:flex;flex-direction:column}.world-workspace-header strong{font-size:12px;letter-spacing:.08em}.world-workspace-header span{margin-top:3px;color:#8fa8bb;font-size:8px}.world-workspace-header button{width:36px!important;height:36px!important;border-radius:10px!important}.world-workspace-body{display:block}
-  .media-manager-row{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:4px;align-items:center;padding:4px;border:1px solid #303b48;border-radius:11px;background:#0d141e;transition:border-color .14s,background .14s}.media-manager-row.selected{outline:2px solid #2f8cff;background:#172334}.media-manager-row.reordering{z-index:3;border-color:#52d7ff;background:#132838;box-shadow:0 8px 24px rgba(0,0,0,.35)}.media-manager-row .media-manager-item{width:100%!important;min-width:0!important;min-height:44px;border:0!important;background:transparent!important;text-align:left!important}.media-drag-handle{width:30px!important;min-width:30px!important;height:38px!important;padding:0!important;border:0!important;background:transparent!important;color:#8fa8bb!important;font-size:20px!important;cursor:grab;touch-action:none}.media-drag-handle:active{cursor:grabbing}.media-drag-handle:disabled{opacity:.25;cursor:not-allowed}.media-row-actions{display:flex;gap:3px;align-items:center}.media-row-actions button{display:grid!important;place-items:center;width:34px!important;min-width:34px!important;height:34px!important;min-height:34px!important;padding:0!important;border-radius:8px!important;font-size:8px!important}.media-action-icon{font-size:15px;line-height:1}.media-action-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.media-row-actions .danger{border-color:#ff5968!important;background:#35151b!important;color:#fff!important}.media-row-actions .danger:hover,.media-row-actions .danger:focus-visible{background:#c92f40!important;border-color:#ff8993!important}.media-manager-actions{display:none!important}
+  .media-manager-row{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:4px;align-items:center;padding:4px;border:1px solid #303b48;border-radius:11px;background:#0d141e;transition:border-color .14s,background .14s}.media-manager-row.selected{border-color:#2f8cff;outline:2px solid #2f8cff;background:#172334}.media-manager-row.reordering{z-index:3;border-color:#52d7ff;background:#132838;box-shadow:0 8px 24px rgba(0,0,0,.35)}.media-manager-row .media-manager-item{width:100%!important;min-width:0!important;min-height:44px;border:0!important;background:transparent!important;text-align:left!important}.media-drag-handle{width:30px!important;min-width:30px!important;height:38px!important;padding:0!important;border:0!important;background:transparent!important;color:#8fa8bb!important;font-size:20px!important;cursor:grab;touch-action:none}.media-drag-handle:active{cursor:grabbing}.media-drag-handle:disabled{opacity:.25;cursor:not-allowed}.media-row-actions{display:flex;gap:3px;align-items:center}.media-row-actions button{display:grid!important;place-items:center;width:34px!important;min-width:34px!important;height:34px!important;min-height:34px!important;padding:0!important;border-radius:8px!important;font-size:8px!important}.media-action-icon{font-size:15px;line-height:1}.media-action-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.media-row-actions .danger{border-color:#ff5968!important;background:#35151b!important;color:#fff!important}.media-row-actions .danger:hover,.media-row-actions .danger:focus-visible{background:#c92f40!important;border-color:#ff8993!important}.media-manager-actions{display:none!important}
   .artwork-panel-header,.artwork-placement-header{cursor:grab;touch-action:none}.artwork-placement-header{display:flex!important;align-items:center;justify-content:space-between}.artwork-placement-header #closePlacementPanel{width:36px!important;height:36px!important;margin:0!important;border-radius:10px!important}
   .director-header.ui-drag-handle{position:sticky;top:-14px;z-index:4;margin:-14px -14px 10px;padding:14px;background:rgba(20,14,7,.99);cursor:grab;touch-action:none}
   @media (min-width:761px) and (max-width:1080px){#uiWorkspaceBar{grid-template-columns:auto minmax(330px,1fr) auto}.ui-room-summary{position:absolute;top:62px;left:0;border:1px solid rgba(120,150,175,.46);border-radius:10px;background:rgba(7,13,21,.92)}#uiContextRail{top:max(132px,calc(env(safe-area-inset-top) + 122px))}}

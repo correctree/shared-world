@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.0 EDIT HISTORY LOADED]");
+console.log("[PROTOTYPE 0.25.0.1 EDIT HISTORY STABILITY FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -990,6 +990,10 @@ function readLocalWorldBackup():any|null {
 }
 function requestLocalWorldSave(reason:string){
   if(!activeRoom||!environmentCanEdit)return;
+  // Several authoritative acknowledgements can describe the same mutation.
+  // Keep one export request in flight so a duplicate result cannot fall
+  // through to the user-facing JSON download path.
+  if(pendingLocalWorldSave){pendingLocalWorldSaveReason=reason;return;}
   pendingLocalWorldSave=true;pendingLocalWorldSaveReason=reason;
   activeRoom.send("world:export",{});
 }
@@ -1069,7 +1073,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.1</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -3982,8 +3986,11 @@ async function enterWorld() {
 
       $(media).onChange(() => {
         console.log("[SHARED RECEIVE CHANGE]", mediaId);
+        const confirmedVisible=media?.visible!==false;
+        if(pendingMediaVisibility.get(mediaId)===confirmedVisible)pendingMediaVisibility.delete(mediaId);
         updateSharedSpritePlaceholder(mediaId, media);
         if (String(media?.type || "") === "audio") applyLiveAudioConfig(mediaId,String(media?.assetRef||""));
+        refreshMediaManagerUI();
       });
     });
 
@@ -4005,8 +4012,11 @@ async function enterWorld() {
     });
     room.onMessage("media:visibility",(payload:any)=>{
       const id=String(payload?.id||"");const item=managedPlacedMedia.get(id);
-      pendingMediaVisibility.delete(id);
-      if(item)item.entity.enabled=payload?.visible!==false;
+      const visible=payload?.visible!==false;
+      const authoritative:any=getAuthoritativeMediaMap()?.get?.(id);
+      if(authoritative&&(authoritative.visible!==false)===visible)pendingMediaVisibility.delete(id);
+      else pendingMediaVisibility.set(id,visible);
+      if(item)item.entity.enabled=visible;
       refreshMediaManagerUI();
     });
     room.onMessage("media:visibility:result",(payload:any)=>{
@@ -6989,7 +6999,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.25.0</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
+      <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>0.25.0.1</span><span id="room-persistence-status" data-state="pending">CHECKING STORAGE…</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
       <button type="button" data-workspace="create">CREATE<span>作品</span></button>

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.3 DIRECTOR REMOTE LOADED]");
+console.log("[PROTOTYPE 0.25.3.1 DIRECTOR REMOTE STABILITY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1076,7 +1076,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3.1</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -3844,6 +3844,7 @@ async function enterWorld() {
       sharedStateDiagnostic.lastError=`ROOM DROP · ${code} · ${reason||"network"}`;
       refreshSharedStateDiagnosticPanel();
       status.textContent="通信を再接続しています…";
+      setDirectorRemoteConnectionState("recovering",`CONNECTION LOST · RECONNECTING (${code})`);
       console.warn("[ROOM DROP / SDK AUTO-RECONNECT]",code,reason,room.sessionId);
     });
     room.onReconnect(()=>{
@@ -3852,6 +3853,8 @@ async function enterWorld() {
       sharedStateDiagnostic.connection="OPEN";sharedStateDiagnostic.lastError="-";
       refreshSharedStateDiagnosticPanel();
       status.textContent="接続を回復しました";
+      setDirectorRemoteConnectionState("live","CONNECTION RESTORED · SYNCHRONIZING");
+      requestDirectorData(true);refreshDirectorRemote();void requestDirectorRemoteWakeLock();
       console.log("[ROOM RECONNECTED]",room.sessionId);
     });
     room.onLeave((code:number,reason:string)=>{
@@ -3866,6 +3869,7 @@ async function enterWorld() {
       sharedStateDiagnostic.lastError=`ROOM LEFT · ${code} · ${reason||"closed"}`;
       refreshSharedStateDiagnosticPanel();
       status.textContent="接続が終了しました。再入室してください。";
+      setDirectorRemoteConnectionState("offline",`ROOM CONNECTION CLOSED (${code})`);
       enterButton.disabled=false;
       enterSelectedRoomButton.textContent="ENTER ROOM";void preflightRoomEntry(roomInput.value);
       lobby.classList.remove("hidden");
@@ -3874,6 +3878,7 @@ async function enterWorld() {
       if(room!==activeRoom)return;
       sharedStateDiagnostic.lastError=`ROOM ERROR · ${code} · ${message}`;
       refreshSharedStateDiagnosticPanel();
+      setDirectorRemoteConnectionState("error",`ROOM ERROR · ${code}`);
       console.error("[ROOM ERROR]",code,message);
     });
     room.send("room:ping",{at:Date.now()});
@@ -4126,6 +4131,7 @@ async function enterWorld() {
     });
     room.onMessage("cue:result",(payload:any)=>{
       if(room!==activeRoom)return;
+      if(payload?.operation==="fire")finishDirectorRemoteAction("cue",payload?.ok===true,`${payload?.ok?"FIRED":"FAILED"} · ${String(payload?.name||payload?.reason||"CUE")}`);
       if(payload?.operation==="save")clearPendingCueSave();
       if(!payload?.ok){cueStatus.textContent=`CUE ${String(payload?.operation||"")} failed: ${String(payload?.reason||"unknown")}`;return;}
       cueStatus.textContent=payload.operation==="fire"?`FIRED · ${String(payload.name||"CUE")} · ${Number(payload.count)||0} objects`:
@@ -4144,6 +4150,7 @@ async function enterWorld() {
       if(room!==activeRoom)return;cueStatus.textContent=`LIVE CUE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0}`;
       directorActionStatus.textContent=`LIVE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0} OBJECTS`;
       directorRemoteActivity.textContent=`LIVE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0} OBJECTS`;
+      finishDirectorRemoteAction("cue",true,`LIVE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0} OBJECTS`);
     });
     room.onMessage("cue:timeline:state",(payload:any)=>{
       if(room!==activeRoom)return;const timelineState=String(payload?.status||"stopped");
@@ -4151,22 +4158,25 @@ async function enterWorld() {
       cueTimelinePositionMs=Math.max(0,Number(payload?.positionMs)||0);cueTimelineDurationMs=Math.max(1000,Number(payload?.durationMs)||5000);
       cueTimelineConfiguredDurationMs=Math.max(0,Number(payload?.configuredDurationMs)||0);cueTimelineLengthMode.value=cueTimelineConfiguredDurationMs>0?"manual":"auto";
       cueTimelineReceivedAt=Date.now();refreshCueTimeline();
+      finishDirectorRemoteAction("timeline",true,`TIMELINE · ${cueTimelineStatus.toUpperCase()}`);
     });
     room.onMessage("cue:timeline:result",(payload:any)=>{
-      if(room!==activeRoom||payload?.ok)return;cueStatus.textContent=`TIMELINE ${String(payload?.operation||"").toUpperCase()} FAILED · ${String(payload?.reason||"unknown")}`;
+      if(room!==activeRoom)return;
+      if(!payload?.ok){cueStatus.textContent=`TIMELINE ${String(payload?.operation||"").toUpperCase()} FAILED · ${String(payload?.reason||"unknown")}`;finishDirectorRemoteAction("timeline",false,`TIMELINE FAILED · ${String(payload?.reason||"unknown")}`);}
     });
     room.onMessage("director:state",(payload:any)=>{
       if(room!==activeRoom)return;directorCanDirect=payload?.canDirect===true;directorCanManage=payload?.canManage===true;
       directorParticipants=Array.isArray(payload?.participants)?payload.participants.map((person:any)=>({
         sessionId:String(person.sessionId||""),name:String(person.name||"Guest"),clientId:String(person.clientId||""),
         isOwner:person.isOwner===true,isDirector:person.isDirector===true
-      })):[];refreshDirectorPanel();refreshCueUI();refreshAccessAwareUI();
+      })):[];if(directorRemoteConnectionState!=="live")setDirectorRemoteConnectionState("live","ROOM DATA SYNCHRONIZED");refreshDirectorPanel();refreshCueUI();refreshAccessAwareUI();
     });
     room.onMessage("director:result",(payload:any)=>{
       if(room!==activeRoom)return;directorActionStatus.textContent=payload?.ok?"DIRECTOR ACCESS UPDATED":`DIRECTOR UPDATE FAILED · ${String(payload?.reason||"unknown")}`;
     });
     room.onMessage("scene:result",(payload:any)=>{
       if(room!==activeRoom)return;
+      if(payload?.action==="recall")finishDirectorRemoteAction("scene",payload?.ok===true,`${payload?.ok?"RECALLED":"FAILED"} · ${String(payload?.name||payload?.reason||"SCENE")}`);
       if(payload?.action==="save")clearPendingSceneSave();
       if(!payload?.ok){sceneStatus.textContent=`Scene ${String(payload?.action||"")} failed: ${String(payload?.reason||"unknown")}`;return;}
       sceneStatus.textContent=payload.action==="recall"?`Recalled ${String(payload.name||"scene")} · ${Number(payload.count)||0} objects`:
@@ -4184,6 +4194,7 @@ async function enterWorld() {
       if(room!==activeRoom)return;sceneStatus.textContent=`LIVE SCENE · ${String(payload?.name||"Scene")}`;
       directorActionStatus.textContent=`LIVE SCENE · ${String(payload?.name||"Scene")} · ${Number(payload?.count)||0} OBJECTS`;
       directorRemoteActivity.textContent=`LIVE SCENE · ${String(payload?.name||"Scene")} · ${Number(payload?.count)||0} OBJECTS`;
+      finishDirectorRemoteAction("scene",true,`LIVE SCENE · ${String(payload?.name||"Scene")} · ${Number(payload?.count)||0} OBJECTS`);
       room.send("media:snapshot:request",{});
     });
 
@@ -4451,7 +4462,7 @@ async function enterWorld() {
     mobileActionDock.classList.add("room-active");
     uiFoundationRoot.classList.add("room-active");
     viewControlDock.classList.add("room-active");
-    if(directorRemoteMode){directorRemoteRoot.classList.remove("hidden");directorRemoteActivity.textContent="ROOM CONNECTED · CHECKING DIRECTOR ACCESS";requestDirectorData(true);void requestDirectorRemoteWakeLock();refreshDirectorRemote();}
+    if(directorRemoteMode){directorRemoteRoot.classList.remove("hidden");setDirectorRemoteConnectionState("live","ROOM CONNECTED · CHECKING DIRECTOR ACCESS");requestDirectorData(true);void requestDirectorRemoteWakeLock();refreshDirectorRemote();}
     hud.querySelector<HTMLElement>(".controls")!.textContent=
       "WASD：移動 / SPACE：ジャンプ・上昇 / F：飛行 / SHIFT：下降";
   } catch (error) {
@@ -5734,7 +5745,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3.1</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -5748,6 +5759,7 @@ const directorRemoteStyle=document.createElement("style");directorRemoteStyle.te
   #directorRemoteRoot header{margin:0 auto 12px;max-width:920px}#directorRemoteRoot header div{display:grid;gap:2px}#directorRemoteRoot header strong{font-size:17px;letter-spacing:.08em}#directorRemoteRoot header small,.remote-section-head span,.remote-current small{color:#84a4ba;font-size:10px;letter-spacing:.08em}
   #directorRemoteRoot button{min-height:48px;border:1px solid #49647a;border-radius:11px;background:#182736;color:#f5fbff;font-weight:900;letter-spacing:.04em;touch-action:manipulation}#directorRemoteRoot button:disabled{opacity:.34}
   .remote-room-strip,.remote-now,.remote-bank,#directorRemoteRoot footer{max-width:920px;margin:0 auto 12px;box-sizing:border-box;border:1px solid rgba(112,151,180,.45);border-radius:14px;background:rgba(11,21,31,.88);padding:12px}.remote-room-strip span{font-size:10px;color:#82a6bd}.remote-room-strip span:first-child{color:#68deb0}.remote-now{padding:16px}.remote-timeline-head time{font:900 14px ui-monospace,monospace;color:#ffca73}.remote-timeline-head span{padding:6px 9px;border-radius:8px;background:#27303a}.remote-timeline-head span[data-state="playing"]{color:#65e4b2;background:#173527}.remote-timeline-head span[data-state="paused"]{color:#ffd17d;background:#382d18}
+  #directorRemoteConnection[data-connection="recovering"]{color:#ffd17d;animation:remotePulse 1s infinite}#directorRemoteConnection[data-connection="offline"],#directorRemoteConnection[data-connection="error"]{color:#ff8585}@keyframes remotePulse{50%{opacity:.45}}
   .remote-progress{height:8px;margin:15px 0;border-radius:8px;background:#263542;overflow:hidden}.remote-progress i{display:block;width:0;height:100%;background:#ffb54a;transition:width .08s linear}.remote-current>div{display:grid;gap:4px;width:48%}.remote-current>div:last-child{text-align:right}.remote-current strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
   .remote-transport{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:8px;max-width:920px;margin:0 auto 12px}.remote-transport button{min-height:62px;font-size:15px}.remote-transport button:first-child{border-color:#388c6d;background:#123f31}.remote-transport button:last-child{border-color:#8a5353;background:#3d2023}
   .remote-section-head{margin-bottom:10px}.remote-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.remote-grid button{text-align:left;padding:10px}.remote-grid button small{display:block;margin-top:4px;color:#88a6ba;font-size:9px}#directorRemoteRoot footer{font-size:10px;color:#8fb0c5}#directorRemoteRoot footer button{min-height:38px;padding:5px 12px}
@@ -6544,6 +6556,26 @@ const directorRemotePause=directorRemoteRoot.querySelector<HTMLButtonElement>("#
 const directorRemoteStop=directorRemoteRoot.querySelector<HTMLButtonElement>("#directorRemoteStop")!;
 let directorRemoteWakeLock:any=null;
 let directorRemoteCueSignature="",directorRemoteSceneSignature="";
+type DirectorRemoteConnectionState="connecting"|"live"|"recovering"|"offline"|"error";
+let directorRemoteConnectionState:DirectorRemoteConnectionState="connecting";
+const directorRemotePending=new Map<string,number>();
+function setDirectorRemoteConnectionState(state:DirectorRemoteConnectionState,message=""){
+  if(!directorRemoteMode)return;directorRemoteConnectionState=state;
+  if(message)directorRemoteActivity.textContent=message;refreshDirectorRemote();
+}
+function finishDirectorRemoteAction(kind:string,ok:boolean,message:string){
+  if(!directorRemoteMode)return;const cooldownUntil=Date.now()+700;directorRemotePending.set(kind,cooldownUntil);directorRemoteActivity.textContent=message;
+  directorRemoteActivity.dataset.result=ok?"ok":"error";refreshDirectorRemote();
+  window.setTimeout(()=>{if((directorRemotePending.get(kind)||0)<=Date.now()){directorRemotePending.delete(kind);refreshDirectorRemote();}},720);
+}
+function sendDirectorRemoteAction(kind:string,label:string,send:()=>void){
+  if(!activeRoom||!directorCanDirect||directorRemoteConnectionState!=="live")return;
+  const now=Date.now(),until=directorRemotePending.get(kind)||0;
+  if(now<until){directorRemoteActivity.textContent=`WAITING FOR ${kind.toUpperCase()} RESULT`;return;}
+  directorRemotePending.set(kind,now+2500);directorRemoteActivity.textContent=`SENDING · ${label}`;directorRemoteActivity.dataset.result="pending";
+  send();void requestDirectorRemoteWakeLock();refreshDirectorRemote();
+  window.setTimeout(()=>{if((directorRemotePending.get(kind)||0)<=Date.now()){directorRemotePending.delete(kind);directorRemoteActivity.textContent=`NO RESULT YET · REFRESH BEFORE RETRYING ${label}`;refreshDirectorRemote();}},2600);
+}
 async function requestDirectorRemoteWakeLock(){
   if(!directorRemoteMode||document.visibilityState!=="visible"||directorRemoteWakeLock)return;
   try{directorRemoteWakeLock=await (navigator as any).wakeLock?.request("screen");directorRemoteWakeLock?.addEventListener("release",()=>{directorRemoteWakeLock=null;});}catch{/* Wake Lock is optional. */}
@@ -6552,31 +6584,34 @@ function refreshDirectorRemote(){
   if(!directorRemoteMode)return;
   const position=currentCueTimelinePosition(),ordered=[...cueSummaries].sort((a,b)=>a.startMs-b.startMs||a.updatedAt-b.updatedAt);
   const current=[...ordered].reverse().find(cue=>cue.startMs<=position),next=ordered.find(cue=>cue.startMs>position);
-  directorRemoteConnection.textContent=activeRoom?"● LIVE":"○ OFFLINE";
+  directorRemoteConnection.textContent=directorRemoteConnectionState==="live"?"● LIVE":directorRemoteConnectionState==="recovering"?"◌ RECONNECTING":directorRemoteConnectionState==="error"?"× ERROR":directorRemoteConnectionState==="offline"?"○ OFFLINE":"◌ CONNECTING";
+  directorRemoteConnection.dataset.connection=directorRemoteConnectionState;
   directorRemoteRoom.textContent=`ROOM ${roomInput.value.trim().toUpperCase()||"—"}`;
   directorRemoteRole.textContent=directorCanManage?"OWNER · DIRECTOR":directorCanDirect?"DIRECTOR":"NO DIRECTOR ACCESS";
   directorRemoteState.textContent=cueTimelineStatus.toUpperCase();directorRemoteState.dataset.state=cueTimelineStatus;
   directorRemoteClock.textContent=`${formatCueTime(position)} / ${formatCueTime(cueTimelineDurationMs)}`;
   directorRemoteProgress.style.width=`${Math.min(100,position/Math.max(1,cueTimelineDurationMs)*100)}%`;
   directorRemoteCurrent.textContent=current?.name||"—";directorRemoteNext.textContent=next?.name||"END";
-  const enabled=!!activeRoom&&directorCanDirect;
-  directorRemotePlay.disabled=!enabled;directorRemotePause.disabled=!enabled||cueTimelineStatus!=="playing";directorRemoteStop.disabled=!enabled||cueTimelineStatus==="stopped";
+  const enabled=!!activeRoom&&directorCanDirect&&directorRemoteConnectionState==="live",timelinePending=directorRemotePending.has("timeline");
+  directorRemotePlay.disabled=!enabled||timelinePending;directorRemotePause.disabled=!enabled||timelinePending||cueTimelineStatus!=="playing";directorRemoteStop.disabled=!enabled||timelinePending||cueTimelineStatus==="stopped";
   const cueSignature=`${enabled}|${ordered.map(cue=>`${cue.id}:${cue.name}:${cue.startMs}`).join("|")}`;
   if(cueSignature!==directorRemoteCueSignature){directorRemoteCueSignature=cueSignature;directorRemoteCues.replaceChildren();
     if(!ordered.length)directorRemoteCues.innerHTML='<div>NO CUES</div>';
-    for(const cue of ordered){const button=document.createElement("button");button.type="button";button.disabled=!enabled;button.innerHTML=`<span></span><small>${formatCueTime(cue.startMs)} · ${cue.targetType.toUpperCase()}</small>`;button.querySelector("span")!.textContent=cue.name;button.addEventListener("click",()=>{if(activeRoom&&directorCanDirect){activeRoom.send("cue:fire",{id:cue.id});directorRemoteActivity.textContent=`FIRING · ${cue.name}`;void requestDirectorRemoteWakeLock();}});directorRemoteCues.appendChild(button);}}
+    for(const cue of ordered){const button=document.createElement("button");button.type="button";button.disabled=!enabled;button.innerHTML=`<span></span><small>${formatCueTime(cue.startMs)} · ${cue.targetType.toUpperCase()}</small>`;button.querySelector("span")!.textContent=cue.name;button.addEventListener("click",()=>sendDirectorRemoteAction("cue",cue.name,()=>activeRoom!.send("cue:fire",{id:cue.id})));directorRemoteCues.appendChild(button);}}
   const sceneSignature=`${enabled}|${sceneSummaries.map(scene=>`${scene.id}:${scene.name}`).join("|")}`;
   if(sceneSignature!==directorRemoteSceneSignature){directorRemoteSceneSignature=sceneSignature;directorRemoteScenes.replaceChildren();
     if(!sceneSummaries.length)directorRemoteScenes.innerHTML='<div>NO SCENES</div>';
-    for(const scene of sceneSummaries){const button=document.createElement("button");button.type="button";button.disabled=!enabled;button.innerHTML='<span></span><small>RECALL SCENE</small>';button.querySelector("span")!.textContent=scene.name;button.addEventListener("click",()=>{if(activeRoom&&directorCanDirect){activeRoom.send("scene:recall",{id:scene.id});directorRemoteActivity.textContent=`RECALLING · ${scene.name}`;void requestDirectorRemoteWakeLock();}});directorRemoteScenes.appendChild(button);}}
+    for(const scene of sceneSummaries){const button=document.createElement("button");button.type="button";button.disabled=!enabled;button.innerHTML='<span></span><small>RECALL SCENE</small>';button.querySelector("span")!.textContent=scene.name;button.addEventListener("click",()=>sendDirectorRemoteAction("scene",scene.name,()=>activeRoom!.send("scene:recall",{id:scene.id})));directorRemoteScenes.appendChild(button);}}
   if(!enabled)directorRemoteActivity.textContent=activeRoom?"DIRECTOR ACCESS REQUIRED":"WAITING FOR ROOM CONNECTION";
 }
-directorRemotePlay.addEventListener("click",()=>{if(activeRoom&&directorCanDirect){activeRoom.send("cue:timeline:play",{positionMs:currentCueTimelinePosition()});directorRemoteActivity.textContent="TIMELINE PLAY REQUESTED";void requestDirectorRemoteWakeLock();}});
-directorRemotePause.addEventListener("click",()=>{if(activeRoom&&directorCanDirect){activeRoom.send("cue:timeline:pause",{});directorRemoteActivity.textContent="TIMELINE PAUSE REQUESTED";}});
-directorRemoteStop.addEventListener("click",()=>{if(activeRoom&&directorCanDirect&&window.confirm("Stop the live timeline and return to the beginning?")){activeRoom.send("cue:timeline:stop",{});directorRemoteActivity.textContent="TIMELINE STOP REQUESTED";}});
+directorRemotePlay.addEventListener("click",()=>sendDirectorRemoteAction("timeline","TIMELINE PLAY",()=>activeRoom!.send("cue:timeline:play",{positionMs:currentCueTimelinePosition()})));
+directorRemotePause.addEventListener("click",()=>sendDirectorRemoteAction("timeline","TIMELINE PAUSE",()=>activeRoom!.send("cue:timeline:pause",{})));
+directorRemoteStop.addEventListener("click",()=>{if(window.confirm("Stop the live timeline and return to the beginning?"))sendDirectorRemoteAction("timeline","TIMELINE STOP",()=>activeRoom!.send("cue:timeline:stop",{}));});
 directorRemoteRoot.querySelector<HTMLButtonElement>("#directorRemoteRefresh")!.addEventListener("click",()=>{requestDirectorData(true);directorRemoteActivity.textContent="REFRESHING ROOM DATA";});
 directorRemoteRoot.querySelector<HTMLButtonElement>("#directorRemoteExit")!.addEventListener("click",()=>{const url=new URL(window.location.href);url.searchParams.delete("directorRemote");window.location.href=url.toString();});
-document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")void requestDirectorRemoteWakeLock();});
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&directorRemoteMode){void requestDirectorRemoteWakeLock();if(activeRoom){directorRemoteActivity.textContent="RESUMED · SYNCHRONIZING ROOM DATA";requestDirectorData(true);activeRoom.send("room:ping",{at:Date.now()});window.setTimeout(()=>refreshDirectorRemote(),250);}}});
+window.addEventListener("online",()=>{if(directorRemoteMode){setDirectorRemoteConnectionState(activeRoom?"recovering":"offline","NETWORK ONLINE · WAITING FOR ROOM");requestDirectorData(true);}});
+window.addEventListener("offline",()=>setDirectorRemoteConnectionState("offline","DEVICE IS OFFLINE"));
 type PendingSceneSave={requestId:string;id:string;name:string};
 let pendingSceneSave:PendingSceneSave|null=null;
 let sceneSaveRetryTimer:number|null=null;
@@ -7308,7 +7343,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3.1</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

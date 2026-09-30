@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.0.4 INLINE ARTWORK INSPECTOR LOADED]");
+console.log("[PROTOTYPE 0.25.0.5 WORLD SETTINGS HIERARCHY LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1073,7 +1073,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.4</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.5</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -7034,10 +7034,54 @@ audioInspectorSection.id="audioArtworkInspectorSection";
 selectedArtworkInspector.append(metadataInspectorSection,behaviorInspectorSection,audioInspectorSection,mediaManagerActions);
 mediaManagerPanel.append(mediaFilterBar,mediaManagerList);
 const worldWorkspaceHeader=document.createElement("div");worldWorkspaceHeader.className="world-workspace-header ui-drag-handle";
-worldWorkspaceHeader.innerHTML=`<div><strong>WORLD SETTINGS</strong><span>ENVIRONMENT · SCENES · IMPORT / EXPORT</span></div><button type="button" aria-label="Close World Settings">×</button>`;
+worldWorkspaceHeader.innerHTML=`<div><strong>WORLD SETTINGS</strong><span>ENVIRONMENT · SCENES · ROOM DATA</span></div><button type="button" aria-label="Close World Settings">×</button>`;
 const worldWorkspaceBody=document.createElement("div");worldWorkspaceBody.className="world-workspace-body";
 const sceneManagerPanel=mediaManagerPanel.querySelector<HTMLElement>(".scene-manager")!;
-worldWorkspaceBody.append(worldManifestControls,sceneManagerPanel,environmentEditor);worldWorkspacePanel.append(worldWorkspaceHeader,worldWorkspaceBody);document.body.appendChild(worldWorkspacePanel);
+function createWorldSection(label:string,description:string,node:HTMLElement,open=false){
+  const details=document.createElement("details");details.className="world-settings-section";details.open=open;
+  const summary=document.createElement("summary");summary.innerHTML=`<span>${label}</span><small>${description}</small>`;
+  const body=document.createElement("div");body.className="world-settings-section-body";body.appendChild(node);
+  details.append(summary,body);return details;
+}
+function createEnvironmentGroup(label:string,description:string,nodes:HTMLElement[],open=false){
+  const details=document.createElement("details");details.className="environment-settings-group";details.open=open;
+  const summary=document.createElement("summary");summary.innerHTML=`<span>${label}</span><small>${description}</small>`;
+  const body=document.createElement("div");body.className="environment-settings-group-body";body.append(...nodes);
+  details.append(summary,body);return details;
+}
+
+// Keep every proven input and listener. Only move the existing controls into
+// compact, semantic groups so the long environment editor is easier to scan.
+const environmentTitle=environmentEditor.querySelector<HTMLElement>(":scope > strong");if(environmentTitle)environmentTitle.remove();
+const environmentChildren=Array.from(environmentEditor.children) as HTMLElement[];
+const childWith=(selector:string)=>environmentChildren.findIndex(node=>node.matches(selector)||!!node.querySelector(selector));
+const sliceThrough=(start:string,end:string)=>{
+  const first=childWith(start),last=childWith(end);return first>=0&&last>=first?environmentChildren.slice(first,last+1):[];
+};
+const permissionStatus=environmentEditor.querySelector<HTMLElement>("[data-env-owner-status]")!;
+const lightingGroup=createEnvironmentGroup("LIGHT & SKY","TIME · COLOR · PANORAMA",sliceThrough('[data-env="environmentPreset"]','[data-panorama-file]'),true);
+const groundGroup=createEnvironmentGroup("GROUND","SIZE · MATERIAL · IMAGE",sliceThrough('[data-env="groundSize"]','[data-env="groundRotation"]'));
+const fogGroup=createEnvironmentGroup("FOG / ATMOSPHERE","DISTANCE · DENSITY",sliceThrough('[data-env="fogEnabled"]','[data-fog-demo]'));
+const particleGroup=createEnvironmentGroup("PARTICLES","SPARKS · SMOKE · CUSTOM",sliceThrough('[data-env="particles"]','[data-panorama-status]'));
+const applyEnvironmentButton=environmentEditor.querySelector<HTMLButtonElement>("[data-env-apply]")!;
+const environmentFooter=document.createElement("div");environmentFooter.className="environment-apply-footer";
+environmentFooter.append(applyEnvironmentButton,...Array.from(environmentEditor.children).filter(node=>node!==permissionStatus&&node.tagName!=="DETAILS"));
+environmentEditor.replaceChildren(permissionStatus,lightingGroup,groundGroup,fogGroup,particleGroup,environmentFooter);
+
+const sceneTitle=sceneManagerPanel.querySelector<HTMLElement>(".behavior-editor-title");if(sceneTitle)sceneTitle.remove();
+
+// Separate everyday recovery, portable snapshots and legacy interchange while
+// retaining the original buttons, hidden inputs, status elements and listeners.
+worldManifestControls.removeAttribute("style");worldManifestControls.className="room-data-controls";
+const recoveryGroup=createEnvironmentGroup("SAVE & RECOVERY","CHECKPOINT · UNDO",[saveNowButton,restoreCheckpointButton,undoRestoreButton,roomRecoveryStatus],true);
+const snapshotGroup=createEnvironmentGroup("ROOM SNAPSHOT","PORTABLE ZIP",[worldPackageExportButton,worldAssetRehydrateButton,worldAssetRehydrateInput]);
+const advancedGroup=createEnvironmentGroup("ADVANCED / LEGACY","JSON · MERGE ZIP",[worldExportButton,worldImportButton,worldImportInput,worldPackageImportButton,worldPackageInput,worldManifestStatus]);
+worldManifestControls.replaceChildren(recoveryGroup,snapshotGroup,advancedGroup);
+
+const environmentSection=createWorldSection("1 · WORLD ENVIRONMENT","LIGHT · GROUND · FOG · PARTICLES",environmentEditor,true);
+const scenesSection=createWorldSection("2 · SCENES","SAVE · RECALL · LOCAL BACKUP",sceneManagerPanel);
+const roomDataSection=createWorldSection("3 · ROOM DATA & BACKUP","SAVE · RESTORE · TRANSFER",worldManifestControls);
+worldWorkspaceBody.append(environmentSection,scenesSection,roomDataSection);worldWorkspacePanel.append(worldWorkspaceHeader,worldWorkspaceBody);document.body.appendChild(worldWorkspacePanel);
 worldWorkspaceHeader.querySelector("button")!.addEventListener("click",()=>worldWorkspacePanel.classList.add("hidden"));
 
 // =========================================================
@@ -7052,7 +7096,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.0.4</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.0.5</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
@@ -7177,6 +7221,10 @@ function openMediaManagerAt(target?:HTMLElement){
 function openWorldWorkspaceAt(target?:HTMLElement){
   worldWorkspacePanel.classList.remove("hidden");
   bringFloatingPanelToFront(worldWorkspacePanel);
+  if(target){
+    let ancestor:HTMLElement|null=target;
+    while(ancestor&&ancestor!==worldWorkspacePanel){if(ancestor instanceof HTMLDetailsElement)ancestor.open=true;ancestor=ancestor.parentElement;}
+  }
   requestAnimationFrame(()=>target?.scrollIntoView({block:"start",behavior:"smooth"}));
 }
 function runFoundationAction(action:string){
@@ -7258,7 +7306,8 @@ uiFoundationStyle.textContent=`
   #cueFloatingPanel.hidden{display:none!important}
   .cue-floating-header{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(20,14,7,.99);border-bottom:1px solid rgba(255,181,74,.28);cursor:grab;touch-action:none}.cue-floating-header:active,.director-header:active{cursor:grabbing}.cue-floating-header>div{display:flex;flex-direction:column}.cue-floating-header strong{font-size:12px;letter-spacing:.08em}.cue-floating-header span{margin-top:3px;color:#d6b27e;font-size:8px;letter-spacing:.08em}.cue-floating-header button{width:36px!important;height:36px!important;border-radius:10px!important}
   #cueFloatingPanel .cue-manager{margin:0!important}
-  #worldWorkspacePanel{position:fixed;z-index:81;width:min(390px,calc(100vw - 32px));max-height:calc(100vh - 100px);overflow:auto;box-sizing:border-box;padding:0 14px 14px;border:1px solid #54718c;border-radius:16px;background:rgba(9,13,19,.97);color:#fff;backdrop-filter:blur(16px);font-family:system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.3)}#worldWorkspacePanel.hidden{display:none!important}.world-workspace-header{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(9,13,19,.99);border-bottom:1px solid rgba(84,113,140,.55);cursor:grab;touch-action:none}.world-workspace-header>div{display:flex;flex-direction:column}.world-workspace-header strong{font-size:12px;letter-spacing:.08em}.world-workspace-header span{margin-top:3px;color:#8fa8bb;font-size:8px}.world-workspace-header button{width:36px!important;height:36px!important;border-radius:10px!important}.world-workspace-body{display:block}
+  #worldWorkspacePanel{position:fixed;z-index:81;width:min(390px,calc(100vw - 32px));max-height:calc(100vh - 100px);overflow:auto;box-sizing:border-box;padding:0 14px 14px;border:1px solid #54718c;border-radius:16px;background:rgba(9,13,19,.97);color:#fff;backdrop-filter:blur(16px);font-family:system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.3)}#worldWorkspacePanel.hidden{display:none!important}.world-workspace-header{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;margin:0 -14px 10px;padding:12px 14px;background:rgba(9,13,19,.99);border-bottom:1px solid rgba(84,113,140,.55);cursor:grab;touch-action:none}.world-workspace-header>div{display:flex;flex-direction:column}.world-workspace-header strong{font-size:12px;letter-spacing:.08em}.world-workspace-header span{margin-top:3px;color:#8fa8bb;font-size:8px}.world-workspace-header button{width:36px!important;height:36px!important;border-radius:10px!important}.world-workspace-body{display:grid;gap:10px}
+  .world-settings-section{border:1px solid #3c5167;border-radius:13px;background:#0c131c;overflow:hidden}.world-settings-section>summary,.environment-settings-group>summary{cursor:pointer;list-style:none;position:relative;display:grid;gap:3px;padding:13px 38px 13px 13px}.world-settings-section>summary::-webkit-details-marker,.environment-settings-group>summary::-webkit-details-marker{display:none}.world-settings-section>summary::after,.environment-settings-group>summary::after{content:"＋";position:absolute;right:13px;top:12px;color:#6ed9ff;font-size:17px}.world-settings-section[open]>summary::after,.environment-settings-group[open]>summary::after{content:"−"}.world-settings-section>summary span{font-size:11px;font-weight:900;letter-spacing:.08em}.world-settings-section>summary small,.environment-settings-group>summary small{color:#8fa8bb;font-size:8px;letter-spacing:.06em}.world-settings-section-body{padding:0 10px 10px}.world-settings-section #environmentEditor,.world-settings-section .scene-manager{margin:0!important;border:0!important;padding:0!important;background:transparent!important}.environment-settings-group{margin:8px 0;border:1px solid #34485b;border-radius:10px;background:#101923;overflow:hidden}.environment-settings-group>summary{padding:11px 36px 11px 11px}.environment-settings-group>summary::after{top:9px}.environment-settings-group>summary span{font-size:10px;font-weight:900;letter-spacing:.08em}.environment-settings-group-body{padding:0 11px 11px}.environment-apply-footer{position:sticky;bottom:-10px;z-index:3;margin:10px -10px -10px;padding:10px;background:rgba(9,13,19,.97);border-top:1px solid rgba(84,113,140,.55)}.environment-apply-footer [data-env-apply]{width:100%!important;min-height:42px}.room-data-controls{display:grid;gap:8px;margin:0}.room-data-controls button{width:100%!important;margin:3px 0}.room-data-controls .environment-settings-group-body{display:grid;gap:4px}.room-data-controls [hidden]{display:none!important}
   .media-manager-row{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:4px;align-items:center;padding:4px;border:1px solid #303b48;border-radius:11px;background:#0d141e;transition:border-color .14s,background .14s}.media-manager-row.selected{border-color:#2f8cff;outline:2px solid #2f8cff;background:#172334}.media-manager-row.reordering{z-index:3;border-color:#52d7ff;background:#132838;box-shadow:0 8px 24px rgba(0,0,0,.35)}.media-manager-row .media-manager-item{width:100%!important;min-width:0!important;min-height:44px;border:0!important;background:transparent!important;text-align:left!important}.media-drag-handle{width:30px!important;min-width:30px!important;height:38px!important;padding:0!important;border:0!important;background:transparent!important;color:#8fa8bb!important;font-size:20px!important;cursor:grab;touch-action:none}.media-drag-handle:active{cursor:grabbing}.media-drag-handle:disabled{opacity:.25;cursor:not-allowed}.media-row-actions{display:flex;gap:3px;align-items:center}.media-row-actions button{display:grid!important;place-items:center;width:34px!important;min-width:34px!important;height:34px!important;min-height:34px!important;padding:0!important;border-radius:8px!important;font-size:8px!important}.media-action-icon{font-size:15px;line-height:1}.media-action-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.media-row-actions .danger{border-color:#ff5968!important;background:#35151b!important;color:#fff!important}.media-row-actions .danger:hover,.media-row-actions .danger:focus-visible{background:#c92f40!important;border-color:#ff8993!important}.media-manager-actions{display:none!important}
   .artwork-panel-header,.artwork-placement-header{cursor:grab;touch-action:none}.artwork-placement-header{display:flex!important;align-items:center;justify-content:space-between}.artwork-placement-header #closePlacementPanel{width:36px!important;height:36px!important;margin:0!important;border-radius:10px!important}
   .director-header.ui-drag-handle{position:sticky;top:-14px;z-index:4;margin:-14px -14px 10px;padding:14px;background:rgba(20,14,7,.99);cursor:grab;touch-action:none}

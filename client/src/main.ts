@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.3.1 DIRECTOR REMOTE STABILITY LOADED]");
+console.log("[PROTOTYPE 0.25.3.2 TIMELINE CONTROL UNLOCK FIX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1076,7 +1076,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3.1</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3.2</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -5745,7 +5745,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3.1</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3.2</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -6564,9 +6564,10 @@ function setDirectorRemoteConnectionState(state:DirectorRemoteConnectionState,me
   if(message)directorRemoteActivity.textContent=message;refreshDirectorRemote();
 }
 function finishDirectorRemoteAction(kind:string,ok:boolean,message:string){
-  if(!directorRemoteMode)return;const cooldownUntil=Date.now()+700;directorRemotePending.set(kind,cooldownUntil);directorRemoteActivity.textContent=message;
+  if(!directorRemoteMode)return;const requested=(directorRemotePending.get(kind)||0)>Date.now();
+  const cooldownUntil=Date.now()+700;if(requested)directorRemotePending.set(kind,cooldownUntil);else directorRemotePending.delete(kind);directorRemoteActivity.textContent=message;
   directorRemoteActivity.dataset.result=ok?"ok":"error";refreshDirectorRemote();
-  window.setTimeout(()=>{if((directorRemotePending.get(kind)||0)<=Date.now()){directorRemotePending.delete(kind);refreshDirectorRemote();}},720);
+  if(requested)window.setTimeout(()=>{if((directorRemotePending.get(kind)||0)<=Date.now()){directorRemotePending.delete(kind);refreshDirectorRemote();}},720);
 }
 function sendDirectorRemoteAction(kind:string,label:string,send:()=>void){
   if(!activeRoom||!directorCanDirect||directorRemoteConnectionState!=="live")return;
@@ -6574,7 +6575,8 @@ function sendDirectorRemoteAction(kind:string,label:string,send:()=>void){
   if(now<until){directorRemoteActivity.textContent=`WAITING FOR ${kind.toUpperCase()} RESULT`;return;}
   directorRemotePending.set(kind,now+2500);directorRemoteActivity.textContent=`SENDING · ${label}`;directorRemoteActivity.dataset.result="pending";
   send();void requestDirectorRemoteWakeLock();refreshDirectorRemote();
-  window.setTimeout(()=>{if((directorRemotePending.get(kind)||0)<=Date.now()){directorRemotePending.delete(kind);directorRemoteActivity.textContent=`NO RESULT YET · REFRESH BEFORE RETRYING ${label}`;refreshDirectorRemote();}},2600);
+  if(kind==="timeline")window.setTimeout(()=>{if(activeRoom&&(directorRemotePending.get(kind)||0)>Date.now())activeRoom.send("cue:timeline:get",{});},1200);
+  window.setTimeout(()=>{if((directorRemotePending.get(kind)||0)<=Date.now()){directorRemotePending.delete(kind);if(kind==="timeline")activeRoom?.send("cue:timeline:get",{});directorRemoteActivity.textContent=`NO RESULT YET · CONTROL UNLOCKED · ${label}`;refreshDirectorRemote();}},2600);
 }
 async function requestDirectorRemoteWakeLock(){
   if(!directorRemoteMode||document.visibilityState!=="visible"||directorRemoteWakeLock)return;
@@ -6592,8 +6594,13 @@ function refreshDirectorRemote(){
   directorRemoteClock.textContent=`${formatCueTime(position)} / ${formatCueTime(cueTimelineDurationMs)}`;
   directorRemoteProgress.style.width=`${Math.min(100,position/Math.max(1,cueTimelineDurationMs)*100)}%`;
   directorRemoteCurrent.textContent=current?.name||"—";directorRemoteNext.textContent=next?.name||"END";
-  const enabled=!!activeRoom&&directorCanDirect&&directorRemoteConnectionState==="live",timelinePending=directorRemotePending.has("timeline");
-  directorRemotePlay.disabled=!enabled||timelinePending;directorRemotePause.disabled=!enabled||timelinePending||cueTimelineStatus!=="playing";directorRemoteStop.disabled=!enabled||timelinePending||cueTimelineStatus==="stopped";
+  const enabled=!!activeRoom&&directorCanDirect&&directorRemoteConnectionState==="live";
+  // Transport availability follows only the last authoritative timeline state.
+  // The pending map suppresses duplicate sends internally and must never leave
+  // PAUSE or STOP visually locked after PLAY succeeds.
+  directorRemotePlay.disabled=!enabled||cueTimelineStatus==="playing";
+  directorRemotePause.disabled=!enabled||cueTimelineStatus!=="playing";
+  directorRemoteStop.disabled=!enabled||cueTimelineStatus==="stopped";
   const cueSignature=`${enabled}|${ordered.map(cue=>`${cue.id}:${cue.name}:${cue.startMs}`).join("|")}`;
   if(cueSignature!==directorRemoteCueSignature){directorRemoteCueSignature=cueSignature;directorRemoteCues.replaceChildren();
     if(!ordered.length)directorRemoteCues.innerHTML='<div>NO CUES</div>';
@@ -7343,7 +7350,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3.1</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3.2</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

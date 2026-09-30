@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.3.6 ROOM ENTRY UX LOADED]");
+console.log("[PROTOTYPE 0.25.3.7 SAFARI WEBM ALPHA FALLBACK LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1077,7 +1077,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3.6</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3.7</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -2757,7 +2757,8 @@ function showSpriteRecoveryDiagnostic(mediaId: string, message: string) {
   spriteRecoveryDiagnostic.textContent = `SPRITE RECOVERY\n${mediaId}\n${message}`;
 }
 async function createSharedSpriteFromAsset(mediaId: string, media: any) {
-  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
+  if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId)) return true;
+  if (sharedMediaLoadingIds.has(mediaId)) return false;
   sharedMediaLoadingIds.add(mediaId);
   const loadGeneration = bumpSharedMediaGeneration(mediaId);
 
@@ -2766,7 +2767,7 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     sharedMediaLoadingIds.delete(mediaId);
     console.warn("[SPRITE RECOVERY NO ASSET REF]", mediaId);
     createSharedSpritePlaceholder(mediaId, media);
-    return;
+    return false;
   }
 
   try {
@@ -2961,13 +2962,15 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     console.log("[SPRITE RECOVERY 06 READY]", mediaId, { frameCount, fps });
     if (spriteRecoveryDiagnostic) { spriteRecoveryDiagnostic.remove(); spriteRecoveryDiagnostic = null; }
     sharedMediaLoadingIds.delete(mediaId);
+    return true;
   } catch (error) {
     const errorMessage = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     console.error("[SPRITE RECOVERY ERROR]", mediaId, error);
-    showSpriteRecoveryDiagnostic(mediaId, errorMessage);
-    if (isSharedMediaGenerationCurrent(mediaId, loadGeneration)) {
+    if (media?.suppressPlaceholder!==true) showSpriteRecoveryDiagnostic(mediaId, errorMessage);
+    if (media?.suppressPlaceholder!==true && isSharedMediaGenerationCurrent(mediaId, loadGeneration)) {
       createSharedSpritePlaceholder(mediaId, media);
     }
+    return false;
   } finally {
     sharedMediaLoadingIds.delete(mediaId);
   }
@@ -3151,11 +3154,12 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
   if (managedPlacedMedia.has(mediaId) || sharedRemoteMediaIds.has(mediaId) || sharedMediaLoadingIds.has(mediaId)) return;
 
   const fallbackRef=String(media.fallbackRef || "");
-  if(isIOSLikeDevice() && fallbackRef){
-    console.log("[SHARED WEBM ALPHA FALLBACK -> SPRITE]",mediaId,fallbackRef);
-    await createSharedSpriteFromAsset(mediaId,{title:media.title,assetRef:fallbackRef,x:media.x,y:media.y,z:media.z,
-      rotationX:media.rotationX,rotationY:media.rotationY,rotationZ:media.rotationZ,scale:media.scale});
-    return;
+  if(shouldUseWebMAlphaFallback() && fallbackRef){
+    console.log("[SHARED WEBM ALPHA FALLBACK -> SPRITE]",mediaId,fallbackRef,{safari:isSafariWebKitBrowser(),ios:isIOSLikeDevice()});
+    const fallbackReady=await createSharedSpriteFromAsset(mediaId,{title:media.title,assetRef:fallbackRef,x:media.x,y:media.y,z:media.z,
+      rotationX:media.rotationX,rotationY:media.rotationY,rotationZ:media.rotationZ,scale:media.scale,suppressPlaceholder:true});
+    if(fallbackReady)return;
+    console.warn("[SHARED WEBM ALPHA FALLBACK UNAVAILABLE -> RAW WEBM]",mediaId);
   }
 
   sharedMediaLoadingIds.add(mediaId);
@@ -3317,6 +3321,15 @@ async function createSharedWebMFromAsset(mediaId: string, media: any) {
 function isIOSLikeDevice() {
   return /iPad|iPhone|iPod/i.test(navigator.userAgent||"") ||
     (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
+}
+function isSafariWebKitBrowser() {
+  const ua=navigator.userAgent||"";
+  const vendor=navigator.vendor||"";
+  return /Safari/i.test(ua) && /Apple/i.test(vendor) &&
+    !/(Chrome|Chromium|CriOS|Edg|EdgiOS|OPR|OPiOS|FxiOS|SamsungBrowser)/i.test(ua);
+}
+function shouldUseWebMAlphaFallback() {
+  return isIOSLikeDevice() || isSafariWebKitBrowser();
 }
 function canvasToPNGBlob(canvas:HTMLCanvasElement):Promise<Blob>{
   return new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error("PNG encode failed")),"image/png"));
@@ -5787,7 +5800,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3.6</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3.7</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -7399,7 +7412,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3.6</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3.7</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

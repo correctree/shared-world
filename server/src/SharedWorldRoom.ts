@@ -77,6 +77,7 @@ export class SharedWorldRoom extends Room<WorldState> {
   private cueTimelineActorSessionId="";
   private cueTimelineFiredIds=new Set<string>();
   private cueTimelineTimer:ReturnType<typeof setInterval>|null=null;
+  private cueTimelineConfiguredDurationMs=0;
   private authoringRevision = 0;
   private directorClientIds = new Set<string>();
   private environmentOwnerClientId = "";
@@ -209,7 +210,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       environmentOwnerClientId:this.environmentOwnerClientId.startsWith("session:")?"":this.environmentOwnerClientId,
       directorClientIds:Array.from(this.directorClientIds).filter(id=>!id.startsWith("session:")), mediaObjects,
       scenes:Array.from(this.scenes.values(),scene=>({...scene})),
-      cues:Array.from(this.cues.values(),cue=>({...cue}))
+      cues:Array.from(this.cues.values(),cue=>({...cue})),timelineDurationMs:this.cueTimelineConfiguredDurationMs
     };
   }
   private persistenceState() {
@@ -247,6 +248,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.persistenceTimer=setTimeout(()=>this.persistNow(reason),250);
   }
   private restorePersistentWorld(override?:{world:SavedWorldV2|null;recovered:boolean;source:"current"|"previous"|"stable"|"empty"}) {
+    this.stopCueTimeline(true,false);
     const loaded=override||loadWorld(this.roomCode);
     const saved=loaded.world;
     if(!saved)return;
@@ -288,6 +290,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.cues.set(id,{id,name,targetType:targetType as CueDefinition["targetType"],target,
         action:action as CueDefinition["action"],startMs:Math.max(0,Math.min(3_600_000,Math.round(Number(raw.startMs)||0))),updatedAt:Number(raw.updatedAt)||Date.now()});
     }
+    this.cueTimelineConfiguredDurationMs=Math.max(0,Math.min(3_600_000,Math.round(Number(saved.timelineDurationMs)||0)));
     this.persistenceRevision=Math.max(0,Number(saved.revision)||0);
     this.authoringRevision=this.persistenceRevision;
     this.lastSavedAt=String(saved.savedAt||"");
@@ -406,14 +409,15 @@ export class SharedWorldRoom extends Room<WorldState> {
     if(target)target.send("cue:list",payload);else this.broadcast("cue:list",payload);
   }
   private cueTimelineDurationMs() {
-    return Math.max(5000,...Array.from(this.cues.values(),cue=>cue.startMs+1000));
+    const automatic=Math.max(5000,...Array.from(this.cues.values(),cue=>cue.startMs+1000));
+    return this.cueTimelineConfiguredDurationMs>0?Math.max(1000,this.cueTimelineConfiguredDurationMs):automatic;
   }
   private cueTimelinePosition() {
     return this.cueTimelineStatus==="playing"
       ?Math.max(0,Date.now()-this.cueTimelineStartedAt):this.cueTimelinePositionMs;
   }
   private sendCueTimelineState(target?:Client,status=this.cueTimelineStatus,positionMs=this.cueTimelinePosition()) {
-    const payload={status,positionMs:Math.round(positionMs),durationMs:this.cueTimelineDurationMs(),serverAt:Date.now()};
+    const payload={status,positionMs:Math.round(positionMs),durationMs:this.cueTimelineDurationMs(),configuredDurationMs:this.cueTimelineConfiguredDurationMs,serverAt:Date.now()};
     if(target)target.send("cue:timeline:state",payload);else this.broadcast("cue:timeline:state",payload);
   }
   private executeCue(cue:CueDefinition,actorSessionId:string) {
@@ -502,13 +506,14 @@ export class SharedWorldRoom extends Room<WorldState> {
     if((!id||!this.cues.has(id))&&this.cues.size>=24){fail("cue-limit");return;}
     if(!id)id=`cue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
     const startMs=Math.max(0,Math.min(3_600_000,Math.round(Number(payload?.startMs)||0)));
+    if(this.cueTimelineConfiguredDurationMs>0&&startMs>=this.cueTimelineConfiguredDurationMs)this.cueTimelineConfiguredDurationMs=Math.min(3_600_000,startMs+1000);
     const cue={id,name,targetType:targetType as CueDefinition["targetType"],target,
       action:action as CueDefinition["action"],startMs,updatedAt:Date.now()};
     this.cues.set(id,cue);this.authoringRevision++;
     this.schedulePersistence("cue-save");
     if(modern)client.send("authoring:result",{ok:true,kind:"cue",operation:"save",requestId,saved:cue,state:this.authoringState()});
     else client.send("cue:result",{ok:true,operation:"save",...cue});
-    this.sendCueList();this.sendAuthoringState();this.sendEnvironmentPermissions();
+    this.sendCueList();this.sendAuthoringState();this.sendEnvironmentPermissions();this.sendCueTimelineState();
     console.log("[authoring:cue saved]",{requestId,id,name,targetType,target,startMs,revision:this.authoringRevision});
   }
   private recallScene(scene:SceneSnapshot) {
@@ -718,7 +723,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         this.broadcast("world:restored:v2",{roomCode:this.roomCode,revision:restored.revision,
           count:this.state.mediaObjects.size,savedAt:restored.savedAt,source:"checkpoint"});
         this.broadcast("environment:state",this.environment);this.sendEnvironmentPermissions();
-        this.sendSceneList();this.sendCueList();this.sendAuthoringState();this.sendPersistenceState();
+        this.sendSceneList();this.sendCueList();this.sendAuthoringState();this.sendCueTimelineState();this.sendPersistenceState();
         client.send("persistence:restore-result",{ok:true,kind:"checkpoint",revision:restored.revision,
           savedAt:restored.savedAt,count:this.state.mediaObjects.size,source:"checkpoint"});
         console.log("[ROOM CHECKPOINT RESTORED]",{roomCode:this.roomCode,revision:restored.revision,count:this.state.mediaObjects.size});
@@ -746,7 +751,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         this.broadcast("world:restored:v2",{roomCode:this.roomCode,revision:restored.revision,
           count:this.state.mediaObjects.size,savedAt:restored.savedAt,source:"previous"});
         this.broadcast("environment:state",this.environment);this.sendEnvironmentPermissions();
-        this.sendSceneList();this.sendCueList();this.sendAuthoringState();this.sendPersistenceState();
+        this.sendSceneList();this.sendCueList();this.sendAuthoringState();this.sendCueTimelineState();this.sendPersistenceState();
         client.send("persistence:restore-result",{ok:true,revision:restored.revision,savedAt:restored.savedAt,
           count:this.state.mediaObjects.size,source:"previous"});
         console.log("[ROOM PREVIOUS RESTORED]",{roomCode:this.roomCode,revision:restored.revision,
@@ -1050,6 +1055,15 @@ export class SharedWorldRoom extends Room<WorldState> {
       client.send("cue:result",{...result,operation:"fire",id:cue.id,name:cue.name});
     });
     this.onMessage("cue:timeline:get",(client:Client)=>this.sendCueTimelineState(client));
+    this.onMessage("cue:timeline:configure",(client:Client,payload:any)=>{
+      if(!this.canEditEnvironment(client,true)){client.send("cue:timeline:result",{ok:false,operation:"configure",reason:"owner-locked"});return;}
+      if(this.cueTimelineStatus==="playing"){client.send("cue:timeline:result",{ok:false,operation:"configure",reason:"timeline-playing"});return;}
+      const requested=Math.max(0,Math.min(3_600_000,Math.round(Number(payload?.durationMs)||0)));
+      const minimum=Math.max(1000,...Array.from(this.cues.values(),cue=>cue.startMs+1000));
+      this.cueTimelineConfiguredDurationMs=requested>0?Math.max(minimum,requested):0;
+      this.schedulePersistence("cue-timeline-configure");this.sendCueTimelineState();
+      client.send("cue:timeline:result",{ok:true,operation:"configure",configuredDurationMs:this.cueTimelineConfiguredDurationMs});
+    });
     this.onMessage("cue:timeline:play",(client:Client,payload:any)=>{
       if(!this.canDirect(client)){client.send("cue:timeline:result",{ok:false,operation:"play",reason:"director-required"});return;}
       const requested=Number(payload?.positionMs);const position=Number.isFinite(requested)?requested:this.cueTimelinePosition();
@@ -1070,7 +1084,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.onMessage("cue:delete",(client:Client,payload:any)=>{
       if(!this.canEditEnvironment(client,false)){client.send("cue:result",{ok:false,operation:"delete",reason:"owner-locked"});return;}
       const id=String(payload?.id||"");if(!this.cues.delete(id)){client.send("cue:result",{ok:false,operation:"delete",reason:"cue-not-found"});return;}
-      this.authoringRevision++;client.send("cue:result",{ok:true,operation:"delete",id});this.sendCueList();this.sendAuthoringState();
+      this.authoringRevision++;client.send("cue:result",{ok:true,operation:"delete",id});this.sendCueList();this.sendAuthoringState();this.sendCueTimelineState();
       this.schedulePersistence("cue-delete");
     });
     this.onMessage("director:get",(client:Client)=>this.sendDirectorState(client));
@@ -1354,7 +1368,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         format: "shared-world-manifest", version: 1,
         roomCode: String(this.metadata?.roomCode || "ART001"),
         exportedAt: new Date().toISOString(), environment:this.environment, mediaObjects,
-        scenes:Array.from(this.scenes.values()),cues:Array.from(this.cues.values())
+        scenes:Array.from(this.scenes.values()),cues:Array.from(this.cues.values()),timelineDurationMs:this.cueTimelineConfiguredDurationMs
       });
     });
 
@@ -1404,12 +1418,14 @@ export class SharedWorldRoom extends Room<WorldState> {
         if(!key||!key.endsWith(".zip")||!assetExists(key)){fail(`missing-environment-asset-${field}`);return;}
       }
       const revision=this.persistenceRevision+1,savedAt=new Date().toISOString();
+      const timelineDurationMs=Math.max(0,Math.min(3_600_000,Math.round(Number(payload?.timelineDurationMs)||0)));
       const proposed:SavedWorldV2={format:"shared-world-room",version:2,roomCode:this.roomCode,revision,savedAt,
         environment:{...environment},environmentOwnerClientId:player.clientId,
-        directorClientIds:Array.from(this.directorClientIds).filter(value=>value!==player.clientId),mediaObjects,scenes,cues};
+        directorClientIds:Array.from(this.directorClientIds).filter(value=>value!==player.clientId),mediaObjects,scenes,cues,timelineDurationMs};
       try{saveWorld(this.roomCode,proposed);}catch(error){console.error("[ROOM V2 RESTORE SAVE FAILED]",error);fail("snapshot-save-failed");return;}
       this.state.mediaObjects.clear();this.mediaBehaviors.clear();this.scenes.clear();this.cues.clear();this.resetEditHistory();
       this.environment=environment;this.environmentOwnerClientId=player.clientId;this.persistenceRevision=revision;
+      this.cueTimelineConfiguredDurationMs=timelineDurationMs;
       this.lastSavedAt=savedAt;this.lastSaveError="";
       this.persistenceDirty=false;this.recoverySource="current";
       for(const raw of mediaObjects){const id=String(raw.id),media=new SharedMediaObject({
@@ -1422,9 +1438,10 @@ export class SharedWorldRoom extends Room<WorldState> {
         if(id&&name&&env&&raw?.media&&typeof raw.media==="object")this.scenes.set(id,{id,name,updatedAt:Number(raw.updatedAt)||Date.now(),environment:env,media:raw.media});}
       for(const raw of cues){const id=String(raw?.id||"").slice(0,80),name=String(raw?.name||"").slice(0,32),targetType=String(raw?.targetType||"") as CueDefinition["targetType"],action=String(raw?.action||"") as CueDefinition["action"],target=String(raw?.target||"").slice(0,80);
         if(id&&name&&target&&["scene","group","tag"].includes(targetType)&&["recall","play","stop","move","rotate","scale","float","orbit","shake"].includes(action))this.cues.set(id,{id,name,targetType,target,action,startMs:Math.max(0,Math.min(3_600_000,Math.round(Number(raw.startMs)||0))),updatedAt:Number(raw.updatedAt)||Date.now()});}
+      if(this.cueTimelineConfiguredDurationMs>0)this.cueTimelineConfiguredDurationMs=Math.min(3_600_000,Math.max(this.cueTimelineConfiguredDurationMs,...Array.from(this.cues.values(),cue=>cue.startMs+1000)));
       this.scheduleParticleEnd();this.broadcast("world:restored:v2",{roomCode:this.roomCode,revision,count:mediaObjects.length,savedAt});
       client.send("world:restore:v2:result",{ok:true,roomCode:this.roomCode,revision,count:mediaObjects.length,savedAt,backup:true});
-      this.broadcast("environment:state",this.environment);this.sendEnvironmentPermissions();this.sendSceneList();this.sendCueList();this.sendAuthoringState();this.sendPersistenceState();
+      this.broadcast("environment:state",this.environment);this.sendEnvironmentPermissions();this.sendSceneList();this.sendCueList();this.sendAuthoringState();this.sendCueTimelineState();this.sendPersistenceState();
       console.log("[ROOM RESTORED V2]",{roomCode:this.roomCode,revision,count:mediaObjects.length,savedAt});
     });
 
@@ -1546,7 +1563,9 @@ export class SharedWorldRoom extends Room<WorldState> {
         this.sendCueList();
         this.authoringRevision++;
       }
-      this.sendAuthoringState();
+      if(Number.isFinite(Number(payload?.timelineDurationMs)))this.cueTimelineConfiguredDurationMs=Math.max(0,Math.min(3_600_000,Math.round(Number(payload.timelineDurationMs)||0)));
+      if(this.cueTimelineConfiguredDurationMs>0)this.cueTimelineConfiguredDurationMs=Math.min(3_600_000,Math.max(this.cueTimelineConfiguredDurationMs,...Array.from(this.cues.values(),cue=>cue.startMs+1000)));
+      this.sendAuthoringState();this.sendCueTimelineState();
       client.send("world:import:result", {ok:true, count:entries.length});
       this.schedulePersistence("world-import");
     });

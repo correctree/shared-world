@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.1 CUE TIMELINE FOUNDATION LOADED]");
+console.log("[PROTOTYPE 0.25.2 CUE TIMELINE EDITING LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1073,7 +1073,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.1</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.2</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -4142,6 +4142,7 @@ async function enterWorld() {
       if(room!==activeRoom)return;const timelineState=String(payload?.status||"stopped");
       cueTimelineStatus=(timelineState==="playing"||timelineState==="paused"?timelineState:"stopped");
       cueTimelinePositionMs=Math.max(0,Number(payload?.positionMs)||0);cueTimelineDurationMs=Math.max(1000,Number(payload?.durationMs)||5000);
+      cueTimelineConfiguredDurationMs=Math.max(0,Number(payload?.configuredDurationMs)||0);cueTimelineLengthMode.value=cueTimelineConfiguredDurationMs>0?"manual":"auto";
       cueTimelineReceivedAt=Date.now();refreshCueTimeline();
     });
     room.onMessage("cue:timeline:result",(payload:any)=>{
@@ -5538,9 +5539,16 @@ mediaManagerPanel.innerHTML = `
     <div id="cueStatus">No cues saved.</div>
     <section id="cueTimeline" class="cue-timeline">
       <div class="cue-timeline-heading"><div><strong>CUE TIMELINE</strong><span id="cueTimelineClock">00:00.0 / 00:05.0</span></div><span id="cueTimelineState">STOPPED</span></div>
+      <div class="cue-timeline-editing">
+        <label>SNAP<select id="cueTimelineSnap"><option value="0">OFF</option><option value="100">0.1 s</option><option value="500" selected>0.5 s</option><option value="1000">1 s</option></select></label>
+        <label>LENGTH<select id="cueTimelineLengthMode"><option value="auto">AUTO</option><option value="manual">MANUAL</option></select></label>
+        <label class="cue-duration-field">SECONDS<input id="cueTimelineDurationSeconds" type="number" min="1" max="3600" step="1" value="5" disabled></label>
+        <button id="cueTimelineSaveLength" type="button">SET LENGTH</button>
+      </div>
       <input id="cueTimelineScrubber" type="range" min="0" max="5000" step="100" value="0" aria-label="Timeline position">
       <div class="cue-timeline-transport"><button id="cueTimelinePlay" type="button">▶ PLAY</button><button id="cueTimelinePause" type="button">Ⅱ PAUSE</button><button id="cueTimelineStop" type="button">■ STOP</button></div>
       <div id="cueTimelineRows" class="cue-timeline-rows"><div class="cue-timeline-empty">SAVE A CUE TO BUILD THE TIMELINE</div></div>
+      <button id="cueTimelineDuplicate" type="button">DUPLICATE SELECTED CUE</button>
     </section>
   </div>
   <div class="scene-manager">
@@ -6120,7 +6128,7 @@ mediaManagerStyle.textContent = `
   #cueFireButton { border-color:#ffb54a!important;color:#fff!important; }
   #cueStatus { min-height:14px;padding:4px 2px;font-size:10px;color:#fff;font-weight:800; }
   .cue-time-row{display:grid!important;grid-template-columns:88px 1fr 48px;align-items:center;gap:7px;margin:0!important;color:#d6b27e;font-size:9px;font-weight:900;letter-spacing:.06em}.cue-time-row input{margin:0!important}.cue-time-row small{color:#8f7d65;font-size:8px}
-  .cue-timeline{margin-top:5px;padding:10px;border:1px solid rgba(255,181,74,.5);border-radius:11px;background:#0f1319}.cue-timeline-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.cue-timeline-heading>div{display:grid;gap:3px}.cue-timeline-heading strong{font-size:10px;letter-spacing:.09em}.cue-timeline-heading span{color:#d6b27e;font-size:8px;font-weight:850}.cue-timeline-heading>span{padding:4px 7px;border-radius:7px;background:#1c232c;color:#9eb0bd}.cue-timeline-heading>span[data-state="playing"]{background:#173527;color:#65e4b2}.cue-timeline-heading>span[data-state="paused"]{background:#382d18;color:#ffd17d}.cue-timeline>input[type="range"]{width:100%;margin:10px 0 8px;padding:0;border:0}.cue-timeline-transport{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px}.cue-timeline-transport button{min-width:0!important;padding:8px 4px!important;font-size:9px!important}.cue-timeline-rows{display:grid;gap:5px;margin-top:9px;max-height:190px;overflow:auto}.cue-timeline-row{display:grid!important;grid-template-columns:58px minmax(0,1fr);gap:2px 7px;width:100%!important;min-width:0!important;padding:8px!important;border:1px solid #384654!important;border-radius:8px!important;background:#121a23!important;color:#fff!important;text-align:left!important}.cue-timeline-row time{grid-row:1 / span 2;color:#ffbd5b;font:900 9px/1.4 ui-monospace,monospace}.cue-timeline-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:900}.cue-timeline-row small{color:#8fa3b2;font-size:8px}.cue-timeline-row.passed{border-color:#466a5b!important;background:#12231d!important}.cue-timeline-empty{padding:13px 4px;color:#7f8d99;font-size:8px;text-align:center}
+  .cue-timeline{margin-top:5px;padding:10px;border:1px solid rgba(255,181,74,.5);border-radius:11px;background:#0f1319}.cue-timeline-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.cue-timeline-heading>div{display:grid;gap:3px}.cue-timeline-heading strong{font-size:10px;letter-spacing:.09em}.cue-timeline-heading span{color:#d6b27e;font-size:8px;font-weight:850}.cue-timeline-heading>span{padding:4px 7px;border-radius:7px;background:#1c232c;color:#9eb0bd}.cue-timeline-heading>span[data-state="playing"]{background:#173527;color:#65e4b2}.cue-timeline-heading>span[data-state="paused"]{background:#382d18;color:#ffd17d}.cue-timeline-editing{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:9px;padding:8px;border:1px solid #343d48;border-radius:9px;background:#111820}.cue-timeline-editing label{display:grid;gap:3px;margin:0!important;color:#8fa3b2;font-size:8px;font-weight:900}.cue-timeline-editing select,.cue-timeline-editing input{width:100%;min-width:0;box-sizing:border-box;margin:0!important;padding:7px!important}.cue-timeline-editing button{min-width:0!important;padding:7px 4px!important;font-size:8px!important}.cue-timeline>input[type="range"]{width:100%;margin:10px 0 8px;padding:0;border:0}.cue-timeline-transport{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px}.cue-timeline-transport button{min-width:0!important;padding:8px 4px!important;font-size:9px!important}.cue-timeline-rows{display:grid;gap:5px;margin-top:9px;max-height:220px;overflow:auto}.cue-timeline-row{position:relative;display:grid!important;grid-template-columns:58px minmax(0,1fr);gap:2px 7px;width:100%!important;min-width:0!important;padding:14px 8px 8px!important;border:1px solid #384654!important;border-radius:8px!important;background:#121a23!important;color:#fff!important;text-align:left!important;touch-action:none;overflow:hidden}.cue-timeline-row i{position:absolute;left:var(--cue-position);top:3px;width:8px;height:8px;border-radius:50%;background:#ffb54a;box-shadow:0 0 0 3px rgba(255,181,74,.15);transform:translateX(-50%)}.cue-timeline-row::before{content:"";position:absolute;left:7px;right:7px;top:6px;height:2px;background:#344250}.cue-timeline-row time{grid-row:1 / span 2;color:#ffbd5b;font:900 9px/1.4 ui-monospace,monospace}.cue-timeline-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:900}.cue-timeline-row small{color:#8fa3b2;font-size:8px}.cue-timeline-row.passed{border-color:#466a5b!important;background:#12231d!important}.cue-timeline-row.edit-locked{touch-action:manipulation}.cue-timeline-empty{padding:13px 4px;color:#7f8d99;font-size:8px;text-align:center}#cueTimelineDuplicate{width:100%!important;margin-top:7px!important;padding:8px!important;font-size:8px!important}
   .scene-manager input,.scene-manager select { width:100%;min-width:0;box-sizing:border-box;padding:8px;border:1px solid #4a5260;border-radius:8px;background:#111720;color:#fff; }
   .scene-actions { display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px; }
   .scene-actions button { width:100%!important;min-width:0;padding:9px 4px;font-size:10px; }
@@ -6343,29 +6351,59 @@ const cueTimelineRows=mediaManagerPanel.querySelector<HTMLElement>("#cueTimeline
 const cueTimelinePlay=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueTimelinePlay")!;
 const cueTimelinePause=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueTimelinePause")!;
 const cueTimelineStop=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueTimelineStop")!;
+const cueTimelineSnap=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueTimelineSnap")!;
+const cueTimelineLengthMode=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueTimelineLengthMode")!;
+const cueTimelineDurationSeconds=mediaManagerPanel.querySelector<HTMLInputElement>("#cueTimelineDurationSeconds")!;
+const cueTimelineSaveLength=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueTimelineSaveLength")!;
+const cueTimelineDuplicate=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueTimelineDuplicate")!;
 let cueTimelineStatus:"stopped"|"playing"|"paused"="stopped";
 let cueTimelinePositionMs=0;
 let cueTimelineDurationMs=5000;
+let cueTimelineConfiguredDurationMs=0;
 let cueTimelineReceivedAt=0;
+function snappedCueTime(value:number){const snap=Math.max(0,Number(cueTimelineSnap.value)||0);const bounded=Math.max(0,Math.min(cueTimelineDurationMs,value));return snap?Math.round(bounded/snap)*snap:Math.round(bounded/100)*100;}
 function formatCueTime(ms:number){const safe=Math.max(0,Math.round(ms));const minutes=Math.floor(safe/60000);const seconds=Math.floor((safe%60000)/1000);const tenths=Math.floor((safe%1000)/100);return `${String(minutes).padStart(2,"0")}:${String(seconds).padStart(2,"0")}.${tenths}`;}
 function currentCueTimelinePosition(){return cueTimelineStatus==="playing"?Math.min(cueTimelineDurationMs,cueTimelinePositionMs+(Date.now()-cueTimelineReceivedAt)):cueTimelinePositionMs;}
 function refreshCueTimeline(){
   const position=currentCueTimelinePosition();cueTimelineScrubber.max=String(cueTimelineDurationMs);if(document.activeElement!==cueTimelineScrubber)cueTimelineScrubber.value=String(position);
   cueTimelineClock.textContent=`${formatCueTime(position)} / ${formatCueTime(cueTimelineDurationMs)}`;cueTimelineStateLabel.textContent=cueTimelineStatus.toUpperCase();cueTimelineStateLabel.dataset.state=cueTimelineStatus;
   cueTimelinePlay.disabled=!directorCanDirect;cueTimelinePause.disabled=!directorCanDirect||cueTimelineStatus!=="playing";cueTimelineStop.disabled=!directorCanDirect||cueTimelineStatus==="stopped";
+  const canEditTimeline=environmentCanEdit&&cueTimelineStatus!=="playing";cueTimelineLengthMode.disabled=!canEditTimeline;cueTimelineDurationSeconds.disabled=!canEditTimeline||cueTimelineLengthMode.value!=="manual";cueTimelineSaveLength.disabled=!canEditTimeline;cueTimelineDuplicate.disabled=!canEditTimeline||!cueSelect.value;
+  if(document.activeElement!==cueTimelineDurationSeconds)cueTimelineDurationSeconds.value=String(Math.max(1,Math.round(cueTimelineDurationMs/1000)));
   cueTimelineRows.replaceChildren();const ordered=[...cueSummaries].sort((a,b)=>a.startMs-b.startMs||a.updatedAt-b.updatedAt);
   if(!ordered.length){cueTimelineRows.innerHTML='<div class="cue-timeline-empty">SAVE A CUE TO BUILD THE TIMELINE</div>';return;}
-  for(const cue of ordered){const row=document.createElement("button");row.type="button";row.className="cue-timeline-row";row.dataset.cueId=cue.id;row.innerHTML=`<time>${formatCueTime(cue.startMs)}</time><span></span><small>${cue.targetType.toUpperCase()} · ${cue.action.toUpperCase()}</small>`;row.querySelector("span")!.textContent=cue.name;row.classList.toggle("passed",cue.startMs<=position);row.addEventListener("click",()=>{cueSelect.value=cue.id;cueSelect.dispatchEvent(new Event("change"));});cueTimelineRows.appendChild(row);}
+  for(const cue of ordered){
+    const row=document.createElement("button");row.type="button";row.className="cue-timeline-row";row.dataset.cueId=cue.id;row.classList.toggle("edit-locked",!canEditTimeline);
+    row.style.setProperty("--cue-position",`${Math.min(100,cue.startMs/Math.max(1,cueTimelineDurationMs)*100)}%`);
+    row.innerHTML=`<i aria-hidden="true"></i><time>${formatCueTime(cue.startMs)}</time><span></span><small>${cue.targetType.toUpperCase()} · ${cue.action.toUpperCase()}</small>`;row.querySelector("span")!.textContent=cue.name;row.classList.toggle("passed",cue.startMs<=position);
+    let dragStartX=0,dragTime=cue.startMs,dragging=false;
+    row.addEventListener("pointerdown",event=>{if(!canEditTimeline)return;dragStartX=event.clientX;dragTime=cue.startMs;dragging=false;row.setPointerCapture(event.pointerId);});
+    row.addEventListener("pointermove",event=>{if(!row.hasPointerCapture(event.pointerId)||!canEditTimeline)return;const delta=event.clientX-dragStartX;if(Math.abs(delta)>3)dragging=true;if(!dragging)return;event.preventDefault();dragTime=snappedCueTime(cue.startMs+delta/Math.max(160,row.getBoundingClientRect().width)*cueTimelineDurationMs);row.style.setProperty("--cue-position",`${dragTime/Math.max(1,cueTimelineDurationMs)*100}%`);row.querySelector("time")!.textContent=formatCueTime(dragTime);});
+    row.addEventListener("pointerup",event=>{if(row.hasPointerCapture(event.pointerId))row.releasePointerCapture(event.pointerId);if(dragging&&dragTime!==cue.startMs)saveCueTimelineEdit(cue,dragTime);else{cueSelect.value=cue.id;cueSelect.dispatchEvent(new Event("change"));}});
+    row.addEventListener("pointercancel",()=>refreshCueTimeline());cueTimelineRows.appendChild(row);
+  }
 }
 window.setInterval(()=>{if(cueTimelineStatus==="playing")refreshCueTimeline();},100);
 cueTimelineScrubber.addEventListener("input",()=>{if(cueTimelineStatus!=="playing"){cueTimelinePositionMs=Number(cueTimelineScrubber.value)||0;cueTimelineReceivedAt=Date.now();refreshCueTimeline();}});
 cueTimelinePlay.addEventListener("click",()=>{if(activeRoom&&directorCanDirect)activeRoom.send("cue:timeline:play",{positionMs:Number(cueTimelineScrubber.value)||0});});
 cueTimelinePause.addEventListener("click",()=>{if(activeRoom&&directorCanDirect)activeRoom.send("cue:timeline:pause",{});});
 cueTimelineStop.addEventListener("click",()=>{if(activeRoom&&directorCanDirect)activeRoom.send("cue:timeline:stop",{});});
+cueTimelineLengthMode.addEventListener("change",()=>{cueTimelineDurationSeconds.disabled=cueTimelineLengthMode.value!=="manual"||!environmentCanEdit||cueTimelineStatus==="playing";});
+cueTimelineSaveLength.addEventListener("click",()=>{if(!activeRoom||!environmentCanEdit||cueTimelineStatus==="playing")return;const durationMs=cueTimelineLengthMode.value==="auto"?0:Math.max(1000,Math.min(3_600_000,Math.round((Number(cueTimelineDurationSeconds.value)||5)*1000)));activeRoom.send("cue:timeline:configure",{durationMs});});
+cueTimelineDuplicate.addEventListener("click",()=>{const cue=cueSummaries.find(item=>item.id===cueSelect.value);if(cue&&environmentCanEdit&&cueTimelineStatus!=="playing")saveCueTimelineEdit(cue,snappedCueTime(cue.startMs+(Number(cueTimelineSnap.value)||500)),true);});
 function clearPendingCueSave(){
   if(cueSaveRetryTimer!==null){window.clearTimeout(cueSaveRetryTimer);cueSaveRetryTimer=null;}
   if(cueSaveWatchdog!==null){window.clearTimeout(cueSaveWatchdog);cueSaveWatchdog=null;}
   pendingCueSave=null;
+}
+function saveCueTimelineEdit(cue:CueSummary,startMs:number,duplicate=false){
+  if(!activeRoom||!environmentCanEdit||cueTimelineStatus==="playing")return;
+  clearPendingCueSave();const requestId=`cue-save-${crypto.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+  pendingCueSave={requestId,id:duplicate?`cue-client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`:cue.id,
+    name:duplicate?`${cue.name.slice(0,27)} COPY`:cue.name,targetType:cue.targetType,target:cue.target,
+    action:cue.action==="recall"?"play":cue.action,startMs:Math.max(0,Math.min(3_600_000,Math.round(startMs)))};
+  activeRoom.send("authoring:cue:save",pendingCueSave);cueStatus.textContent=duplicate?"DUPLICATING CUE…":"SAVING CUE TIME…";
+  cueSaveWatchdog=window.setTimeout(()=>{cueSaveWatchdog=null;if(activeRoom&&pendingCueSave){activeRoom.send("authoring:get",{});cueStatus.textContent="CUE EDIT NOT CONFIRMED · CHECK SERVER LOG";}},5000);
 }
 function applyAuthoringState(payload:any){
   if(!payload||typeof payload!=="object")return;
@@ -7180,7 +7218,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.1</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.2</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

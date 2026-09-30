@@ -26,6 +26,7 @@ export type SavedWorldV2 = {
   mediaObjects: Array<Record<string, unknown>>;
   scenes: Array<Record<string, unknown>>;
   cues: Array<Record<string, unknown>>;
+  timelineDurationMs?: number;
 };
 
 function safeClientId(value:string) {
@@ -53,6 +54,7 @@ function validateEnvelope(value: unknown, code: string): SavedWorldV2 {
   if (!Array.isArray(world.mediaObjects) || world.mediaObjects.length > 64) throw new Error("invalid media list");
   if (!Array.isArray(world.scenes) || world.scenes.length > 12) throw new Error("invalid scene list");
   if (!Array.isArray(world.cues) || world.cues.length > 24) throw new Error("invalid cue list");
+  if(world.timelineDurationMs!==undefined&&(!Number.isFinite(Number(world.timelineDurationMs))||Number(world.timelineDurationMs)<0||Number(world.timelineDurationMs)>3_600_000))throw new Error("invalid timeline duration");
   if (!Array.isArray(world.directorClientIds) || world.directorClientIds.length > 12) throw new Error("invalid director list");
   if (!world.environment || typeof world.environment !== "object") throw new Error("invalid environment");
   const ids = new Set<string>();

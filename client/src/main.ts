@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.3.4 CONTROL-ONLY CLIENT LOADED]");
+console.log("[PROTOTYPE 0.25.3.5 VOICE CONTROL UX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -141,7 +141,7 @@ const communicationControls=document.createElement("div");
 communicationControls.id="communicationControls";
 communicationControls.innerHTML=`<div id="messageComposer"><input id="avatarMessageInput" maxlength="48" placeholder="MESSAGE / EMOJI"><button type="button" id="sendAvatarMessage">SEND</button></div>
   <div id="quickMessages"><button type="button">👋</button><button type="button">❤️</button><button type="button">✨</button><button type="button">😊</button></div>
-  <div id="voiceControls"><button type="button" id="voiceToggle">MIC OFF</button><select id="voiceEffect" aria-label="Voice effect"><option value="normal">NORMAL</option><option value="deep">DEEP</option><option value="bright">BRIGHT</option><option value="echo">ECHO</option></select><select id="voiceVolume" aria-label="Voice volume"><option value="0.5">VOL 50</option><option value="0.75">VOL 75</option><option value="1" selected>VOL 100</option></select><span id="voiceStatus">VOICE: OFF</span></div>
+  <div id="voiceControls" data-voice-state="off"><div class="voice-primary"><button type="button" id="voiceToggle" aria-pressed="false"><span class="voice-mic-icon" aria-hidden="true">⊘</span><span class="voice-mic-label">MIC OFF · MUTED</span></button><span id="voiceStatus">VOICE: OFF</span></div><div class="voice-settings"><label><span>VOICE EFFECT</span><select id="voiceEffect" aria-label="Voice effect"><option value="normal">NORMAL</option><option value="deep">DEEP</option><option value="bright">BRIGHT</option><option value="echo">ECHO</option></select></label><label><span>OUTPUT VOLUME</span><select id="voiceVolume" aria-label="Output volume"><option value="0.5">VOL 50</option><option value="0.75">VOL 75</option><option value="1" selected>VOL 100</option></select></label></div></div>
   <div id="photoStudio"><button type="button" id="selfieMode">SELFIE</button><button type="button" id="groupPhotoMode">GROUP</button>
   <select id="photoTimer" aria-label="Photo timer"><option value="0">TIMER OFF</option><option value="3">3 SEC</option><option value="5">5 SEC</option><option value="10">10 SEC</option></select>
   <button type="button" id="takeWorldPhoto">PHOTO</button></div>`;
@@ -170,7 +170,7 @@ avatarStyleSheet.textContent=`
   #messageComposer {display:flex;gap:4px}
   #avatarMessageInput {width:180px;padding:9px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff}
   #quickMessages {display:flex;gap:3px} #quickMessages button {padding:8px}
-  #voiceControls {display:flex;gap:4px;align-items:center} #voiceControls select {padding:9px 6px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff;font-size:11px} #voiceStatus {font-size:9px;color:#9fb3c6;white-space:nowrap}
+  #voiceControls{display:grid;gap:7px;min-width:300px}.voice-primary{display:flex;align-items:center;gap:8px}.voice-primary #voiceToggle{display:flex;align-items:center;justify-content:center;gap:7px;min-width:178px;font-weight:900}.voice-mic-icon{display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#4b2530;color:#ff9aaa;font-size:11px}.voice-settings{display:grid;grid-template-columns:1fr 1fr;gap:7px}.voice-settings label{display:grid;gap:3px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.08em}.voice-settings select{width:100%;min-width:0;padding:9px 28px 9px 9px;border:1px solid #7191ae;border-radius:9px;background:#09131e;color:#fff;font-size:11px;font-weight:800}#voiceStatus{font-size:9px;color:#9fb3c6;white-space:nowrap}#voiceControls[data-voice-state="off"] #voiceToggle{border-color:#a04e5d!important;background:#351b24!important;color:#ffbdc7!important}#voiceControls[data-voice-state="starting"] #voiceToggle{border-color:#c99942!important;background:#352a17!important;color:#ffd27c!important}#voiceControls[data-voice-state="live"] #voiceToggle{border-color:#45c99a!important;background:#12382d!important;color:#76e7bf!important;box-shadow:0 0 14px rgba(69,201,154,.25)}#voiceControls[data-voice-state="live"] .voice-mic-icon{background:#205b48;color:#8dffd5}#voiceControls[data-voice-state="error"] #voiceToggle{border-color:#ff7187!important;background:#401c25!important;color:#ff9baa!important}
   #photoStudio {display:flex;gap:4px;align-items:center} #photoStudio select {padding:9px 6px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff;font-size:11px}
   #photoStudio button.active {border-color:#52d7ff;color:#52d7ff;box-shadow:0 0 12px rgba(82,215,255,.35)}
   #photoCountdown {position:fixed;inset:0;z-index:80;display:grid;place-items:center;pointer-events:none;color:#fff;font:900 clamp(72px,18vw,190px)/1 Arial,sans-serif;text-shadow:0 4px 28px rgba(0,0,0,.7)}
@@ -197,7 +197,7 @@ avatarStyleSheet.textContent=`
     body.mobile-compact.mobile-panel-chat #joystick,body.mobile-compact.mobile-panel-photo #joystick {bottom:max(155px,calc(env(safe-area-inset-bottom) + 150px))!important}
     body.mobile-compact #flightControls button,body.mobile-compact #emoteControls button {font-size:10px;padding:9px 8px;min-height:40px}
     body.mobile-compact #avatarMessageInput {width:min(44vw,180px)}
-    body.mobile-compact #voiceControls {width:100%;justify-content:center} body.mobile-compact #voiceControls button,body.mobile-compact #voiceControls select {height:34px!important;min-height:34px!important;padding:0 7px!important;font-size:9px!important}
+    body.mobile-compact #voiceControls{width:100%;min-width:0}body.mobile-compact .voice-primary{justify-content:space-between}body.mobile-compact .voice-primary #voiceToggle{height:42px!important;min-height:42px!important;min-width:190px;padding:0 10px!important;font-size:10px!important}body.mobile-compact .voice-settings{width:100%}body.mobile-compact .voice-settings select{height:40px!important;min-height:40px!important;padding:0 28px 0 9px!important;font-size:10px!important}
     body.mobile-compact #photoStudio {display:flex;width:100%;justify-content:center;flex-wrap:wrap}
     body.mobile-compact #photoStudio button,body.mobile-compact #photoStudio select {height:36px!important;min-height:36px!important;margin:0!important;font-size:9px!important;padding:0 7px!important;box-sizing:border-box}
   }
@@ -1076,7 +1076,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3.4</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3.5</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -1598,6 +1598,7 @@ communicationControls.querySelector<HTMLElement>("#quickMessages")!.addEventList
   const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button");
   if(button)sendAvatarMessage(button.textContent||"");
 });
+const voiceControls=communicationControls.querySelector<HTMLElement>("#voiceControls")!;
 const voiceToggleButton=communicationControls.querySelector<HTMLButtonElement>("#voiceToggle")!;
 const voiceEffectSelect=communicationControls.querySelector<HTMLSelectElement>("#voiceEffect")!;
 const voiceVolumeSelect=communicationControls.querySelector<HTMLSelectElement>("#voiceVolume")!;
@@ -1618,8 +1619,25 @@ let voiceSourceNode:MediaStreamAudioSourceNode|null=null;
 let voiceInputGain:GainNode|null=null;
 let voiceEffectNodes:AudioNode[]=[];
 let voiceDestination:MediaStreamAudioDestinationNode|null=null;
+type VoiceVisualState="off"|"starting"|"live"|"error";
+function refreshVoiceControlState(text:string,error=false){
+  const state:VoiceVisualState=error?"error":text==="CONNECTING"||text==="RECONNECTING"?"starting":voiceEnabled?"live":"off";
+  const label=state==="live"?"MIC ON · LIVE":state==="starting"?"MIC STARTING…":state==="error"?"MIC UNAVAILABLE":"MIC OFF · MUTED";
+  const icon=state==="live"?"●":state==="starting"?"…":state==="error"?"!":"⊘";
+  voiceControls.dataset.voiceState=state;voiceToggleButton.setAttribute("aria-pressed",String(state==="live"));
+  voiceToggleButton.querySelector<HTMLElement>(".voice-mic-label")!.textContent=label;
+  voiceToggleButton.querySelector<HTMLElement>(".voice-mic-icon")!.textContent=icon;
+  for(const button of document.querySelectorAll<HTMLButtonElement>("[data-voice-toggle-proxy]")){
+    button.dataset.voiceState=state;button.setAttribute("aria-pressed",String(state==="live"));
+    button.querySelector<HTMLElement>(".voice-mic-label")!.textContent=label;
+    button.querySelector<HTMLElement>(".voice-mic-icon")!.textContent=icon;
+  }
+  for(const element of document.querySelectorAll<HTMLElement>("[data-voice-status-proxy]"))element.textContent=`VOICE: ${text}`;
+  const tab=document.querySelector<HTMLButtonElement>('[data-dock-tab="voice"]');if(tab)tab.dataset.voiceState=state;
+}
 function setVoiceStatus(text:string,error=false) {
   voiceStatus.textContent=`VOICE: ${text}`;voiceStatus.style.color=error?"#ff7187":text.includes("LIVE")?"#58e6bb":"#9fb3c6";
+  refreshVoiceControlState(text,error);
 }
 function refreshVoiceMeshStatus() {
   if(!voiceEnabled)return;
@@ -1807,7 +1825,7 @@ async function enableVoice() {
   setVoiceStatus("CONNECTING");voiceToggleButton.disabled=true;
   try {
     voiceRawStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:{ideal:true},noiseSuppression:{ideal:false},autoGainControl:{ideal:false},channelCount:{ideal:1}},video:false});
-    voiceEnabled=true;await rebuildVoiceSendStream();voiceToggleButton.textContent="MIC ON";voiceToggleButton.classList.add("active");
+    voiceEnabled=true;await rebuildVoiceSendStream();voiceToggleButton.classList.add("active");setVoiceStatus("READY");
     announceVoicePresence();
     if(voiceMeshTimer!==null)window.clearInterval(voiceMeshTimer);
     voiceMeshTimer=window.setInterval(announceVoicePresence,5000);
@@ -1824,11 +1842,11 @@ function disableVoice(notify=true) {
   try {voiceDestination?.disconnect();} catch {}
   voiceSourceNode=null;voiceInputGain=null;voiceEffectNodes=[];voiceDestination=null;
   for(const analyser of voiceAnalysers.values())try {analyser.source.disconnect();analyser.analyser.disconnect();for(const node of analyser.outputNodes)node.disconnect();} catch {}
-  voiceAnalysers.clear();voiceToggleButton.textContent="MIC OFF";voiceToggleButton.classList.remove("active");setVoiceStatus("OFF");
+  voiceAnalysers.clear();voiceToggleButton.classList.remove("active");setVoiceStatus("OFF");
 }
 voiceToggleButton.addEventListener("click",()=>{if(voiceEnabled)disableVoice();else {unlockVoiceOutput();void enableVoice();}});
-voiceEffectSelect.addEventListener("change",()=>{if(voiceEnabled)void rebuildVoiceSendStream();});
-voiceVolumeSelect.addEventListener("change",()=>{const volume=Number(voiceVolumeSelect.value)||1;for(const runtime of voiceAnalysers.values())if(runtime.outputGain)runtime.outputGain.gain.value=volume;for(const audio of voiceAudioElements.values())audio.volume=volume;});
+voiceEffectSelect.addEventListener("change",()=>{for(const select of document.querySelectorAll<HTMLSelectElement>("[data-voice-effect-proxy]"))select.value=voiceEffectSelect.value;if(voiceEnabled)void rebuildVoiceSendStream();});
+voiceVolumeSelect.addEventListener("change",()=>{for(const select of document.querySelectorAll<HTMLSelectElement>("[data-voice-volume-proxy]"))select.value=voiceVolumeSelect.value;const volume=Number(voiceVolumeSelect.value)||1;for(const runtime of voiceAnalysers.values())if(runtime.outputGain)runtime.outputGain.gain.value=volume;for(const audio of voiceAudioElements.values())audio.volume=volume;});
 window.addEventListener("beforeunload",()=>disableVoice(false));
 const takeWorldPhotoButton=communicationControls.querySelector<HTMLButtonElement>("#takeWorldPhoto")!;
 const selfieModeButton=communicationControls.querySelector<HTMLButtonElement>("#selfieMode")!;
@@ -5748,7 +5766,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3.4</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3.5</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -7185,14 +7203,16 @@ dockChatInput.addEventListener("keydown",event=>{if(event.key==="Enter"&&!event.
 dockChat.querySelector<HTMLElement>(".dock-quick")!.addEventListener("click",event=>{const button=(event.target as HTMLElement).closest("button");if(button){avatarMessageInput.value=button.textContent||"";sendAvatarMessageButton.click();}});
 
 const dockVoice=document.createElement("div");dockVoice.className="dock-voice";
-dockVoice.innerHTML=`<button type="button">MIC OFF</button><select aria-label="Voice effect"></select><select aria-label="Voice volume"></select>`;
+dockVoice.dataset.voiceState="off";
+dockVoice.innerHTML=`<div class="dock-voice-primary"><button type="button" data-voice-toggle-proxy aria-pressed="false"><span class="voice-mic-icon" aria-hidden="true">⊘</span><span class="voice-mic-label">MIC OFF · MUTED</span></button><span data-voice-status-proxy>VOICE: OFF</span></div><div class="dock-voice-settings"><label><span>VOICE EFFECT</span><select data-voice-effect-proxy aria-label="Voice effect"></select></label><label><span>OUTPUT VOLUME</span><select data-voice-volume-proxy aria-label="Output volume"></select></label></div>`;
 const dockVoiceButton=dockVoice.querySelector<HTMLButtonElement>("button")!;
 const dockVoiceSelects=dockVoice.querySelectorAll<HTMLSelectElement>("select");
 dockVoiceSelects[0].innerHTML=voiceEffectSelect.innerHTML;dockVoiceSelects[0].value=voiceEffectSelect.value;
 dockVoiceSelects[1].innerHTML=voiceVolumeSelect.innerHTML;dockVoiceSelects[1].value=voiceVolumeSelect.value;
-dockVoiceButton.addEventListener("click",()=>{voiceToggleButton.click();window.setTimeout(()=>{dockVoiceButton.textContent=voiceToggleButton.textContent||"MIC";dockVoiceButton.classList.toggle("active",voiceToggleButton.classList.contains("active"));},0);});
+dockVoiceButton.addEventListener("click",()=>voiceToggleButton.click());
 dockVoiceSelects[0].addEventListener("change",()=>{voiceEffectSelect.value=dockVoiceSelects[0].value;voiceEffectSelect.dispatchEvent(new Event("change",{bubbles:true}));dockVoiceSelects[0].blur();});
 dockVoiceSelects[1].addEventListener("change",()=>{voiceVolumeSelect.value=dockVoiceSelects[1].value;voiceVolumeSelect.dispatchEvent(new Event("change",{bubbles:true}));dockVoiceSelects[1].blur();});
+refreshVoiceControlState(voiceEnabled?"READY":"OFF");
 
 const dockPhoto=document.createElement("div");dockPhoto.className="dock-photo";
 dockPhoto.innerHTML=`<button type="button" data-photo-mode="selfie">SELFIE</button><button type="button" data-photo-mode="group">GROUP</button><select aria-label="Photo timer"><option value="0">TIMER OFF</option><option value="3">3 SEC</option><option value="10">10 SEC</option></select><button type="button" data-take-photo>PHOTO</button>`;
@@ -7217,6 +7237,7 @@ compactDockTabs.innerHTML=`
   <button type="button" data-dock-tab="photo" title="Photo controls"><b aria-hidden="true">▣</b><span>PHOTO</span></button>
   <button type="button" data-dock-tab="action" title="Avatar actions"><b aria-hidden="true">☺</b><span>ACTION</span></button>
   <button type="button" data-dock-tab="light" title="Toggle flashlight"><b aria-hidden="true">◆</b><span>LIGHT</span></button>`;
+refreshVoiceControlState(voiceEnabled?"READY":"OFF");
 const compactDockPanels=document.createElement("div");compactDockPanels.className="compact-dock-panels";
 compactDockPanels.append(
   createViewControlGroup("VIEW",[viewToggle]),
@@ -7357,7 +7378,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3.4</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3.5</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
@@ -7580,6 +7601,7 @@ uiFoundationStyle.textContent=`
   @media (min-width:761px) and (pointer:fine){
     body[data-ui-workspace="view"] #viewControlDock.room-active{display:grid;position:fixed;left:16px;right:16px;bottom:16px;z-index:45;grid-template-columns:minmax(72px,.6fr) minmax(300px,2.1fr) minmax(220px,1.45fr) minmax(320px,1.9fr) minmax(190px,1.2fr) minmax(120px,.8fr);gap:6px;padding:7px;overflow-x:auto;box-sizing:border-box;border:1px solid rgba(120,150,175,.56);border-radius:15px;background:rgba(7,13,21,.93);backdrop-filter:blur(18px);box-shadow:0 14px 38px rgba(0,0,0,.25)}
     .view-control-group{min-width:0;padding:6px 8px 7px;border:1px solid rgba(100,128,150,.34);border-radius:10px;background:rgba(12,21,31,.72)}.view-control-label{display:block;margin:0 0 5px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}.view-control-content{display:flex;align-items:center;gap:5px;min-height:38px}.view-control-content button,.view-control-content select{min-height:36px!important;padding:7px 8px!important;white-space:nowrap}.dock-view,.dock-light{width:100%!important}.dock-chat,.dock-voice,.dock-photo,.dock-actions{width:100%;display:flex;align-items:center;gap:4px}.dock-chat>input{min-width:105px;flex:1;box-sizing:border-box;padding:9px;border:1px solid #7191ae;border-radius:9px;background:rgba(9,15,24,.94);color:#fff}.dock-quick{display:flex;gap:3px}.dock-quick button{padding:6px!important}.dock-voice button{min-width:68px}.dock-voice select{min-width:0;flex:1}.dock-photo select{min-width:96px}.dock-actions button{flex:1;min-width:0}.dock-light.active{border-color:#ffe08a!important;color:#ffe08a!important;box-shadow:0 0 14px rgba(255,224,138,.35)}
+    .dock-voice{display:grid!important;grid-template-columns:1fr!important;gap:6px!important}.dock-voice-primary{display:flex;align-items:center;gap:7px;min-width:0}.dock-voice-primary button{display:flex;align-items:center;justify-content:center;gap:6px;flex:1;min-width:0!important;height:40px!important;font-weight:900}.dock-voice-primary>[data-voice-status-proxy]{color:#8fa8bb;font-size:8px;font-weight:900;white-space:nowrap}.dock-voice-settings{display:grid;grid-template-columns:1fr 1fr;gap:6px}.dock-voice-settings label{display:grid;gap:3px;min-width:0;color:#8fa8bb;font-size:7px;font-weight:900;letter-spacing:.07em}.dock-voice-settings select{width:100%;min-width:0!important;height:36px!important;padding:6px 24px 6px 7px!important;border:1px solid #56738b!important;border-radius:8px!important;background:#09131e!important;color:#fff!important;font-size:9px!important;font-weight:800}.dock-voice [data-voice-toggle-proxy][data-voice-state="off"]{border-color:#a04e5d!important;background:#351b24!important;color:#ffbdc7!important}.dock-voice [data-voice-toggle-proxy][data-voice-state="starting"]{border-color:#c99942!important;background:#352a17!important;color:#ffd27c!important}.dock-voice [data-voice-toggle-proxy][data-voice-state="live"]{border-color:#45c99a!important;background:#12382d!important;color:#76e7bf!important;box-shadow:0 0 12px rgba(69,201,154,.24)}.dock-voice [data-voice-toggle-proxy][data-voice-state="error"]{border-color:#ff7187!important;background:#401c25!important;color:#ff9baa!important}.compact-dock-tabs [data-dock-tab="voice"]{position:relative}.compact-dock-tabs [data-dock-tab="voice"]::after{content:"";position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:#647687}.compact-dock-tabs [data-dock-tab="voice"][data-voice-state="live"]::after{background:#58e6bb;box-shadow:0 0 8px rgba(88,230,187,.7)}.compact-dock-tabs [data-dock-tab="voice"][data-voice-state="starting"]::after{background:#ffd27c}.compact-dock-tabs [data-dock-tab="voice"][data-voice-state="error"]::after{background:#ff7187}
     .view-control-content #viewToggle{display:block!important;position:static!important;inset:auto!important;transform:none!important;width:100%!important}
     body[data-ui-workspace="avatar"] #avatarControls{display:block!important;position:fixed!important;top:84px!important;right:max(16px,env(safe-area-inset-right))!important;bottom:16px!important;left:auto!important;z-index:50!important;width:min(370px,calc(100vw - 270px))!important;height:auto!important}
     body[data-ui-workspace="avatar"] #avatarControls>#flashlightButton{display:none!important}

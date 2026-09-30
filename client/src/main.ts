@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.2 CUE TIMELINE EDITING LOADED]");
+console.log("[PROTOTYPE 0.25.3 DIRECTOR REMOTE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -84,6 +84,8 @@ const roomInput = document.querySelector<HTMLInputElement>("#roomInput")!;
 const status = document.querySelector<HTMLElement>("#status")!;
 const roomLabel = document.querySelector<HTMLElement>("#roomLabel")!;
 const playersLabel = document.querySelector<HTMLElement>("#playersLabel")!;
+const directorRemoteMode=new URLSearchParams(window.location.search).get("directorRemote")==="1";
+document.body.classList.toggle("director-remote-mode",directorRemoteMode);
 const joystick = document.querySelector<HTMLDivElement>("#joystick")!;
 const joystickKnob = document.querySelector<HTMLDivElement>("#joystickKnob")!;
 const viewToggle = document.querySelector<HTMLButtonElement>("#viewToggle")!;
@@ -396,6 +398,7 @@ const app = new pc.Application(canvas, {
 app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW);
 app.setCanvasResolution(pc.RESOLUTION_AUTO);
 app.start();
+if(directorRemoteMode){canvas.hidden=true;(app as any).autoRender=false;document.title="Director Remote · Shared World";}
 app.scene.ambientLight = new pc.Color(0.42, 0.45, 0.5);
 window.addEventListener("resize", () => app.resizeCanvas());
 
@@ -1073,7 +1076,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.2</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -1311,7 +1314,10 @@ newRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){even
 cloneRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("clone",cloneRoomCodeInput.value);}});
 renameRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void renameSelectedRoom();}});
 window.setTimeout(()=>void refreshOwnedRooms(),500);
-if(invitedRoomCode)window.setTimeout(()=>{roomManagerStatus.textContent=`INVITED ROOM ${invitedRoomCode} · check role above, then enter`;void preflightRoomEntry(invitedRoomCode);},700);
+if(invitedRoomCode)window.setTimeout(()=>{
+  roomManagerStatus.textContent=directorRemoteMode?`DIRECTOR REMOTE · CONNECTING TO ${invitedRoomCode}`:`INVITED ROOM ${invitedRoomCode} · check role above, then enter`;
+  if(directorRemoteMode)void enterWorld();else void preflightRoomEntry(invitedRoomCode);
+},700);
 else window.setTimeout(()=>void preflightRoomEntry(roomInput.value),700);
 let roomPreflightInputTimer:number|null=null;
 roomInput.addEventListener("input",()=>{if(roomPreflightInputTimer!==null)window.clearTimeout(roomPreflightInputTimer);roomPreflightInputTimer=window.setTimeout(()=>void preflightRoomEntry(roomInput.value),350);});
@@ -4137,6 +4143,7 @@ async function enterWorld() {
     room.onMessage("cue:fired",(payload:any)=>{
       if(room!==activeRoom)return;cueStatus.textContent=`LIVE CUE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0}`;
       directorActionStatus.textContent=`LIVE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0} OBJECTS`;
+      directorRemoteActivity.textContent=`LIVE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0} OBJECTS`;
     });
     room.onMessage("cue:timeline:state",(payload:any)=>{
       if(room!==activeRoom)return;const timelineState=String(payload?.status||"stopped");
@@ -4176,6 +4183,7 @@ async function enterWorld() {
     room.onMessage("scene:recalled",(payload:any)=>{
       if(room!==activeRoom)return;sceneStatus.textContent=`LIVE SCENE · ${String(payload?.name||"Scene")}`;
       directorActionStatus.textContent=`LIVE SCENE · ${String(payload?.name||"Scene")} · ${Number(payload?.count)||0} OBJECTS`;
+      directorRemoteActivity.textContent=`LIVE SCENE · ${String(payload?.name||"Scene")} · ${Number(payload?.count)||0} OBJECTS`;
       room.send("media:snapshot:request",{});
     });
 
@@ -4443,6 +4451,7 @@ async function enterWorld() {
     mobileActionDock.classList.add("room-active");
     uiFoundationRoot.classList.add("room-active");
     viewControlDock.classList.add("room-active");
+    if(directorRemoteMode){directorRemoteRoot.classList.remove("hidden");directorRemoteActivity.textContent="ROOM CONNECTED · CHECKING DIRECTOR ACCESS";requestDirectorData(true);void requestDirectorRemoteWakeLock();refreshDirectorRemote();}
     hud.querySelector<HTMLElement>(".controls")!.textContent=
       "WASD：移動 / SPACE：ジャンプ・上昇 / F：飛行 / SHIFT：下降";
   } catch (error) {
@@ -5716,12 +5725,36 @@ directorButton.id="directorButton";directorButton.type="button";directorButton.t
 const directorPanel=document.createElement("section");directorPanel.id="directorPanel";directorPanel.className="hidden";
 directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</strong><button id="closeDirectorButton" type="button">×</button></div>
   <div id="directorRoleStatus">VIEWER</div>
+  <button id="openDirectorRemoteButton" type="button">OPEN REMOTE CONTROL</button>
   <button id="openCueTimelineButton" type="button">OPEN CUE TIMELINE</button>
   <div class="director-section"><strong>LIVE CUES</strong><div id="directorCueGrid" class="director-grid"></div></div>
   <div class="director-section"><strong>SCENES</strong><div id="directorSceneGrid" class="director-grid"></div></div>
   <div id="directorManageSection" class="director-section hidden"><strong>DIRECTOR ACCESS</strong><div id="directorParticipantList"></div></div>
   <div id="directorActionStatus">READY</div>`;
 document.body.append(directorButton,directorPanel);
+
+const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+  <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
+  <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
+  <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
+  <section class="remote-bank"><div class="remote-section-head"><strong>LIVE CUES</strong><span>TAP TO FIRE</span></div><div id="directorRemoteCues" class="remote-grid"></div></section>
+  <section class="remote-bank"><div class="remote-section-head"><strong>SCENES</strong><span>TAP TO RECALL</span></div><div id="directorRemoteScenes" class="remote-grid"></div></section>
+  <footer><span id="directorRemoteActivity">WAITING FOR ROOM DATA</span><button id="directorRemoteRefresh" type="button">REFRESH</button></footer>`;
+document.body.appendChild(directorRemoteRoot);
+const directorRemoteStyle=document.createElement("style");directorRemoteStyle.textContent=`
+  #directorRemoteRoot{position:fixed;inset:0;z-index:1000;overflow:auto;box-sizing:border-box;padding:max(16px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));background:linear-gradient(145deg,#07101a,#101923 55%,#09121c);color:#edf7ff;font:700 14px/1.35 system-ui,sans-serif}
+  #directorRemoteRoot.hidden{display:none!important}#directorRemoteRoot header,#directorRemoteRoot footer,.remote-room-strip,.remote-timeline-head,.remote-current,.remote-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  #directorRemoteRoot header{margin:0 auto 12px;max-width:920px}#directorRemoteRoot header div{display:grid;gap:2px}#directorRemoteRoot header strong{font-size:17px;letter-spacing:.08em}#directorRemoteRoot header small,.remote-section-head span,.remote-current small{color:#84a4ba;font-size:10px;letter-spacing:.08em}
+  #directorRemoteRoot button{min-height:48px;border:1px solid #49647a;border-radius:11px;background:#182736;color:#f5fbff;font-weight:900;letter-spacing:.04em;touch-action:manipulation}#directorRemoteRoot button:disabled{opacity:.34}
+  .remote-room-strip,.remote-now,.remote-bank,#directorRemoteRoot footer{max-width:920px;margin:0 auto 12px;box-sizing:border-box;border:1px solid rgba(112,151,180,.45);border-radius:14px;background:rgba(11,21,31,.88);padding:12px}.remote-room-strip span{font-size:10px;color:#82a6bd}.remote-room-strip span:first-child{color:#68deb0}.remote-now{padding:16px}.remote-timeline-head time{font:900 14px ui-monospace,monospace;color:#ffca73}.remote-timeline-head span{padding:6px 9px;border-radius:8px;background:#27303a}.remote-timeline-head span[data-state="playing"]{color:#65e4b2;background:#173527}.remote-timeline-head span[data-state="paused"]{color:#ffd17d;background:#382d18}
+  .remote-progress{height:8px;margin:15px 0;border-radius:8px;background:#263542;overflow:hidden}.remote-progress i{display:block;width:0;height:100%;background:#ffb54a;transition:width .08s linear}.remote-current>div{display:grid;gap:4px;width:48%}.remote-current>div:last-child{text-align:right}.remote-current strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
+  .remote-transport{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:8px;max-width:920px;margin:0 auto 12px}.remote-transport button{min-height:62px;font-size:15px}.remote-transport button:first-child{border-color:#388c6d;background:#123f31}.remote-transport button:last-child{border-color:#8a5353;background:#3d2023}
+  .remote-section-head{margin-bottom:10px}.remote-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.remote-grid button{text-align:left;padding:10px}.remote-grid button small{display:block;margin-top:4px;color:#88a6ba;font-size:9px}#directorRemoteRoot footer{font-size:10px;color:#8fb0c5}#directorRemoteRoot footer button{min-height:38px;padding:5px 12px}
+  body.director-remote-mode #application-canvas,body.director-remote-mode #hud,body.director-remote-mode #avatarControls,body.director-remote-mode #flightControls,body.director-remote-mode #emoteControls,body.director-remote-mode #communicationControls,body.director-remote-mode #mobileActionDock,body.director-remote-mode #uiFoundationRoot,body.director-remote-mode #viewControlDock,body.director-remote-mode #directorButton,body.director-remote-mode #directorPanel,body.director-remote-mode #mediaManagerPanel{display:none!important}
+  @media(max-width:620px){#directorRemoteRoot{padding-top:max(10px,env(safe-area-inset-top));font-size:12px}.remote-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.remote-room-strip{display:grid;grid-template-columns:1fr auto}.remote-room-strip span:last-child{grid-column:1/-1}.remote-transport button{min-height:58px;font-size:12px}.remote-current strong{font-size:12px}}
+`;
+document.head.appendChild(directorRemoteStyle);
 
 const environmentEditor=document.createElement("div");
 environmentEditor.id="environmentEditor";
@@ -6250,6 +6283,7 @@ const directorSceneGrid=directorPanel.querySelector<HTMLElement>("#directorScene
 const directorManageSection=directorPanel.querySelector<HTMLElement>("#directorManageSection")!;
 const directorParticipantList=directorPanel.querySelector<HTMLElement>("#directorParticipantList")!;
 const directorActionStatus=directorPanel.querySelector<HTMLElement>("#directorActionStatus")!;
+const openDirectorRemoteButton=directorPanel.querySelector<HTMLButtonElement>("#openDirectorRemoteButton")!;
 function refreshDirectorPanel(){
   directorButton.classList.toggle("hidden",!directorCanDirect&&!directorCanManage);
   for(const button of uiFoundationRoot?.querySelectorAll<HTMLButtonElement>('[data-workspace="direct"]')||[]) {
@@ -6271,6 +6305,7 @@ function refreshDirectorPanel(){
     const label=document.createElement("span");label.textContent=`${person.name}${person.isOwner?" · OWNER":person.isDirector?" · DIRECTOR":""}`;
     const button=document.createElement("button");button.type="button";button.disabled=person.isOwner;button.textContent=person.isOwner?"OWNER":person.isDirector?"REVOKE":"GRANT";
     button.addEventListener("click",()=>activeRoom?.send("director:grant",{sessionId:person.sessionId,enabled:!person.isDirector}));row.append(label,button);directorParticipantList.appendChild(row);}
+  refreshDirectorRemote();
 }
 let directorDataRequestAt=0;
 function requestDirectorData(force=false){
@@ -6281,6 +6316,11 @@ function requestDirectorData(force=false){
 }
 directorButton.addEventListener("click",()=>{directorPanel.classList.toggle("hidden");requestDirectorData(true);refreshDirectorPanel();});
 closeDirectorButton.addEventListener("click",()=>directorPanel.classList.add("hidden"));
+openDirectorRemoteButton.addEventListener("click",()=>{
+  const url=new URL(window.location.href);url.searchParams.set("directorRemote","1");
+  const roomCode=roomInput.value.trim();if(roomCode)url.searchParams.set("room",roomCode);
+  window.open(url.toString(),"_blank","noopener,noreferrer");
+});
 
 const closeMediaManagerButton = mediaManagerPanel.querySelector<HTMLButtonElement>("#closeMediaManagerButton")!;
 const mediaManagerList = mediaManagerPanel.querySelector<HTMLElement>("#mediaManagerList")!;
@@ -6371,7 +6411,7 @@ function refreshCueTimeline(){
   const canEditTimeline=environmentCanEdit&&cueTimelineStatus!=="playing";cueTimelineLengthMode.disabled=!canEditTimeline;cueTimelineDurationSeconds.disabled=!canEditTimeline||cueTimelineLengthMode.value!=="manual";cueTimelineSaveLength.disabled=!canEditTimeline;cueTimelineDuplicate.disabled=!canEditTimeline||!cueSelect.value;
   if(document.activeElement!==cueTimelineDurationSeconds)cueTimelineDurationSeconds.value=String(Math.max(1,Math.round(cueTimelineDurationMs/1000)));
   cueTimelineRows.replaceChildren();const ordered=[...cueSummaries].sort((a,b)=>a.startMs-b.startMs||a.updatedAt-b.updatedAt);
-  if(!ordered.length){cueTimelineRows.innerHTML='<div class="cue-timeline-empty">SAVE A CUE TO BUILD THE TIMELINE</div>';return;}
+  if(!ordered.length){cueTimelineRows.innerHTML='<div class="cue-timeline-empty">SAVE A CUE TO BUILD THE TIMELINE</div>';refreshDirectorRemote();return;}
   for(const cue of ordered){
     const row=document.createElement("button");row.type="button";row.className="cue-timeline-row";row.dataset.cueId=cue.id;row.classList.toggle("edit-locked",!canEditTimeline);
     row.style.setProperty("--cue-position",`${Math.min(100,cue.startMs/Math.max(1,cueTimelineDurationMs)*100)}%`);
@@ -6382,6 +6422,7 @@ function refreshCueTimeline(){
     row.addEventListener("pointerup",event=>{if(row.hasPointerCapture(event.pointerId))row.releasePointerCapture(event.pointerId);if(dragging&&dragTime!==cue.startMs)saveCueTimelineEdit(cue,dragTime);else{cueSelect.value=cue.id;cueSelect.dispatchEvent(new Event("change"));}});
     row.addEventListener("pointercancel",()=>refreshCueTimeline());cueTimelineRows.appendChild(row);
   }
+  refreshDirectorRemote();
 }
 window.setInterval(()=>{if(cueTimelineStatus==="playing")refreshCueTimeline();},100);
 cueTimelineScrubber.addEventListener("input",()=>{if(cueTimelineStatus!=="playing"){cueTimelinePositionMs=Number(cueTimelineScrubber.value)||0;cueTimelineReceivedAt=Date.now();refreshCueTimeline();}});
@@ -6487,6 +6528,55 @@ cueFireButton.addEventListener("click",()=>{if(activeRoom&&directorCanDirect&&cu
 cueDeleteButton.addEventListener("click",()=>{if(activeRoom&&environmentCanEdit&&cueSelect.value&&window.confirm("Delete this cue?"))activeRoom.send("cue:delete",{id:cueSelect.value});});
 type SceneSummary={id:string;name:string;updatedAt:number;objectCount:number};
 let sceneSummaries:SceneSummary[]=[];
+const directorRemoteConnection=directorRemoteRoot.querySelector<HTMLElement>("#directorRemoteConnection")!;
+const directorRemoteRoom=directorRemoteRoot.querySelector<HTMLElement>("#directorRemoteRoom")!;
+const directorRemoteRole=directorRemoteRoot.querySelector<HTMLElement>("#directorRemoteRole")!;
+const directorRemoteState=directorRemoteRoot.querySelector<HTMLElement>("#directorRemoteState")!;
+const directorRemoteClock=directorRemoteRoot.querySelector<HTMLElement>("#directorRemoteClock")!;
+const directorRemoteProgress=directorRemoteRoot.querySelector<HTMLElement>("#directorRemoteProgress")!;
+const directorRemoteCurrent=directorRemoteRoot.querySelector<HTMLElement>("#directorRemoteCurrent")!;
+const directorRemoteNext=directorRemoteRoot.querySelector<HTMLElement>("#directorRemoteNext")!;
+const directorRemoteCues=directorRemoteRoot.querySelector<HTMLElement>("#directorRemoteCues")!;
+const directorRemoteScenes=directorRemoteRoot.querySelector<HTMLElement>("#directorRemoteScenes")!;
+const directorRemoteActivity=directorRemoteRoot.querySelector<HTMLElement>("#directorRemoteActivity")!;
+const directorRemotePlay=directorRemoteRoot.querySelector<HTMLButtonElement>("#directorRemotePlay")!;
+const directorRemotePause=directorRemoteRoot.querySelector<HTMLButtonElement>("#directorRemotePause")!;
+const directorRemoteStop=directorRemoteRoot.querySelector<HTMLButtonElement>("#directorRemoteStop")!;
+let directorRemoteWakeLock:any=null;
+let directorRemoteCueSignature="",directorRemoteSceneSignature="";
+async function requestDirectorRemoteWakeLock(){
+  if(!directorRemoteMode||document.visibilityState!=="visible"||directorRemoteWakeLock)return;
+  try{directorRemoteWakeLock=await (navigator as any).wakeLock?.request("screen");directorRemoteWakeLock?.addEventListener("release",()=>{directorRemoteWakeLock=null;});}catch{/* Wake Lock is optional. */}
+}
+function refreshDirectorRemote(){
+  if(!directorRemoteMode)return;
+  const position=currentCueTimelinePosition(),ordered=[...cueSummaries].sort((a,b)=>a.startMs-b.startMs||a.updatedAt-b.updatedAt);
+  const current=[...ordered].reverse().find(cue=>cue.startMs<=position),next=ordered.find(cue=>cue.startMs>position);
+  directorRemoteConnection.textContent=activeRoom?"● LIVE":"○ OFFLINE";
+  directorRemoteRoom.textContent=`ROOM ${roomInput.value.trim().toUpperCase()||"—"}`;
+  directorRemoteRole.textContent=directorCanManage?"OWNER · DIRECTOR":directorCanDirect?"DIRECTOR":"NO DIRECTOR ACCESS";
+  directorRemoteState.textContent=cueTimelineStatus.toUpperCase();directorRemoteState.dataset.state=cueTimelineStatus;
+  directorRemoteClock.textContent=`${formatCueTime(position)} / ${formatCueTime(cueTimelineDurationMs)}`;
+  directorRemoteProgress.style.width=`${Math.min(100,position/Math.max(1,cueTimelineDurationMs)*100)}%`;
+  directorRemoteCurrent.textContent=current?.name||"—";directorRemoteNext.textContent=next?.name||"END";
+  const enabled=!!activeRoom&&directorCanDirect;
+  directorRemotePlay.disabled=!enabled;directorRemotePause.disabled=!enabled||cueTimelineStatus!=="playing";directorRemoteStop.disabled=!enabled||cueTimelineStatus==="stopped";
+  const cueSignature=`${enabled}|${ordered.map(cue=>`${cue.id}:${cue.name}:${cue.startMs}`).join("|")}`;
+  if(cueSignature!==directorRemoteCueSignature){directorRemoteCueSignature=cueSignature;directorRemoteCues.replaceChildren();
+    if(!ordered.length)directorRemoteCues.innerHTML='<div>NO CUES</div>';
+    for(const cue of ordered){const button=document.createElement("button");button.type="button";button.disabled=!enabled;button.innerHTML=`<span></span><small>${formatCueTime(cue.startMs)} · ${cue.targetType.toUpperCase()}</small>`;button.querySelector("span")!.textContent=cue.name;button.addEventListener("click",()=>{if(activeRoom&&directorCanDirect){activeRoom.send("cue:fire",{id:cue.id});directorRemoteActivity.textContent=`FIRING · ${cue.name}`;void requestDirectorRemoteWakeLock();}});directorRemoteCues.appendChild(button);}}
+  const sceneSignature=`${enabled}|${sceneSummaries.map(scene=>`${scene.id}:${scene.name}`).join("|")}`;
+  if(sceneSignature!==directorRemoteSceneSignature){directorRemoteSceneSignature=sceneSignature;directorRemoteScenes.replaceChildren();
+    if(!sceneSummaries.length)directorRemoteScenes.innerHTML='<div>NO SCENES</div>';
+    for(const scene of sceneSummaries){const button=document.createElement("button");button.type="button";button.disabled=!enabled;button.innerHTML='<span></span><small>RECALL SCENE</small>';button.querySelector("span")!.textContent=scene.name;button.addEventListener("click",()=>{if(activeRoom&&directorCanDirect){activeRoom.send("scene:recall",{id:scene.id});directorRemoteActivity.textContent=`RECALLING · ${scene.name}`;void requestDirectorRemoteWakeLock();}});directorRemoteScenes.appendChild(button);}}
+  if(!enabled)directorRemoteActivity.textContent=activeRoom?"DIRECTOR ACCESS REQUIRED":"WAITING FOR ROOM CONNECTION";
+}
+directorRemotePlay.addEventListener("click",()=>{if(activeRoom&&directorCanDirect){activeRoom.send("cue:timeline:play",{positionMs:currentCueTimelinePosition()});directorRemoteActivity.textContent="TIMELINE PLAY REQUESTED";void requestDirectorRemoteWakeLock();}});
+directorRemotePause.addEventListener("click",()=>{if(activeRoom&&directorCanDirect){activeRoom.send("cue:timeline:pause",{});directorRemoteActivity.textContent="TIMELINE PAUSE REQUESTED";}});
+directorRemoteStop.addEventListener("click",()=>{if(activeRoom&&directorCanDirect&&window.confirm("Stop the live timeline and return to the beginning?")){activeRoom.send("cue:timeline:stop",{});directorRemoteActivity.textContent="TIMELINE STOP REQUESTED";}});
+directorRemoteRoot.querySelector<HTMLButtonElement>("#directorRemoteRefresh")!.addEventListener("click",()=>{requestDirectorData(true);directorRemoteActivity.textContent="REFRESHING ROOM DATA";});
+directorRemoteRoot.querySelector<HTMLButtonElement>("#directorRemoteExit")!.addEventListener("click",()=>{const url=new URL(window.location.href);url.searchParams.delete("directorRemote");window.location.href=url.toString();});
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")void requestDirectorRemoteWakeLock();});
 type PendingSceneSave={requestId:string;id:string;name:string};
 let pendingSceneSave:PendingSceneSave|null=null;
 let sceneSaveRetryTimer:number|null=null;
@@ -7218,7 +7308,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.2</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

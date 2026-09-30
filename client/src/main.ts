@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.3.5 VOICE CONTROL UX LOADED]");
+console.log("[PROTOTYPE 0.25.3.6 ROOM ENTRY UX LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1060,45 +1060,48 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #lobby.panel{max-height:calc(var(--shared-world-viewport-height,100dvh) - 64px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scrollbar-gutter:stable;touch-action:pan-y}
   #roomManager .room-manager-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
   #roomManager .room-manager-title{display:flex;align-items:baseline;gap:7px}#roomManager .room-manager-title small{color:#7f97a9;font-size:8px;letter-spacing:.08em}
-  #roomManager #refreshRoomsButton{width:auto!important;min-width:108px!important;margin:0!important}
+  #roomManager #refreshRoomsButton{width:38px!important;min-width:38px!important;height:38px!important;margin:0!important;padding:0!important;font-size:18px!important;line-height:1!important}
   #roomManager #ownedRoomList{display:grid;gap:6px;max-height:238px;overflow:auto;padding-right:2px;scrollbar-gutter:stable}
   #roomManager .owned-room-item{width:100%!important;margin:0!important;border:1px solid transparent!important;transition:border-color .15s,background .15s}
   #roomManager .owned-room-item[aria-pressed="true"]{border-color:#62d8ff!important;background:#153044!important;box-shadow:inset 3px 0 #62d8ff}
   #roomManager .owned-room-item[data-archived="true"]{opacity:.72}
   #roomManager .room-selection{display:grid;grid-template-columns:1fr auto;gap:4px 8px;padding:8px 9px;border:1px solid #314556;border-radius:8px;background:#0a151f;color:#dceaf4;font-size:10px}
   #roomManager .room-selection strong{font-size:11px}#roomManager .room-selection span{color:#8fa8ba;text-align:right}
-  #roomManager details{border:1px solid #2f414f;border-radius:8px;background:#09121a;overflow:hidden}#roomManager summary{padding:9px 10px;cursor:pointer;color:#bcd0df;font-size:10px;font-weight:850;letter-spacing:.08em}
+  #roomManager details{border:1px solid #2f414f;border-radius:8px;background:#09121a;overflow:hidden}#roomManager summary{padding:10px;cursor:pointer;color:#bcd0df;font-size:10px;font-weight:850;letter-spacing:.08em;list-style:none}#roomManager summary::-webkit-details-marker{display:none}#roomManager summary::before{content:"▸";display:inline-block;width:14px;color:#6f91a8}#roomManager details[open]>summary::before{content:"▾"}#roomManager details details{background:#0c1720}
   #roomManager .room-action-body{display:grid;gap:7px;padding:0 8px 8px}#roomManager .room-action-row{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;width:100%}
   #roomManager .room-action-row input,#roomManager .room-action-row select{display:block;width:100%!important;min-width:0!important;box-sizing:border-box}#roomManager .room-action-row button{width:134px!important;min-width:134px!important;margin:0!important}
   #roomManager .archive-row{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:6px;align-items:center}#roomManager .archive-row label{display:flex;align-items:center;gap:7px;color:#b7c9d8;font-size:10px}#roomManager .archive-row input{width:auto!important}
-  #roomManager .room-entry-card{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:7px;padding:10px;border:1px solid #3b596d;border-radius:9px;background:#0a1721}#roomManager .room-entry-card>div{display:flex;flex-direction:column;gap:4px;min-width:0}#roomManager .room-entry-card strong{font-size:12px;color:#e8f5fd}#roomManager .room-entry-card span{font-size:9px;color:#9db3c3;line-height:1.35}#roomManager .room-entry-card button{width:134px!important;min-width:134px!important;margin:0!important}#roomManager .room-entry-card[data-state="allowed"]{border-color:#43d3a7}#roomManager .room-entry-card[data-state="denied"]{border-color:#dc8f55}#roomManager .room-entry-card[data-state="missing"]{border-color:#d86161}
-  #roomManager .access-mode-help{display:block;padding:8px 9px;border-radius:7px;background:#101d28;color:#b9ccda;font-size:9px;line-height:1.45}#roomManager #shareRoomButton{width:100%!important;margin:0!important}
+  #roomManager .room-entry-card{display:grid;grid-template-columns:minmax(0,1fr) 134px;gap:9px;padding:12px;border:1px solid #3b596d;border-radius:10px;background:#0a1721}#roomManager .room-entry-card>div{display:flex;flex-direction:column;gap:5px;min-width:0}#roomManager .room-entry-card strong{font-size:14px;color:#e8f5fd}#roomManager .room-entry-card span{font-size:10px;color:#9db3c3;line-height:1.35}#roomManager .room-entry-card button{width:134px!important;min-width:134px!important;margin:0!important}#roomManager .room-entry-card[data-state="allowed"]{border-color:#43d3a7;box-shadow:inset 3px 0 #43d3a7}#roomManager .room-entry-card[data-state="denied"]{border-color:#dc8f55}#roomManager .room-entry-card[data-state="missing"]{border-color:#d86161}
+  #roomManager .section-label{color:#7190a6;font-size:8px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}#roomManager .access-mode-help{display:block;padding:8px 9px;border-radius:7px;background:#101d28;color:#b9ccda;font-size:9px;line-height:1.45}#roomManager #shareRoomButton{width:100%!important;margin:0!important}
+  #roomManager [hidden]{display:none!important}#roomManager .selected-owner-note{color:#81a0b5;font-size:9px;line-height:1.4}
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
-  @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
+  @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3.5</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3.6</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
-  <details><summary>MY ROOMS</summary><div class="room-action-body">
+  <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
     <div id="ownedRoomList"><small>Loading saved rooms…</small></div>
+    <details><summary>CREATE / COPY ROOM</summary><div class="room-action-body">
+      <div class="room-action-row"><input id="newRoomCodeInput" aria-label="New ROOM code" maxlength="16" autocomplete="off" placeholder="NEW ROOM CODE"><button type="button" id="createRoomButton">CREATE</button></div>
+      <div class="room-action-row"><input id="cloneRoomCodeInput" aria-label="Clone target ROOM code" maxlength="16" autocomplete="off" placeholder="COPY TO NEW CODE"><button type="button" id="cloneRoomButton">COPY SELECTED</button></div>
+    </div></details>
+    <details id="manageSelectedRoomSection"><summary>ROOM SETTINGS</summary><div class="room-action-body">
+      <div class="room-action-row"><input id="renameRoomCodeInput" aria-label="Renamed ROOM code" maxlength="16" autocomplete="off" placeholder="RENAME TO CODE"><button type="button" id="renameRoomButton">RENAME</button></div>
+      <div class="archive-row"><label><input type="checkbox" id="showArchivedRoomsInput"> SHOW ARCHIVED</label><button type="button" id="archiveRoomButton">ARCHIVE</button></div>
+    </div></details>
   </div></details>
-  <details><summary>SHARE & ACCESS</summary><div class="room-action-body">
+  <details id="shareAccessSection" hidden><summary>SHARE</summary><div class="room-action-body">
+    <small class="section-label">ENTRY PERMISSION</small>
+    <div class="room-action-row"><select id="roomAccessMode" aria-label="ROOM entry mode"><option value="shared">PUBLIC · CODE / LINK</option><option value="owner-only">PRIVATE · OWNER + EDITORS</option></select><button type="button" id="saveRoomAccessButton">SAVE</button></div>
+    <small id="roomAccessModeHelp" class="access-mode-help"></small>
+    <small class="section-label">SHARE LINK</small>
     <button type="button" id="shareRoomButton">SHARE ROOM</button>
     <div class="room-action-row"><input id="roomShareLinkPreview" aria-label="Selected ROOM share link" readonly><button type="button" id="copyRoomShareLinkButton">COPY LINK</button></div>
-    <div class="room-action-row"><select id="roomAccessMode" aria-label="ROOM entry mode"><option value="shared">PUBLIC VIEWING · CODE / LINK</option><option value="owner-only">PRIVATE · OWNER + EDITORS</option></select><button type="button" id="saveRoomAccessButton">SAVE ACCESS</button></div>
-    <small id="roomAccessModeHelp" class="access-mode-help"></small>
-    <input id="roomEditorIdsInput" aria-label="Editor access IDs" autocomplete="off" placeholder="EDITOR ACCESS IDs · comma separated" style="width:100%;box-sizing:border-box">
-    <details><summary>MY ACCESS ID</summary><div class="room-action-body"><div class="room-action-row"><input id="myRoomAccessId" aria-label="My access ID" readonly><button type="button" id="copyRoomAccessIdButton">COPY MY ID</button></div><small style="color:#8fa8ba;line-height:1.35">Browser-local prototype identity. Clearing site storage changes this ID.</small></div></details>
+    <details><summary>EDITORS</summary><div class="room-action-body"><input id="roomEditorIdsInput" aria-label="Editor access IDs" autocomplete="off" placeholder="EDITOR ACCESS IDs · comma separated" style="width:100%;box-sizing:border-box"><small class="selected-owner-note">Add browser Access IDs separated by commas, then press SAVE above.</small></div></details>
   </div></details>
-  <details><summary>NEW ROOM / COPY</summary><div class="room-action-body">
-    <div class="room-action-row"><input id="newRoomCodeInput" aria-label="New ROOM code" maxlength="16" autocomplete="off" placeholder="NEW ROOM CODE"><button type="button" id="createRoomButton">CREATE</button></div>
-    <div class="room-action-row"><input id="cloneRoomCodeInput" aria-label="Clone target ROOM code" maxlength="16" autocomplete="off" placeholder="CLONE TARGET CODE"><button type="button" id="cloneRoomButton">CLONE SELECTED</button></div>
-  </div></details>
-  <details><summary>MANAGE SELECTED ROOM</summary><div class="room-action-body">
-    <div class="room-action-row"><input id="renameRoomCodeInput" aria-label="Renamed ROOM code" maxlength="16" autocomplete="off" placeholder="RENAME TO CODE"><button type="button" id="renameRoomButton">RENAME</button></div>
-    <div class="archive-row"><label><input type="checkbox" id="showArchivedRoomsInput"> SHOW ARCHIVED</label><button type="button" id="archiveRoomButton">ARCHIVE</button></div>
-  </div></details>
-  <small id="roomManagerStatus">Owner rooms only · deletion is disabled.</small>`;
+  <details id="myAccessIdSection"><summary>MY ACCESS ID · EDITOR REGISTRATION</summary><div class="room-action-body"><div class="room-action-row"><input id="myRoomAccessId" aria-label="My access ID" readonly><button type="button" id="copyRoomAccessIdButton">COPY ID</button></div><small class="selected-owner-note">Send this browser-specific ID to a ROOM Owner when Editor access is needed. Clearing site storage changes it.</small></div></details>
+  <small id="roomManagerStatus" role="status" aria-live="polite">Loading ROOM access…</small>`;
 lobby.appendChild(roomManager);
 enterButton.style.display="none";
 function syncLobbyViewportHeight(){
@@ -1130,6 +1133,8 @@ const roomManagerStatus=roomManager.querySelector<HTMLElement>("#roomManagerStat
 const roomSelectionSummary=roomManager.querySelector<HTMLElement>("#roomSelectionSummary")!;
 const roomEntryPreview=roomManager.querySelector<HTMLElement>("#roomEntryPreview")!;
 const enterSelectedRoomButton=roomManager.querySelector<HTMLButtonElement>("#enterSelectedRoomButton")!;
+const shareAccessSection=roomManager.querySelector<HTMLDetailsElement>("#shareAccessSection")!;
+const manageSelectedRoomSection=roomManager.querySelector<HTMLDetailsElement>("#manageSelectedRoomSection")!;
 const roomApiBase=SERVER_URL.replace(/^wss:/i,"https:").replace(/^ws:/i,"http:").replace(/\/$/,"");
 const roomApiURL=(path:string)=>`${roomApiBase}${path}`;
 const cleanRoomCode=(value:string)=>value.toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16);
@@ -1141,8 +1146,19 @@ const invitedRoomCode=cleanRoomCode(new URLSearchParams(window.location.search).
 if(invitedRoomCode)roomInput.value=invitedRoomCode;
 let selectedOwnedRoomCode=cleanRoomCode(roomInput.value||"ART001");
 let selectedOwnedRoomArchived=false;
+let selectedRoomIsOwned=false;
+let roomAccessDirty=false;
 myRoomAccessId.value=persistentClientId;
 roomShareLinkPreview.value=roomShareURL(selectedOwnedRoomCode);
+saveRoomAccessButton.disabled=true;
+function syncRoomManagementVisibility(role:RoomEntryPreview["role"]|"unknown"="unknown"){
+  const ownsSelected=role==="owner"||selectedRoomIsOwned;
+  shareAccessSection.hidden=!ownsSelected;
+  manageSelectedRoomSection.hidden=!selectedRoomIsOwned;
+  cloneRoomButton.disabled=!selectedRoomIsOwned;
+  if(!ownsSelected)shareAccessSection.open=false;
+  if(!selectedRoomIsOwned)manageSelectedRoomSection.open=false;
+}
 function updateRoomAccessModeHelp(){
   roomAccessModeHelp.textContent=roomAccessMode.value==="owner-only"
     ?"PRIVATE: Only the ROOM owner and registered editors can enter. The link alone does not grant access."
@@ -1154,13 +1170,15 @@ let lastRoomEntryPreview:RoomEntryPreview|null=null;
 function renderRoomEntryPreview(value:RoomEntryPreview|null,codeValue:string,error=""){
   const code=cleanRoomCode(codeValue)||"—";
   const title=roomEntryPreview.querySelector<HTMLElement>("strong")!,detail=roomEntryPreview.querySelector<HTMLElement>("span")!;
-  if(error){roomEntryPreview.dataset.state="error";title.textContent=`${code} · CHECK UNAVAILABLE`;detail.textContent="Server check unavailable; normal connection recovery will be used.";enterSelectedRoomButton.disabled=false;return;}
-  if(!value){roomEntryPreview.dataset.state="checking";title.textContent=`${code} · CHECKING…`;detail.textContent="Confirming ROOM and entry role";enterSelectedRoomButton.disabled=true;return;}
-  if(!value.exists){roomEntryPreview.dataset.state="missing";title.textContent=`${code} · ROOM NOT FOUND`;detail.textContent="Choose an existing ROOM or create it first.";enterSelectedRoomButton.disabled=true;return;}
+  if(error){roomEntryPreview.dataset.state="error";title.textContent=`${code} · CHECK UNAVAILABLE`;detail.textContent="Server check unavailable; normal connection recovery will be used.";enterSelectedRoomButton.disabled=false;syncRoomManagementVisibility();return;}
+  if(!value){roomEntryPreview.dataset.state="checking";title.textContent=`${code} · CHECKING…`;detail.textContent="Confirming ROOM and entry role";enterSelectedRoomButton.disabled=true;syncRoomManagementVisibility();return;}
+  if(!value.exists){roomEntryPreview.dataset.state="missing";title.textContent=`${code} · ROOM NOT FOUND`;detail.textContent="Choose an existing ROOM or create it first.";enterSelectedRoomButton.disabled=true;syncRoomManagementVisibility();return;}
   const role=value.role.toUpperCase();roomEntryPreview.dataset.state=value.allowed?"allowed":"denied";
+  if(value.role==="owner"){selectedOwnedRoomCode=code;selectedRoomIsOwned=true;roomShareLinkPreview.value=roomShareURL(code);}
   title.textContent=value.allowed?`${code} · ENTER AS ${role}`:`${code} · ACCESS DENIED`;
-  detail.textContent=value.allowed?`${value.mediaCount} works · ${value.accessMode==="shared"?"shared code entry":"owner / editors only"}`:"This ROOM allows only its owner and registered editors.";
+  detail.textContent=value.allowed?`${value.mediaCount} works · ${value.accessMode==="shared"?"public code / link":"private · owner + editors"}`:"Private ROOM · ask the Owner to register your Access ID.";
   enterSelectedRoomButton.disabled=!value.allowed;
+  syncRoomManagementVisibility(value.role);
 }
 async function preflightRoomEntry(codeValue:string,showChecking=true){
   const code=cleanRoomCode(codeValue);if(!code){lastRoomEntryPreview=null;renderRoomEntryPreview(null,"");return null;}
@@ -1172,13 +1190,14 @@ async function preflightRoomEntry(codeValue:string,showChecking=true){
   }catch(error){lastRoomEntryPreview=null;renderRoomEntryPreview(null,code,error instanceof Error?error.message:String(error));return null;}
 }
 function selectOwnedRoom(code:string,archived:boolean,button?:HTMLButtonElement,room?:any){
-  selectedOwnedRoomCode=code;selectedOwnedRoomArchived=archived;roomInput.value=code;archiveRoomButton.textContent=archived?"RESTORE":"ARCHIVE";
+  selectedOwnedRoomCode=code;selectedOwnedRoomArchived=archived;selectedRoomIsOwned=true;roomInput.value=code;archiveRoomButton.textContent=archived?"RESTORE":"ARCHIVE";
   roomShareLinkPreview.value=roomShareURL(code);
   for(const item of ownedRoomList.querySelectorAll("button"))item.setAttribute("aria-pressed",String(item===button));
   const works=Number(room?.mediaCount)||0,revision=Number(room?.revision)||0;
   roomAccessMode.value=room?.accessMode==="owner-only"?"owner-only":"shared";
   updateRoomAccessModeHelp();
   roomEditorIdsInput.value=Array.isArray(room?.editorClientIds)?room.editorClientIds.join(", "):"";
+  roomAccessDirty=false;saveRoomAccessButton.disabled=true;syncRoomManagementVisibility("owner");
   roomSelectionSummary.innerHTML=`<strong>${code}${archived?" · ARCHIVED":""}</strong><span>${works} works</span><small>SELECTED ROOM</small><span>R${revision}</span>`;
   void preflightRoomEntry(code);
 }
@@ -1204,7 +1223,8 @@ async function refreshOwnedRooms(){
       ownedRoomList.appendChild(button);
       if(code===selectedOwnedRoomCode){selectOwnedRoom(code,archived,button,room);matchedSelection=true;}
     }
-    if(!matchedSelection&&rooms.length){const first=ownedRoomList.querySelector<HTMLButtonElement>("button");const firstRoom=rooms[0];if(first)selectOwnedRoom(cleanRoomCode(String(firstRoom.roomCode||"")),firstRoom.archived===true,first,firstRoom);}
+    if(!matchedSelection&&rooms.length&&!cleanRoomCode(roomInput.value)){const first=ownedRoomList.querySelector<HTMLButtonElement>("button");const firstRoom=rooms[0];if(first)selectOwnedRoom(cleanRoomCode(String(firstRoom.roomCode||"")),firstRoom.archived===true,first,firstRoom);}
+    if(!matchedSelection){selectedRoomIsOwned=false;syncRoomManagementVisibility(lastRoomEntryPreview?.role||"unknown");}
     if(!rooms.length)roomSelectionSummary.innerHTML="<strong>NO ROOM SELECTED</strong><span>—</span><small>Create a ROOM or show archived ROOMs</small><span>—</span>";
     const archivedCount=rooms.filter((room:any)=>room?.archived===true).length;
     roomManagerStatus.textContent=`${rooms.length} ROOM${rooms.length===1?"":"S"}${showArchivedRoomsInput.checked?` · ${archivedCount} archived`:""} · click to select · double-click to enter`;
@@ -1240,7 +1260,7 @@ async function mutateRoomCatalog(action:"create"|"clone",targetValue:string){
     selectedOwnedRoomCode=target;roomInput.value=target;newRoomCodeInput.value="";cloneRoomCodeInput.value="";
     await refreshOwnedRooms();roomManagerStatus.textContent=`${action==="create"?"CREATED":"CLONED"} ${target} · ${expectedMediaCount} works · verified`;
   }catch(error){roomManagerStatus.textContent=`${action.toUpperCase()} FAILED · ${error instanceof Error?error.message:String(error)}`;}
-  finally{createRoomButton.disabled=false;cloneRoomButton.disabled=false;renameRoomButton.disabled=false;archiveRoomButton.disabled=false;}
+  finally{createRoomButton.disabled=false;cloneRoomButton.disabled=!selectedRoomIsOwned;renameRoomButton.disabled=false;archiveRoomButton.disabled=false;}
 }
 async function renameSelectedRoom(){
   const source=cleanRoomCode(selectedOwnedRoomCode),target=cleanRoomCode(renameRoomCodeInput.value);
@@ -1279,9 +1299,9 @@ async function saveSelectedRoomAccess(){
     const query=`clientId=${encodeURIComponent(persistentClientId)}&roomCode=${encodeURIComponent(code)}&accessMode=${encodeURIComponent(mode)}&editors=${encodeURIComponent(editors.join(","))}`;
     const response=await fetch(roomApiURL(`/rooms/access?${query}`),{method:"POST",mode:"cors"});const payload=await response.json();
     if(!response.ok||payload?.ok!==true||payload?.verified!==true)throw new Error(String(payload?.error||`HTTP ${response.status}`));
-    await refreshOwnedRooms();roomManagerStatus.textContent=`ACCESS SAVED · ${mode==="owner-only"?"OWNER + EDITORS ONLY":"SHARED CODE ENTRY"} · ${editors.length} editors`;
+    roomAccessDirty=false;await refreshOwnedRooms();roomManagerStatus.textContent=`ACCESS SAVED · ${mode==="owner-only"?"OWNER + EDITORS ONLY":"PUBLIC CODE / LINK"} · ${editors.length} editors`;
   }catch(error){roomManagerStatus.textContent=`ACCESS SAVE FAILED · ${error instanceof Error?error.message:String(error)}`;}
-  finally{saveRoomAccessButton.disabled=false;}
+  finally{saveRoomAccessButton.disabled=!roomAccessDirty;}
 }
 refreshRoomsButton.addEventListener("click",()=>void refreshOwnedRooms());
 createRoomButton.addEventListener("click",()=>void mutateRoomCatalog("create",newRoomCodeInput.value));
@@ -1307,7 +1327,8 @@ shareRoomButton.addEventListener("click",async()=>{
   try{await navigator.clipboard.writeText(link);}catch{roomShareLinkPreview.value=link;roomShareLinkPreview.select();document.execCommand("copy");}
   roomManagerStatus.textContent=`ROOM LINK COPIED · ${code}`;
 });
-roomAccessMode.addEventListener("change",updateRoomAccessModeHelp);
+roomAccessMode.addEventListener("change",()=>{updateRoomAccessModeHelp();roomAccessDirty=true;saveRoomAccessButton.disabled=false;});
+roomEditorIdsInput.addEventListener("input",()=>{roomAccessDirty=true;saveRoomAccessButton.disabled=false;});
 saveRoomAccessButton.addEventListener("click",()=>void saveSelectedRoomAccess());
 enterSelectedRoomButton.addEventListener("click",()=>void enterWorld());
 newRoomCodeInput.addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();void mutateRoomCatalog("create",newRoomCodeInput.value);}});
@@ -1320,7 +1341,7 @@ if(invitedRoomCode)window.setTimeout(()=>{
 },700);
 else window.setTimeout(()=>void preflightRoomEntry(roomInput.value),700);
 let roomPreflightInputTimer:number|null=null;
-roomInput.addEventListener("input",()=>{if(roomPreflightInputTimer!==null)window.clearTimeout(roomPreflightInputTimer);roomPreflightInputTimer=window.setTimeout(()=>void preflightRoomEntry(roomInput.value),350);});
+roomInput.addEventListener("input",()=>{const code=cleanRoomCode(roomInput.value);if(code!==selectedOwnedRoomCode){selectedRoomIsOwned=false;syncRoomManagementVisibility();}if(roomPreflightInputTimer!==null)window.clearTimeout(roomPreflightInputTimer);roomPreflightInputTimer=window.setTimeout(()=>void preflightRoomEntry(roomInput.value),350);});
 let localPosition = new pc.Vec3();
 let lastSend = 0;
 let moveSequence = 0;
@@ -5766,7 +5787,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3.5</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3.6</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -7378,7 +7399,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3.5</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3.6</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.0.6 COMPACT WORKSPACE & ACTION DOCK LOADED]");
+console.log("[PROTOTYPE 0.25.1 CUE TIMELINE FOUNDATION LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1073,7 +1073,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.6</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.1</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -4110,10 +4110,10 @@ async function enterWorld() {
       cueTargetTags=Array.isArray(payload?.tags)?payload.tags.map(String).filter(Boolean):[];
       cueSummaries=Array.isArray(payload?.cues)?payload.cues.map((cue:any)=>({
         id:String(cue.id||""),name:String(cue.name||"Cue"),targetType:String(cue.targetType||"scene") as CueSummary["targetType"],
-        target:String(cue.target||""),action:String(cue.action||"play"),updatedAt:Number(cue.updatedAt)||0
+        target:String(cue.target||""),action:String(cue.action||"play"),startMs:Math.max(0,Number(cue.startMs)||0),updatedAt:Number(cue.updatedAt)||0
       })).filter((cue:CueSummary)=>!!cue.id):[];
       if(pendingCueSave&&cueSummaries.some(cue=>cue.name===pendingCueSave.name&&cue.targetType===pendingCueSave.targetType&&
-        cue.target===pendingCueSave.target&&cue.action===(pendingCueSave.targetType==="scene"?"recall":pendingCueSave.action))){
+        cue.target===pendingCueSave.target&&cue.action===(pendingCueSave.targetType==="scene"?"recall":pendingCueSave.action)&&cue.startMs===pendingCueSave.startMs)){
         const confirmedName=pendingCueSave.name;clearPendingCueSave();cueStatus.textContent=`SAVED · ${confirmedName}`;
       }
       refreshCueUI();refreshDirectorPanel();
@@ -4127,7 +4127,7 @@ async function enterWorld() {
       if(payload.operation==="save"&&payload.id){
         const saved:CueSummary={id:String(payload.id),name:String(payload.name||"Cue"),
           targetType:String(payload.targetType||"scene") as CueSummary["targetType"],target:String(payload.target||""),
-          action:String(payload.action||"play"),updatedAt:Number(payload.updatedAt)||Date.now()};
+          action:String(payload.action||"play"),startMs:Math.max(0,Number(payload.startMs)||0),updatedAt:Number(payload.updatedAt)||Date.now()};
         cueSummaries=[saved,...cueSummaries.filter(cue=>cue.id!==saved.id)];
         cueSelect.dataset.pendingSelection=saved.id;refreshCueUI();refreshDirectorPanel();
         room.send("cue:list:request",{});
@@ -4138,12 +4138,21 @@ async function enterWorld() {
       if(room!==activeRoom)return;cueStatus.textContent=`LIVE CUE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0}`;
       directorActionStatus.textContent=`LIVE · ${String(payload?.name||"CUE")} · ${Number(payload?.count)||0} OBJECTS`;
     });
+    room.onMessage("cue:timeline:state",(payload:any)=>{
+      if(room!==activeRoom)return;const timelineState=String(payload?.status||"stopped");
+      cueTimelineStatus=(timelineState==="playing"||timelineState==="paused"?timelineState:"stopped");
+      cueTimelinePositionMs=Math.max(0,Number(payload?.positionMs)||0);cueTimelineDurationMs=Math.max(1000,Number(payload?.durationMs)||5000);
+      cueTimelineReceivedAt=Date.now();refreshCueTimeline();
+    });
+    room.onMessage("cue:timeline:result",(payload:any)=>{
+      if(room!==activeRoom||payload?.ok)return;cueStatus.textContent=`TIMELINE ${String(payload?.operation||"").toUpperCase()} FAILED · ${String(payload?.reason||"unknown")}`;
+    });
     room.onMessage("director:state",(payload:any)=>{
       if(room!==activeRoom)return;directorCanDirect=payload?.canDirect===true;directorCanManage=payload?.canManage===true;
       directorParticipants=Array.isArray(payload?.participants)?payload.participants.map((person:any)=>({
         sessionId:String(person.sessionId||""),name:String(person.name||"Guest"),clientId:String(person.clientId||""),
         isOwner:person.isOwner===true,isDirector:person.isDirector===true
-      })):[];refreshDirectorPanel();refreshAccessAwareUI();
+      })):[];refreshDirectorPanel();refreshCueUI();refreshAccessAwareUI();
     });
     room.onMessage("director:result",(payload:any)=>{
       if(room!==activeRoom)return;directorActionStatus.textContent=payload?.ok?"DIRECTOR ACCESS UPDATED":`DIRECTOR UPDATE FAILED · ${String(payload?.reason||"unknown")}`;
@@ -4246,6 +4255,7 @@ async function enterWorld() {
     room.send("environment:get",{});
     room.send("scene:list:request",{});
     room.send("cue:list:request",{});
+    room.send("cue:timeline:get",{});
     room.send("authoring:get",{});
     room.send("director:get",{});
     room.onMessage("world:export:result", (manifest:any) => {
@@ -5519,12 +5529,19 @@ mediaManagerPanel.innerHTML = `
     <div class="behavior-editor-title">CUE SYSTEM</div>
     <select id="cueSelect"><option value="">NEW CUE</option></select>
     <input id="cueNameInput" maxlength="32" placeholder="CUE NAME">
+    <label class="cue-time-row"><span>START TIME</span><input id="cueStartSeconds" type="number" min="0" max="3600" step="0.1" value="0"><small>SECONDS</small></label>
     <select id="cueTargetType"><option value="scene">SCENE</option><option value="group">GROUP</option><option value="tag">TAG</option></select>
     <select id="cueSceneTarget"></select>
     <select id="cueTextTarget" class="hidden"><option value="">SELECT TARGET</option></select>
     <select id="cueAction"><option value="play">PLAY</option><option value="stop">STOP</option><option value="move">MOVE</option><option value="rotate">ROTATE</option><option value="scale">SCALE</option><option value="float">FLOAT</option><option value="orbit">ORBIT</option><option value="shake">SHAKE</option></select>
     <div class="cue-actions"><button id="cueSaveButton" type="button">SAVE</button><button id="cueFireButton" type="button">FIRE</button><button id="cueDeleteButton" type="button">DELETE</button></div>
     <div id="cueStatus">No cues saved.</div>
+    <section id="cueTimeline" class="cue-timeline">
+      <div class="cue-timeline-heading"><div><strong>CUE TIMELINE</strong><span id="cueTimelineClock">00:00.0 / 00:05.0</span></div><span id="cueTimelineState">STOPPED</span></div>
+      <input id="cueTimelineScrubber" type="range" min="0" max="5000" step="100" value="0" aria-label="Timeline position">
+      <div class="cue-timeline-transport"><button id="cueTimelinePlay" type="button">▶ PLAY</button><button id="cueTimelinePause" type="button">Ⅱ PAUSE</button><button id="cueTimelineStop" type="button">■ STOP</button></div>
+      <div id="cueTimelineRows" class="cue-timeline-rows"><div class="cue-timeline-empty">SAVE A CUE TO BUILD THE TIMELINE</div></div>
+    </section>
   </div>
   <div class="scene-manager">
     <div class="behavior-editor-title">SCENES</div>
@@ -5691,6 +5708,7 @@ directorButton.id="directorButton";directorButton.type="button";directorButton.t
 const directorPanel=document.createElement("section");directorPanel.id="directorPanel";directorPanel.className="hidden";
 directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</strong><button id="closeDirectorButton" type="button">×</button></div>
   <div id="directorRoleStatus">VIEWER</div>
+  <button id="openCueTimelineButton" type="button">OPEN CUE TIMELINE</button>
   <div class="director-section"><strong>LIVE CUES</strong><div id="directorCueGrid" class="director-grid"></div></div>
   <div class="director-section"><strong>SCENES</strong><div id="directorSceneGrid" class="director-grid"></div></div>
   <div id="directorManageSection" class="director-section hidden"><strong>DIRECTOR ACCESS</strong><div id="directorParticipantList"></div></div>
@@ -6101,6 +6119,8 @@ mediaManagerStyle.textContent = `
   .cue-actions button:disabled { background:#303741!important;color:#dce3ec!important;opacity:.72; }
   #cueFireButton { border-color:#ffb54a!important;color:#fff!important; }
   #cueStatus { min-height:14px;padding:4px 2px;font-size:10px;color:#fff;font-weight:800; }
+  .cue-time-row{display:grid!important;grid-template-columns:88px 1fr 48px;align-items:center;gap:7px;margin:0!important;color:#d6b27e;font-size:9px;font-weight:900;letter-spacing:.06em}.cue-time-row input{margin:0!important}.cue-time-row small{color:#8f7d65;font-size:8px}
+  .cue-timeline{margin-top:5px;padding:10px;border:1px solid rgba(255,181,74,.5);border-radius:11px;background:#0f1319}.cue-timeline-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.cue-timeline-heading>div{display:grid;gap:3px}.cue-timeline-heading strong{font-size:10px;letter-spacing:.09em}.cue-timeline-heading span{color:#d6b27e;font-size:8px;font-weight:850}.cue-timeline-heading>span{padding:4px 7px;border-radius:7px;background:#1c232c;color:#9eb0bd}.cue-timeline-heading>span[data-state="playing"]{background:#173527;color:#65e4b2}.cue-timeline-heading>span[data-state="paused"]{background:#382d18;color:#ffd17d}.cue-timeline>input[type="range"]{width:100%;margin:10px 0 8px;padding:0;border:0}.cue-timeline-transport{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px}.cue-timeline-transport button{min-width:0!important;padding:8px 4px!important;font-size:9px!important}.cue-timeline-rows{display:grid;gap:5px;margin-top:9px;max-height:190px;overflow:auto}.cue-timeline-row{display:grid!important;grid-template-columns:58px minmax(0,1fr);gap:2px 7px;width:100%!important;min-width:0!important;padding:8px!important;border:1px solid #384654!important;border-radius:8px!important;background:#121a23!important;color:#fff!important;text-align:left!important}.cue-timeline-row time{grid-row:1 / span 2;color:#ffbd5b;font:900 9px/1.4 ui-monospace,monospace}.cue-timeline-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:900}.cue-timeline-row small{color:#8fa3b2;font-size:8px}.cue-timeline-row.passed{border-color:#466a5b!important;background:#12231d!important}.cue-timeline-empty{padding:13px 4px;color:#7f8d99;font-size:8px;text-align:center}
   .scene-manager input,.scene-manager select { width:100%;min-width:0;box-sizing:border-box;padding:8px;border:1px solid #4a5260;border-radius:8px;background:#111720;color:#fff; }
   .scene-actions { display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px; }
   .scene-actions button { width:100%!important;min-width:0;padding:9px 4px;font-size:10px; }
@@ -6249,7 +6269,7 @@ function requestDirectorData(force=false){
   if(!activeRoom)return;
   const now=Date.now();if(!force&&now-directorDataRequestAt<800)return;
   directorDataRequestAt=now;
-  activeRoom.send("authoring:get",{});activeRoom.send("scene:list:request",{});activeRoom.send("cue:list:request",{});activeRoom.send("director:get",{});
+  activeRoom.send("authoring:get",{});activeRoom.send("scene:list:request",{});activeRoom.send("cue:list:request",{});activeRoom.send("cue:timeline:get",{});activeRoom.send("director:get",{});
 }
 directorButton.addEventListener("click",()=>{directorPanel.classList.toggle("hidden");requestDirectorData(true);refreshDirectorPanel();});
 closeDirectorButton.addEventListener("click",()=>directorPanel.classList.add("hidden"));
@@ -6297,6 +6317,7 @@ const restoreLocalBackupButton=mediaManagerPanel.querySelector<HTMLButtonElement
 const localBackupStatus=mediaManagerPanel.querySelector<HTMLElement>("#localBackupStatus")!;
 const cueSelect=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueSelect")!;
 const cueNameInput=mediaManagerPanel.querySelector<HTMLInputElement>("#cueNameInput")!;
+const cueStartSeconds=mediaManagerPanel.querySelector<HTMLInputElement>("#cueStartSeconds")!;
 const cueTargetType=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueTargetType")!;
 const cueSceneTarget=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueSceneTarget")!;
 const cueTextTarget=mediaManagerPanel.querySelector<HTMLSelectElement>("#cueTextTarget")!;
@@ -6305,16 +6326,42 @@ const cueSaveButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueSave
 const cueFireButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueFireButton")!;
 const cueDeleteButton=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueDeleteButton")!;
 const cueStatus=mediaManagerPanel.querySelector<HTMLElement>("#cueStatus")!;
-type CueSummary={id:string;name:string;targetType:"scene"|"group"|"tag";target:string;action:string;updatedAt:number};
+type CueSummary={id:string;name:string;targetType:"scene"|"group"|"tag";target:string;action:string;startMs:number;updatedAt:number};
 let cueSummaries:CueSummary[]=[];
 let cueTargetGroups:string[]=[];
 let cueTargetTags:string[]=[];
 let selectedCueGroupTarget="";
 let selectedCueTagTarget="";
-type PendingCueSave={requestId:string;id:string;name:string;targetType:"scene"|"group"|"tag";target:string;action:string};
+type PendingCueSave={requestId:string;id:string;name:string;targetType:"scene"|"group"|"tag";target:string;action:string;startMs:number};
 let pendingCueSave:PendingCueSave|null=null;
 let cueSaveRetryTimer:number|null=null;
 let cueSaveWatchdog:number|null=null;
+const cueTimelineClock=mediaManagerPanel.querySelector<HTMLElement>("#cueTimelineClock")!;
+const cueTimelineStateLabel=mediaManagerPanel.querySelector<HTMLElement>("#cueTimelineState")!;
+const cueTimelineScrubber=mediaManagerPanel.querySelector<HTMLInputElement>("#cueTimelineScrubber")!;
+const cueTimelineRows=mediaManagerPanel.querySelector<HTMLElement>("#cueTimelineRows")!;
+const cueTimelinePlay=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueTimelinePlay")!;
+const cueTimelinePause=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueTimelinePause")!;
+const cueTimelineStop=mediaManagerPanel.querySelector<HTMLButtonElement>("#cueTimelineStop")!;
+let cueTimelineStatus:"stopped"|"playing"|"paused"="stopped";
+let cueTimelinePositionMs=0;
+let cueTimelineDurationMs=5000;
+let cueTimelineReceivedAt=0;
+function formatCueTime(ms:number){const safe=Math.max(0,Math.round(ms));const minutes=Math.floor(safe/60000);const seconds=Math.floor((safe%60000)/1000);const tenths=Math.floor((safe%1000)/100);return `${String(minutes).padStart(2,"0")}:${String(seconds).padStart(2,"0")}.${tenths}`;}
+function currentCueTimelinePosition(){return cueTimelineStatus==="playing"?Math.min(cueTimelineDurationMs,cueTimelinePositionMs+(Date.now()-cueTimelineReceivedAt)):cueTimelinePositionMs;}
+function refreshCueTimeline(){
+  const position=currentCueTimelinePosition();cueTimelineScrubber.max=String(cueTimelineDurationMs);if(document.activeElement!==cueTimelineScrubber)cueTimelineScrubber.value=String(position);
+  cueTimelineClock.textContent=`${formatCueTime(position)} / ${formatCueTime(cueTimelineDurationMs)}`;cueTimelineStateLabel.textContent=cueTimelineStatus.toUpperCase();cueTimelineStateLabel.dataset.state=cueTimelineStatus;
+  cueTimelinePlay.disabled=!directorCanDirect;cueTimelinePause.disabled=!directorCanDirect||cueTimelineStatus!=="playing";cueTimelineStop.disabled=!directorCanDirect||cueTimelineStatus==="stopped";
+  cueTimelineRows.replaceChildren();const ordered=[...cueSummaries].sort((a,b)=>a.startMs-b.startMs||a.updatedAt-b.updatedAt);
+  if(!ordered.length){cueTimelineRows.innerHTML='<div class="cue-timeline-empty">SAVE A CUE TO BUILD THE TIMELINE</div>';return;}
+  for(const cue of ordered){const row=document.createElement("button");row.type="button";row.className="cue-timeline-row";row.dataset.cueId=cue.id;row.innerHTML=`<time>${formatCueTime(cue.startMs)}</time><span></span><small>${cue.targetType.toUpperCase()} · ${cue.action.toUpperCase()}</small>`;row.querySelector("span")!.textContent=cue.name;row.classList.toggle("passed",cue.startMs<=position);row.addEventListener("click",()=>{cueSelect.value=cue.id;cueSelect.dispatchEvent(new Event("change"));});cueTimelineRows.appendChild(row);}
+}
+window.setInterval(()=>{if(cueTimelineStatus==="playing")refreshCueTimeline();},100);
+cueTimelineScrubber.addEventListener("input",()=>{if(cueTimelineStatus!=="playing"){cueTimelinePositionMs=Number(cueTimelineScrubber.value)||0;cueTimelineReceivedAt=Date.now();refreshCueTimeline();}});
+cueTimelinePlay.addEventListener("click",()=>{if(activeRoom&&directorCanDirect)activeRoom.send("cue:timeline:play",{positionMs:Number(cueTimelineScrubber.value)||0});});
+cueTimelinePause.addEventListener("click",()=>{if(activeRoom&&directorCanDirect)activeRoom.send("cue:timeline:pause",{});});
+cueTimelineStop.addEventListener("click",()=>{if(activeRoom&&directorCanDirect)activeRoom.send("cue:timeline:stop",{});});
 function clearPendingCueSave(){
   if(cueSaveRetryTimer!==null){window.clearTimeout(cueSaveRetryTimer);cueSaveRetryTimer=null;}
   if(cueSaveWatchdog!==null){window.clearTimeout(cueSaveWatchdog);cueSaveWatchdog=null;}
@@ -6329,7 +6376,7 @@ function applyAuthoringState(payload:any){
   cueSummaries=Array.isArray(payload.cues)?payload.cues.map((cue:any)=>({
     id:String(cue?.id||""),name:String(cue?.name||"Cue"),
     targetType:String(cue?.targetType||"scene") as CueSummary["targetType"],target:String(cue?.target||""),
-    action:String(cue?.action||"play"),updatedAt:Number(cue?.updatedAt)||0
+    action:String(cue?.action||"play"),startMs:Math.max(0,Number(cue?.startMs)||0),updatedAt:Number(cue?.updatedAt)||0
   })).filter((cue:CueSummary)=>!!cue.id):[];
   cueTargetGroups=Array.isArray(payload.groups)?payload.groups.map(String).filter(Boolean):[];
   cueTargetTags=Array.isArray(payload.tags)?payload.tags.map(String).filter(Boolean):[];
@@ -6369,18 +6416,19 @@ function refreshCueUI(){
   const has=!!cueSelect.value;cueSaveButton.disabled=!environmentCanEdit;
   cueFireButton.disabled=!directorCanDirect||!has;cueDeleteButton.disabled=!environmentCanEdit||!has;
   if(!environmentCanEdit)cueStatus.textContent="ROOM OWNER ONLY";else if(!cueSummaries.length)cueStatus.textContent="No cues saved.";
-  refreshCueTargetUI();
+  refreshCueTargetUI();refreshCueTimeline();
 }
 cueTargetType.addEventListener("change",refreshCueTargetUI);
 cueSelect.addEventListener("change",()=>{
   const cue=cueSummaries.find(item=>item.id===cueSelect.value);if(cue){
     cueNameInput.value=cue.name;cueTargetType.value=cue.targetType;cueAction.value=cue.action==="recall"?"play":cue.action;
+    cueStartSeconds.value=String(cue.startMs/1000);
     if(cue.targetType==="scene")cueSceneTarget.value=cue.target;
     else {
       cueTextTarget.dataset.pendingTarget=cue.target;
       if(cue.targetType==="group")selectedCueGroupTarget=cue.target;else selectedCueTagTarget=cue.target;
     }
-  }refreshCueUI();
+  } else cueStartSeconds.value="0";refreshCueUI();
 });
 cueSaveButton.addEventListener("click",()=>{
   if(!activeRoom||!environmentCanEdit)return;const targetType=cueTargetType.value;
@@ -6389,7 +6437,8 @@ cueSaveButton.addEventListener("click",()=>{
   clearPendingCueSave();
   pendingCueSave={requestId:`cue-save-${crypto.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`}`,
     id:cueSelect.value||`cue-client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`,
-    name,targetType:targetType as PendingCueSave["targetType"],target,action:cueAction.value};
+    name,targetType:targetType as PendingCueSave["targetType"],target,action:cueAction.value,
+    startMs:Math.max(0,Math.min(3_600_000,Math.round((Number(cueStartSeconds.value)||0)*1000)))};
   activeRoom.send("authoring:cue:save",pendingCueSave);cueStatus.textContent="SAVING CUE · WAITING FOR SERVER";
   cueSaveWatchdog=window.setTimeout(()=>{
     cueSaveWatchdog=null;if(!activeRoom||!pendingCueSave)return;
@@ -6937,6 +6986,9 @@ cueFloatingHeader.innerHTML=`<div><strong>CUE EDITOR</strong><span>LIVE ACTION B
 const cueManagerSurface=mediaManagerPanel.querySelector<HTMLElement>(".cue-manager")!;
 cueFloatingPanel.append(cueFloatingHeader,cueManagerSurface);document.body.appendChild(cueFloatingPanel);
 cueFloatingHeader.querySelector<HTMLButtonElement>("#closeCueFloatingPanel")!.addEventListener("click",()=>cueFloatingPanel.classList.add("hidden"));
+directorPanel.querySelector<HTMLButtonElement>("#openCueTimelineButton")!.addEventListener("click",()=>{
+  cueFloatingPanel.classList.remove("hidden");requestDirectorData(true);bringFloatingPanelToFront(cueFloatingPanel);
+});
 
 // Desktop VIEW uses explicit dock controls. Reparenting delegated controls
 // broke their event path, so the dock now calls the proven actions directly.
@@ -7128,7 +7180,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.0.6</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.1</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
@@ -7260,7 +7312,8 @@ function openWorldWorkspaceAt(target?:HTMLElement){
   requestAnimationFrame(()=>target?.scrollIntoView({block:"start",behavior:"smooth"}));
 }
 function runFoundationAction(action:string){
-  if((["add","objects","groups","environment","scenes","cue-editor"] as string[]).includes(action)&&!environmentCanEdit){uiSaveState.textContent="VIEW ONLY";return;}
+  if((["add","objects","groups","environment","scenes"] as string[]).includes(action)&&!environmentCanEdit){uiSaveState.textContent="VIEW ONLY";return;}
+  if(action==="cue-editor"&&!environmentCanEdit&&!directorCanDirect){uiSaveState.textContent="DIRECTOR ACCESS REQUIRED";return;}
   if(action==="director"&&!directorCanDirect&&!directorCanManage){uiSaveState.textContent="DIRECTOR ACCESS REQUIRED";return;}
   if(action==="camera"){viewToggle.click();return;}
   if(action==="talk"){setMobileFoundationPanel("chat");return;}
@@ -7345,6 +7398,7 @@ uiFoundationStyle.textContent=`
   #uiContextRail{display:none!important}
   .artwork-list-primary-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;padding:9px 10px;border:1px solid rgba(82,215,255,.3);border-radius:11px;background:#0d1722}.artwork-list-primary-bar span{color:#8fa8bb;font-size:9px;font-weight:900;letter-spacing:.08em}.artwork-list-primary-bar button{width:auto!important;min-height:38px!important;padding:8px 13px!important;border-color:#52d7ff!important;background:#123047!important;color:#fff!important;font-size:10px!important;font-weight:900!important}.artwork-list-primary-bar button b{color:#72e2ff;font-size:15px}
   .director-header.ui-drag-handle{position:sticky;top:-14px;z-index:4;margin:-14px -14px 10px;padding:14px;background:rgba(20,14,7,.99);cursor:grab;touch-action:none}
+  #openCueTimelineButton{width:100%!important;margin:8px 0 12px!important;padding:11px!important;border-color:#ffb54a!important;background:#2b1d0d!important;color:#fff!important;font-size:10px!important;font-weight:900!important;letter-spacing:.08em!important}
   @media (min-width:761px) and (max-width:1080px){#uiWorkspaceBar{grid-template-columns:auto minmax(330px,1fr) auto}.ui-room-summary{position:absolute;top:62px;left:0;border:1px solid rgba(120,150,175,.46);border-radius:10px;background:rgba(7,13,21,.92)}#uiContextRail{top:max(132px,calc(env(safe-area-inset-top) + 122px))}}
   @media (min-width:761px) and (pointer:fine){
     body[data-ui-workspace="view"] #viewControlDock.room-active{display:grid;position:fixed;left:16px;right:16px;bottom:16px;z-index:45;grid-template-columns:minmax(72px,.6fr) minmax(300px,2.1fr) minmax(220px,1.45fr) minmax(320px,1.9fr) minmax(190px,1.2fr) minmax(120px,.8fr);gap:6px;padding:7px;overflow-x:auto;box-sizing:border-box;border:1px solid rgba(120,150,175,.56);border-radius:15px;background:rgba(7,13,21,.93);backdrop-filter:blur(18px);box-shadow:0 14px 38px rgba(0,0,0,.25)}

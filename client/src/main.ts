@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.0.5 WORLD SETTINGS HIERARCHY LOADED]");
+console.log("[PROTOTYPE 0.25.0.6 COMPACT WORKSPACE & ACTION DOCK LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1073,7 +1073,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.5</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.0.6</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -6760,6 +6760,8 @@ behaviorTestLeave.addEventListener("click", (event) => {
 
 function refreshMediaManagerUI() {
   mediaManagerList.innerHTML = "";
+  const artworkListCount=document.getElementById("artworkListCount");
+  if(artworkListCount)artworkListCount.textContent=`${managedPlacedMedia.size} ${managedPlacedMedia.size===1?"ARTWORK":"ARTWORKS"}`;
   const groups=Array.from(new Set(Array.from(mediaMetadata.values()).map(v=>v.groupName).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
   const previousGroup=mediaGroupFilter.value;
   mediaGroupFilter.innerHTML='<option value="">ALL GROUPS</option>';
@@ -6940,7 +6942,7 @@ cueFloatingHeader.querySelector<HTMLButtonElement>("#closeCueFloatingPanel")!.ad
 // broke their event path, so the dock now calls the proven actions directly.
 const viewControlDock=document.createElement("section");viewControlDock.id="viewControlDock";
 function createViewControlGroup(label:string,nodes:HTMLElement[]){
-  const group=document.createElement("div");group.className="view-control-group";
+  const group=document.createElement("div");group.className="view-control-group";group.dataset.dockPanel=label.toLowerCase();
   const heading=document.createElement("span");heading.className="view-control-label";heading.textContent=label;
   const content=document.createElement("div");content.className="view-control-content";content.append(...nodes);
   group.append(heading,content);return group;
@@ -6978,14 +6980,40 @@ dockActions.innerHTML=`<button type="button" data-emote="wave">WAVE</button><but
 dockActions.addEventListener("click",event=>{const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button[data-emote]");const original=button?.dataset.emote?emoteControls.querySelector<HTMLButtonElement>(`button[data-emote="${button.dataset.emote}"]`):null;original?.click();button?.blur();});
 const dockLight=document.createElement("button");dockLight.type="button";dockLight.className="dock-light";dockLight.textContent="FLASHLIGHT OFF";
 dockLight.addEventListener("click",()=>{flashlightButton.click();dockLight.textContent=flashlightButton.textContent||"FLASHLIGHT";dockLight.classList.toggle("active",flashlightButton.classList.contains("active"));dockLight.blur();});
-viewControlDock.append(
+const compactDockTabs=document.createElement("nav");compactDockTabs.className="compact-dock-tabs";compactDockTabs.setAttribute("aria-label","View tools");
+compactDockTabs.innerHTML=`
+  <button type="button" data-dock-tab="view" title="Camera view"><b aria-hidden="true">◉</b><span>VIEW</span></button>
+  <button type="button" data-dock-tab="chat" title="Text chat"><b aria-hidden="true">●</b><span>CHAT</span></button>
+  <button type="button" data-dock-tab="voice" title="Voice controls"><b aria-hidden="true">♪</b><span>VOICE</span></button>
+  <button type="button" data-dock-tab="photo" title="Photo controls"><b aria-hidden="true">▣</b><span>PHOTO</span></button>
+  <button type="button" data-dock-tab="action" title="Avatar actions"><b aria-hidden="true">☺</b><span>ACTION</span></button>
+  <button type="button" data-dock-tab="light" title="Toggle flashlight"><b aria-hidden="true">◆</b><span>LIGHT</span></button>`;
+const compactDockPanels=document.createElement("div");compactDockPanels.className="compact-dock-panels";
+compactDockPanels.append(
   createViewControlGroup("VIEW",[viewToggle]),
   createViewControlGroup("CHAT",[dockChat]),
   createViewControlGroup("VOICE",[dockVoice]),
   createViewControlGroup("PHOTO",[dockPhoto]),
-  createViewControlGroup("ACTION",[dockActions]),
-  createViewControlGroup("LIGHT",[dockLight])
+  createViewControlGroup("ACTION",[dockActions])
 );
+let activeCompactDockPanel="";
+function setCompactDockPanel(panel:string){
+  activeCompactDockPanel=activeCompactDockPanel===panel?"":panel;
+  viewControlDock.classList.toggle("panel-open",!!activeCompactDockPanel);
+  for(const group of compactDockPanels.querySelectorAll<HTMLElement>("[data-dock-panel]"))group.classList.toggle("active",group.dataset.dockPanel===activeCompactDockPanel);
+  for(const button of compactDockTabs.querySelectorAll<HTMLButtonElement>("[data-dock-tab]")){
+    const active=button.dataset.dockTab===activeCompactDockPanel;button.classList.toggle("active",active);button.setAttribute("aria-expanded",String(active));
+  }
+}
+compactDockTabs.addEventListener("click",event=>{
+  const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button[data-dock-tab]");if(!button)return;
+  const panel=String(button.dataset.dockTab||"");
+  if(panel==="light"){
+    dockLight.click();button.classList.toggle("light-on",flashlightButton.classList.contains("active"));button.setAttribute("aria-pressed",String(flashlightButton.classList.contains("active")));return;
+  }
+  setCompactDockPanel(panel);
+});
+viewControlDock.append(compactDockPanels,compactDockTabs);
 document.body.appendChild(viewControlDock);
 
 const avatarFloatingHeader=document.createElement("div");avatarFloatingHeader.className="avatar-floating-header ui-drag-handle";
@@ -7002,6 +7030,10 @@ avatarFloatingHeader.querySelector("button")!.addEventListener("click",()=>{
 // controls are moved out of CREATE without recreating their listeners.
 const worldWorkspacePanel=document.createElement("section");worldWorkspacePanel.id="worldWorkspacePanel";worldWorkspacePanel.className="hidden";
 const mediaManagerHeading=mediaManagerPanel.querySelector<HTMLElement>(".media-manager-header strong");if(mediaManagerHeading)mediaManagerHeading.textContent="ARTWORK LIST";
+const artworkListPrimaryBar=document.createElement("div");artworkListPrimaryBar.className="artwork-list-primary-bar";
+artworkListPrimaryBar.innerHTML=`<span id="artworkListCount">0 ARTWORKS</span><button type="button" id="inlineAddArtworkButton"><b aria-hidden="true">＋</b> ADD ARTWORK</button>`;
+mediaManagerPanel.querySelector<HTMLElement>(".media-manager-header")!.after(artworkListPrimaryBar);
+artworkListPrimaryBar.querySelector<HTMLButtonElement>("#inlineAddArtworkButton")!.addEventListener("click",()=>addArtworkButton?.click());
 
 // Prototype 0.21.1.5 / ARTWORK HIERARCHY INSPECTOR
 // The collection stays first. Editors are children of the selected artwork.
@@ -7096,7 +7128,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.0.5</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.0.6</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
@@ -7310,6 +7342,8 @@ uiFoundationStyle.textContent=`
   .world-settings-section{border:1px solid #3c5167;border-radius:13px;background:#0c131c;overflow:hidden}.world-settings-section>summary,.environment-settings-group>summary{cursor:pointer;list-style:none;position:relative;display:grid;gap:3px;padding:13px 38px 13px 13px}.world-settings-section>summary::-webkit-details-marker,.environment-settings-group>summary::-webkit-details-marker{display:none}.world-settings-section>summary::after,.environment-settings-group>summary::after{content:"＋";position:absolute;right:13px;top:12px;color:#6ed9ff;font-size:17px}.world-settings-section[open]>summary::after,.environment-settings-group[open]>summary::after{content:"−"}.world-settings-section>summary span{font-size:11px;font-weight:900;letter-spacing:.08em}.world-settings-section>summary small,.environment-settings-group>summary small{color:#8fa8bb;font-size:8px;letter-spacing:.06em}.world-settings-section-body{padding:0 10px 10px}.world-settings-section #environmentEditor,.world-settings-section .scene-manager{margin:0!important;border:0!important;padding:0!important;background:transparent!important}.environment-settings-group{margin:8px 0;border:1px solid #34485b;border-radius:10px;background:#101923;overflow:hidden}.environment-settings-group>summary{padding:11px 36px 11px 11px}.environment-settings-group>summary::after{top:9px}.environment-settings-group>summary span{font-size:10px;font-weight:900;letter-spacing:.08em}.environment-settings-group-body{padding:0 11px 11px}.environment-apply-footer{position:sticky;bottom:-10px;z-index:3;margin:10px -10px -10px;padding:10px;background:rgba(9,13,19,.97);border-top:1px solid rgba(84,113,140,.55)}.environment-apply-footer [data-env-apply]{width:100%!important;min-height:42px}.room-data-controls{display:grid;gap:8px;margin:0}.room-data-controls button{width:100%!important;margin:3px 0}.room-data-controls .environment-settings-group-body{display:grid;gap:4px}.room-data-controls [hidden]{display:none!important}
   .media-manager-row{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:4px;align-items:center;padding:4px;border:1px solid #303b48;border-radius:11px;background:#0d141e;transition:border-color .14s,background .14s}.media-manager-row.selected{border-color:#2f8cff;outline:2px solid #2f8cff;background:#172334}.media-manager-row.reordering{z-index:3;border-color:#52d7ff;background:#132838;box-shadow:0 8px 24px rgba(0,0,0,.35)}.media-manager-row .media-manager-item{width:100%!important;min-width:0!important;min-height:44px;border:0!important;background:transparent!important;text-align:left!important}.media-drag-handle{width:30px!important;min-width:30px!important;height:38px!important;padding:0!important;border:0!important;background:transparent!important;color:#8fa8bb!important;font-size:20px!important;cursor:grab;touch-action:none}.media-drag-handle:active{cursor:grabbing}.media-drag-handle:disabled{opacity:.25;cursor:not-allowed}.media-row-actions{display:flex;gap:3px;align-items:center}.media-row-actions button{display:grid!important;place-items:center;width:34px!important;min-width:34px!important;height:34px!important;min-height:34px!important;padding:0!important;border-radius:8px!important;font-size:8px!important}.media-action-icon{font-size:15px;line-height:1}.media-action-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.media-row-actions .danger{border-color:#ff5968!important;background:#35151b!important;color:#fff!important}.media-row-actions .danger:hover,.media-row-actions .danger:focus-visible{background:#c92f40!important;border-color:#ff8993!important}.media-manager-actions{display:none!important}
   .artwork-panel-header,.artwork-placement-header{cursor:grab;touch-action:none}.artwork-placement-header{display:flex!important;align-items:center;justify-content:space-between}.artwork-placement-header #closePlacementPanel{width:36px!important;height:36px!important;margin:0!important;border-radius:10px!important}
+  #uiContextRail{display:none!important}
+  .artwork-list-primary-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;padding:9px 10px;border:1px solid rgba(82,215,255,.3);border-radius:11px;background:#0d1722}.artwork-list-primary-bar span{color:#8fa8bb;font-size:9px;font-weight:900;letter-spacing:.08em}.artwork-list-primary-bar button{width:auto!important;min-height:38px!important;padding:8px 13px!important;border-color:#52d7ff!important;background:#123047!important;color:#fff!important;font-size:10px!important;font-weight:900!important}.artwork-list-primary-bar button b{color:#72e2ff;font-size:15px}
   .director-header.ui-drag-handle{position:sticky;top:-14px;z-index:4;margin:-14px -14px 10px;padding:14px;background:rgba(20,14,7,.99);cursor:grab;touch-action:none}
   @media (min-width:761px) and (max-width:1080px){#uiWorkspaceBar{grid-template-columns:auto minmax(330px,1fr) auto}.ui-room-summary{position:absolute;top:62px;left:0;border:1px solid rgba(120,150,175,.46);border-radius:10px;background:rgba(7,13,21,.92)}#uiContextRail{top:max(132px,calc(env(safe-area-inset-top) + 122px))}}
   @media (min-width:761px) and (pointer:fine){
@@ -7328,11 +7362,20 @@ uiFoundationStyle.textContent=`
     body[data-ui-workspace="world"] #worldWorkspacePanel.ui-positioned{right:auto!important;bottom:auto!important}
     #addArtworkPanel.ui-positioned,#artworkPlacementPanel.ui-positioned{right:auto!important;bottom:auto!important;transform:none!important;max-height:calc(100vh - 24px)!important;overflow:auto!important}
     .media-manager-header.ui-drag-handle{cursor:grab;touch-action:none}
+    body[data-ui-workspace="view"] #viewControlDock.room-active{display:flex;left:50%;right:auto;width:min(620px,calc(100vw - 32px));transform:translateX(-50%);grid-template-columns:none;flex-direction:column;gap:6px;padding:6px;overflow:visible}
+    #viewControlDock .compact-dock-panels{display:none;order:1;padding:3px}
+    #viewControlDock.panel-open .compact-dock-panels{display:block}
+    #viewControlDock .compact-dock-panels .view-control-group{display:none;padding:8px}
+    #viewControlDock .compact-dock-panels .view-control-group.active{display:block}
+    .compact-dock-tabs{order:2;display:grid;grid-template-columns:repeat(6,1fr);gap:5px}
+    .compact-dock-tabs button{display:grid!important;grid-template-columns:22px 1fr;align-items:center;gap:4px;width:100%!important;min-width:0!important;min-height:42px!important;padding:5px 7px!important;border:1px solid #52697c!important;border-radius:9px!important;background:#0d1722!important;color:#d8e2e9!important;font-size:8px!important;font-weight:900!important;letter-spacing:.05em!important}
+    .compact-dock-tabs button b{font-size:14px;color:#8fa8bb}.compact-dock-tabs button.active{border-color:#52d7ff!important;background:#132b3d!important;color:#fff!important}.compact-dock-tabs button.active b{color:#6ed9ff}.compact-dock-tabs button.light-on{border-color:#ffe08a!important;color:#ffe08a!important}.compact-dock-tabs button.light-on b{color:#ffe08a}
   }
   .ui-mobile-sheet{display:none}
   @media (max-width:760px),(pointer:coarse){
     #uiWorkspaceBar,#uiContextRail{display:none!important}
     #viewControlDock{display:none}
+    #viewControlDock .compact-dock-tabs{display:none!important}#viewControlDock .compact-dock-panels{width:100%}
     body.mobile-compact.mobile-panel-chat #viewControlDock,body.mobile-compact.mobile-panel-photo #viewControlDock,body.mobile-compact.mobile-panel-emote #viewControlDock{display:flex;position:fixed;left:8px;right:8px;bottom:max(66px,calc(env(safe-area-inset-bottom) + 64px));z-index:68;padding:7px;box-sizing:border-box;border:1px solid rgba(120,160,195,.55);border-radius:15px;background:rgba(7,13,21,.96);backdrop-filter:blur(18px)}
     body.mobile-compact #viewControlDock .view-control-group{display:none;width:100%}body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(2),body.mobile-compact.mobile-panel-chat #viewControlDock .view-control-group:nth-child(3),body.mobile-compact.mobile-panel-photo #viewControlDock .view-control-group:nth-child(4),body.mobile-compact.mobile-panel-emote #viewControlDock .view-control-group:nth-child(5){display:block}.view-control-label{display:block;margin-bottom:6px;color:#8fa8bb;font-size:8px;font-weight:900;letter-spacing:.1em}body.mobile-compact #viewControlDock .view-control-content{display:flex;flex-wrap:wrap;gap:4px}body.mobile-compact .dock-chat,body.mobile-compact .dock-voice,body.mobile-compact .dock-photo,body.mobile-compact .dock-actions{display:flex;flex-wrap:wrap}
     body.mobile-compact #avatarControls{display:none!important}

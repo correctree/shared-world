@@ -169,6 +169,7 @@ export function cloneOwnedWorld(sourceCode:string,targetCode:string,clientId:str
   const original=loadWorldGeneration(source,"current");
   if(!original)throw new Error("source room not found");
   if(original.environmentOwnerClientId!==owner)throw new Error("owner required");
+  if(readCatalogMeta(source).archived)throw new Error("restore room before copying");
   const world:SavedWorldV2={...original,roomCode:target,revision:1,savedAt:new Date().toISOString(),
     environment:{...original.environment},environmentOwnerClientId:owner,directorClientIds:[],
     mediaObjects:original.mediaObjects.map(item=>({...item,ownerClientId:owner})),
@@ -207,18 +208,52 @@ export function setOwnedWorldArchived(code:string,clientId:string,archived:boole
   return {roomCode,archived:verified.archived};
 }
 
+export function deleteOwnedWorld(code:string,clientId:string,confirmation:string) {
+  const roomCode=safeRoomCode(code),owner=safeClientId(clientId);
+  if(String(confirmation||"").toUpperCase()!==roomCode)throw new Error("room code confirmation required");
+  const world=loadWorldGeneration(roomCode,"current");
+  if(!world)throw new Error("room not found");
+  if(world.environmentOwnerClientId!==owner)throw new Error("owner required");
+  if(!readCatalogMeta(roomCode).archived)throw new Error("archive required before deletion");
+
+  // Stage every ROOM file out of its live name before unlinking any of them.
+  // A staging failure rolls all renamed files back, preventing partial deletion.
+  const paths=[worldPath(roomCode),previousPath(roomCode),stablePath(roomCode),checkpointPath(roomCode),catalogPath(roomCode)];
+  const token=`${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const staged:Array<{source:string;target:string}>=[];
+  try{
+    for(const source of paths){
+      if(!existsSync(source))continue;
+      const target=`${source}.delete-${token}.tmp`;renameSync(source,target);staged.push({source,target});
+    }
+  }catch(error){
+    for(const item of staged.reverse()){
+      try{if(existsSync(item.target)&&!existsSync(item.source))renameSync(item.target,item.source);}
+      catch(rollbackError){console.error("[ROOM DELETE ROLLBACK FAILED]",roomCode,item.source,rollbackError);}
+    }
+    throw error;
+  }
+  if(paths.some(existsSync))throw new Error("room delete verification failed");
+  for(const item of staged){
+    try{if(existsSync(item.target))unlinkSync(item.target);}
+    catch(error){console.warn("[ROOM DELETE STAGED CLEANUP FAILED]",roomCode,item.target,error);}
+  }
+  return {roomCode,deleted:true,removedFiles:staged.length,assetsRetained:true};
+}
+
 export function getRoomAccessPolicy(code:string):RoomAccessPolicy {
   const meta=readCatalogMeta(code);return {version:1,accessMode:meta.accessMode,editorClientIds:[...meta.editorClientIds]};
 }
+export function isRoomArchived(code:string) { return readCatalogMeta(code).archived; }
 
 export function inspectRoomEntry(code:string,clientId:string) {
   const roomCode=safeRoomCode(code),viewer=safeClientId(clientId);
   const world=loadWorldGeneration(roomCode,"current");
   if(!world)return {roomCode,exists:false,allowed:false,role:"visitor" as const,accessMode:"shared" as const,mediaCount:0};
-  const policy=getRoomAccessPolicy(roomCode);
+  const policy=getRoomAccessPolicy(roomCode),archived=isRoomArchived(roomCode);
   const role=world.environmentOwnerClientId===viewer?"owner":policy.editorClientIds.includes(viewer)?"editor":"visitor";
-  const allowed=policy.accessMode==="shared"||role==="owner"||role==="editor";
-  return {roomCode,exists:true,allowed,role,accessMode:policy.accessMode,mediaCount:world.mediaObjects.length};
+  const allowed=!archived&&(policy.accessMode==="shared"||role==="owner"||role==="editor");
+  return {roomCode,exists:true,allowed,role,archived,accessMode:policy.accessMode,mediaCount:world.mediaObjects.length};
 }
 
 export function setOwnedWorldAccess(code:string,clientId:string,accessMode:string,editorClientIds:unknown) {
@@ -247,6 +282,7 @@ export function renameOwnedWorld(sourceCode:string,targetCode:string,clientId:st
   const current=loadWorldGeneration(source,"current");
   if(!current)throw new Error("source room not found");
   if(current.environmentOwnerClientId!==owner)throw new Error("owner required");
+  if(readCatalogMeta(source).archived)throw new Error("restore room before renaming");
   const generations:Array<{source:string;target:string;world:SavedWorldV2|null}>=[
     {source:worldPath(source),target:worldPath(target),world:current},
     {source:previousPath(source),target:previousPath(target),world:loadWorldGeneration(source,"previous")},

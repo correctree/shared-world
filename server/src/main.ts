@@ -1,6 +1,6 @@
-import { assetCount, cloneOwnedWorld, createOwnedWorld, inspectRoomEntry, listOwnedWorlds, readAsset, renameOwnedWorld, saveAsset, setOwnedWorldAccess, setOwnedWorldArchived } from "./persistence.js";
+import { assetCount, cloneOwnedWorld, createOwnedWorld, deleteOwnedWorld, inspectRoomEntry, listOwnedWorlds, readAsset, renameOwnedWorld, saveAsset, setOwnedWorldAccess, setOwnedWorldArchived } from "./persistence.js";
 import { defineRoom, defineServer } from "colyseus";
-import { SharedWorldRoom } from "./SharedWorldRoom.js";
+import { isRoomOccupied, SharedWorldRoom } from "./SharedWorldRoom.js";
 import { createHash } from "node:crypto";
 
 const port = Number(process.env.PORT || 2567);
@@ -37,6 +37,7 @@ const server = defineServer({
     app.options("/rooms/clone",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/rename",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/archive",(_req,res)=>res.sendStatus(204));
+    app.options("/rooms/delete",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/access",(_req,res)=>res.sendStatus(204));
     app.options("/rooms/entry",(_req,res)=>res.sendStatus(204));
     const roomClientId=(req:any)=>String(req.query?.clientId||req.get("X-Shared-Client-Id")||"");
@@ -67,10 +68,23 @@ const server = defineServer({
         res.status(message.includes("exists")?409:message.includes("owner")?403:400).json({ok:false,error:message});}
     });
     app.post("/rooms/archive",(req,res)=>{
-      try{const archived=String(req.query.archived||"")==="1";const result=setOwnedWorldArchived(String(req.query.roomCode||""),roomClientId(req),archived);
+      try{const archived=String(req.query.archived||"")==="1";const roomCode=String(req.query.roomCode||"");
+        if(archived&&isRoomOccupied(roomCode))throw new Error("room is currently occupied");
+        const result=setOwnedWorldArchived(roomCode,roomClientId(req),archived);
         res.json({ok:true,verified:true,...result});}
       catch(error){const message=error instanceof Error?error.message:"room archive failed";
-        res.status(message.includes("owner")?403:400).json({ok:false,error:message});}
+        res.status(message.includes("owner")?403:message.includes("occupied")?409:400).json({ok:false,error:message});}
+    });
+    app.post("/rooms/delete",(req,res)=>{
+      try{
+        const roomCode=String(req.query.roomCode||"");
+        if(isRoomOccupied(roomCode))throw new Error("room is currently occupied");
+        const result=deleteOwnedWorld(roomCode,roomClientId(req),String(req.query.confirm||""));
+        res.json({ok:true,verified:true,...result});
+      }
+      catch(error){const message=error instanceof Error?error.message:"room delete failed";
+        const status=message.includes("owner")?403:message.includes("occupied")||message.includes("archive required")?409:400;
+        res.status(status).json({ok:false,error:message});}
     });
     app.post("/rooms/access",(req,res)=>{
       try{const editors=String(req.query.editors||"").split(",").filter(Boolean);const result=setOwnedWorldAccess(String(req.query.roomCode||""),roomClientId(req),String(req.query.accessMode||"shared"),editors);

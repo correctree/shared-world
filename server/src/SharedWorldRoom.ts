@@ -1,9 +1,15 @@
 import { Room, type Client } from "colyseus";
-import { assetExists, getRoomAccessPolicy, loadWorld, loadWorldCheckpoint, loadWorldGeneration, saveWorld, saveWorldCheckpoint, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
+import { assetExists, getRoomAccessPolicy, isRoomArchived, loadWorld, loadWorldCheckpoint, loadWorldGeneration, saveWorld, saveWorldCheckpoint, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
 import { Player, SharedMediaObject, WorldState } from "./state.js";
 
 const MAX_STEP = 0.75;
 const MAX_MEDIA_OBJECTS = 64;
+const liveRoomClientCounts=new Map<string,number>();
+const liveRoomInstances=new Set<string>();
+export function isRoomOccupied(roomCode:string) {
+  const code=String(roomCode||"").toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16);
+  return liveRoomInstances.has(code)||(liveRoomClientCounts.get(code)||0)>0;
+}
 
 type AddMediaPayload = {
   id?: string;
@@ -645,11 +651,14 @@ export class SharedWorldRoom extends Room<WorldState> {
   // Each transport session owns only its own player state. A new connection must
   // never delete another live session merely because localStorage clientId matches.
   maxClients = 12;
-  autoDispose = false;
+  // Persistent storage now owns ROOM longevity. Empty runtime instances must
+  // dispose before archive/delete so they cannot recreate deleted files later.
+  autoDispose = true;
   state = new WorldState();
 
   onCreate(options: { roomCode?: string }) {
     this.roomCode=String(options.roomCode||"ART001").toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16)||"ART001";
+    liveRoomInstances.add(this.roomCode);
     this.setMetadata({ roomCode:this.roomCode });
     try { this.restorePersistentWorld(); }
     catch(error) {
@@ -1608,6 +1617,7 @@ export class SharedWorldRoom extends Room<WorldState> {
   onAuth(_client:Client,options:{clientId?:string;clientMode?:string}) {
     const clientId=String(options?.clientId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
     if(!this.persistentRoomAvailable)throw new Error("ROOM_NOT_FOUND");
+    if(isRoomArchived(this.roomCode))throw new Error("ROOM_ARCHIVED");
     const policy=getRoomAccessPolicy(this.roomCode);
     if(policy.accessMode==="owner-only"&&clientId!==this.environmentOwnerClientId&&!policy.editorClientIds.includes(clientId))throw new Error("ROOM_ACCESS_DENIED");
     return true;
@@ -1628,6 +1638,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       y: 0.65,
       z: Math.sin(angle) * radius
     }));
+    liveRoomClientCounts.set(this.roomCode,(liveRoomClientCounts.get(this.roomCode)||0)+1);
 
     this.sendEnvironmentPermissions();
     this.sendDirectorState();
@@ -1668,12 +1679,16 @@ export class SharedWorldRoom extends Room<WorldState> {
     const name = player?.name || "Guest";
 
     this.state.players.delete(client.sessionId);
+    const remaining=Math.max(0,(liveRoomClientCounts.get(this.roomCode)||1)-1);
+    if(remaining)liveRoomClientCounts.set(this.roomCode,remaining);else liveRoomClientCounts.delete(this.roomCode);
     this.sendEnvironmentPermissions();
     this.sendDirectorState();
     console.log("[SESSION CLEANUP]", name, client.sessionId, { code, players: this.state.players.size });
   }
 
   onDispose() {
+    liveRoomInstances.delete(this.roomCode);
+    liveRoomClientCounts.delete(this.roomCode);
     if(this.cueTimelineTimer)clearInterval(this.cueTimelineTimer);
     if(this.particleEndTimer)clearTimeout(this.particleEndTimer);
     if(this.persistenceCheckpointTimer)clearInterval(this.persistenceCheckpointTimer);

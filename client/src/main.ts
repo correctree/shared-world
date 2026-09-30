@@ -17,7 +17,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.25.3.3 TRANSPORT COMMAND SEPARATION LOADED]");
+console.log("[PROTOTYPE 0.25.3.4 CONTROL-ONLY CLIENT LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1076,7 +1076,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList{max-height:190px}#roomManager .room-action-row{grid-template-columns:minmax(0,1fr) 112px}#roomManager .room-action-row button{width:112px!important;min-width:112px!important}#roomManager .room-entry-card{grid-template-columns:minmax(0,1fr) 116px}#roomManager .room-entry-card button{width:116px!important;min-width:116px!important}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3.3</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.25.3.4</small></div><button type="button" id="refreshRoomsButton">REFRESH LIST</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -3684,7 +3684,8 @@ function waitForRoomJoinRetry(delay:number,token:number){
     },Math.min(250,Math.max(1,delay)));
   });
 }
-async function joinRoomAttempt(client:Client,options:{name:string;roomCode:string;clientId:string},token:number):Promise<Room>{
+type RoomJoinOptions={name:string;roomCode:string;clientId:string;clientMode?:"director-remote"};
+async function joinRoomAttempt(client:Client,options:RoomJoinOptions,token:number):Promise<Room>{
   let expired=false;
   const join=client.joinOrCreate("shared_world",options);
   return await new Promise<Room>((resolve,reject)=>{
@@ -3714,7 +3715,7 @@ function isRoomAccessDenied(error:unknown){
   return /ROOM_ACCESS_DENIED|access denied|forbidden/i.test(roomJoinErrorText(error));
 }
 function isRoomNotFound(error:unknown){return /ROOM_NOT_FOUND|room not found/i.test(roomJoinErrorText(error));}
-async function joinRoomWithRetry(options:{name:string;roomCode:string;clientId:string},token:number):Promise<Room>{
+async function joinRoomWithRetry(options:RoomJoinOptions,token:number):Promise<Room>{
   let lastError:unknown=null;
   for(let index=0;index<ROOM_JOIN_RETRY_DELAYS.length;index++){
     if(pageIsLeaving||token!==worldJoinAttemptToken)throw new Error("join-cancelled");
@@ -3782,7 +3783,8 @@ async function enterWorld() {
   pendingWorldPackageExport = false;
 
   try {
-    const room=await joinRoomWithRetry({name,roomCode,clientId:persistentClientId},joinToken);
+    const room=await joinRoomWithRetry({name,roomCode,clientId:persistentClientId,
+      ...(directorRemoteMode?{clientMode:"director-remote" as const}:{})},joinToken);
     installRoomPayloadGuard(room);
     activeRoom = room;
     lastRoomPongAt=Date.now();
@@ -3945,6 +3947,7 @@ async function enterWorld() {
 
     const $ = getStateCallbacks(room);
     $(room.state).players.onAdd((player: any, sessionId: string) => {
+      if(player.controlOnly===true){updatePlayerCount();return;}
       createAvatar(sessionId, player);
       if(sessionId===currentSessionId) void sendSavedAvatarStyle(true);
       $(player).onChange(() => {
@@ -5745,7 +5748,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3.3</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.25.3.4</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -7354,7 +7357,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3.3</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.25.3.4</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

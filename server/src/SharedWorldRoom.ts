@@ -317,6 +317,9 @@ export class SharedWorldRoom extends Room<WorldState> {
     const player=this.state.players.get(client.sessionId);
     return player?.clientId || `session:${client.sessionId}`;
   }
+  private isControlOnly(client:Client) {
+    return this.state.players.get(client.sessionId)?.controlOnly===true;
+  }
   private canEditEnvironment(client:Client,claim=false) {
     const actorId=this.environmentActorId(client);
     if(!this.environmentOwnerClientId&&claim)this.environmentOwnerClientId=actorId;
@@ -328,15 +331,18 @@ export class SharedWorldRoom extends Room<WorldState> {
     return this.canEditEnvironment(client,false)||this.directorClientIds.has(actorId);
   }
   private sendDirectorState(target?:Client) {
-    const participants=Array.from(this.state.players,([sessionId,player])=>{
+    const participantByActor=new Map<string,{sessionId:string;name:string;clientId:string;isOwner:boolean;isDirector:boolean}>();
+    for(const [sessionId,player] of this.state.players){
+      if(player.controlOnly===true)continue;
       const actorId=player.clientId||`session:${sessionId}`;
-      return {
+      if(!participantByActor.has(actorId))participantByActor.set(actorId,{
         sessionId,name:player.name,clientId:actorId,
         isOwner:!!this.environmentOwnerClientId&&actorId===this.environmentOwnerClientId,
         isDirector:this.directorClientIds.has(actorId)||
           (!!this.environmentOwnerClientId&&actorId===this.environmentOwnerClientId)
-      };
-    });
+      });
+    }
+    const participants=Array.from(participantByActor.values());
     const recipients=target?[target]:this.clients;
     for(const item of recipients)item.send("director:state",{
       canDirect:this.canDirect(item),canManage:this.canEditEnvironment(item,false),participants
@@ -345,7 +351,7 @@ export class SharedWorldRoom extends Room<WorldState> {
   private sendEnvironmentPermissions(target?:Client) {
     const recipients=target?[target]:this.clients;
     const ownerPresent=!!this.environmentOwnerClientId&&this.clients.some(
-      item=>this.environmentActorId(item)===this.environmentOwnerClientId);
+      item=>!this.isControlOnly(item)&&this.environmentActorId(item)===this.environmentOwnerClientId);
     for(const item of recipients)item.send("environment:permissions",{
       locked:!!this.environmentOwnerClientId,
       canEdit:this.canEditEnvironment(item,false),
@@ -595,7 +601,7 @@ export class SharedWorldRoom extends Room<WorldState> {
   private avatarMessageLastAt = new Map<string,number>();
   private evaluateProximity(client:Client) {
     const player=this.state.players.get(client.sessionId);
-    if (!player) return;
+    if (!player||player.controlOnly===true) return;
     for (const [id,media] of this.state.mediaObjects) {
       const behavior=this.mediaBehaviors.get(id);
       if (!behavior || behavior.enabled!==true || behavior.trigger!=="user-proximity") continue;
@@ -771,7 +777,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       payload: { x?: number; y?: number; z?: number; rotationY?: number; flying?: boolean; seq?: number }
     ) => {
       const player = this.state.players.get(client.sessionId);
-      if (!player) return;
+      if (!player||player.controlOnly===true) return;
 
       const nextX = Number(payload?.x);
       const nextY = payload?.y === undefined ? player.y : Number(payload.y);
@@ -804,7 +810,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
     this.onMessage("avatar:style",(client:Client,payload:any)=>{
       const player=this.state.players.get(client.sessionId);
-      if(!player || !payload || typeof payload!=="object") return;
+      if(!player || player.controlOnly===true || !payload || typeof payload!=="object") return;
       const color=(input:unknown,fallback:string)=>typeof input==="string" &&
         /^#[0-9a-fA-F]{6}$/.test(input)?input.toLowerCase():fallback;
       player.avatarColor=color(payload.color,player.avatarColor);
@@ -859,7 +865,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     });
 
     this.onMessage("avatar:emote",(client:Client,payload:any)=>{
-      if(!this.state.players.has(client.sessionId)) return;
+      if(!this.state.players.has(client.sessionId)||this.isControlOnly(client)) return;
       const type=String(payload?.type||"").toLowerCase();
       if(!["wave","joy","spin"].includes(type)) return;
       const now=Date.now();
@@ -870,7 +876,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     });
 
     this.onMessage("avatar:message",(client:Client,payload:any)=>{
-      if(!this.state.players.has(client.sessionId))return;
+      if(!this.state.players.has(client.sessionId)||this.isControlOnly(client))return;
       const now=Date.now();
       if(now-(this.avatarMessageLastAt.get(client.sessionId)||0)<700)return;
       const text=String(payload?.text||"").replace(/[\u0000-\u001f\u007f]/g," ").trim().slice(0,48);
@@ -882,23 +888,24 @@ export class SharedWorldRoom extends Room<WorldState> {
     // 0.20.4 / Flashlight item. Keep the switch in authoritative player
     // state so late joiners and reconnecting phones see the same light.
     this.onMessage("avatar:flashlight",(client:Client,payload:any)=>{
-      const player=this.state.players.get(client.sessionId);if(!player)return;
+      const player=this.state.players.get(client.sessionId);if(!player||player.controlOnly===true)return;
       player.avatarFlashlightOn=payload?.enabled===true;
     });
 
     // 0.20.0 / WebRTC signaling only. Audio never passes through Colyseus.
     this.onMessage("voice:ready",(client:Client)=>{
-      if(this.state.players.has(client.sessionId))
+      if(this.state.players.has(client.sessionId)&&!this.isControlOnly(client))
         this.broadcast("voice:ready",{sessionId:client.sessionId},{except:client});
     });
     this.onMessage("voice:leave",(client:Client)=>{
       this.broadcast("voice:leave",{sessionId:client.sessionId},{except:client});
     });
     this.onMessage("voice:signal",(client:Client,payload:any)=>{
-      if(!this.state.players.has(client.sessionId))return;
+      if(!this.state.players.has(client.sessionId)||this.isControlOnly(client))return;
       const targetSessionId=String(payload?.targetSessionId||"");
       if(!targetSessionId||targetSessionId===client.sessionId)return;
       const target=this.clients.find(item=>item.sessionId===targetSessionId);if(!target)return;
+      if(this.isControlOnly(target))return;
       const description=payload?.description&&typeof payload.description==="object"?payload.description:null;
       const candidate=payload?.candidate&&typeof payload.candidate==="object"?payload.candidate:null;
       if(description) {
@@ -1266,6 +1273,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         return;
       }
       if (source === "user-proximity-enter" || source === "user-proximity-leave") {
+        if(this.isControlOnly(client))return;
         const actors=this.proximityActors.get(id) || new Set<string>();
         const wasInside=actors.size>0;
         if (source === "user-proximity-enter") actors.add(client.sessionId);
@@ -1597,7 +1605,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     console.log("[room:create] message handlers ready");
   }
 
-  onAuth(_client:Client,options:{clientId?:string}) {
+  onAuth(_client:Client,options:{clientId?:string;clientMode?:string}) {
     const clientId=String(options?.clientId||"").replace(/[^a-zA-Z0-9_-]/g,"").slice(0,80);
     if(!this.persistentRoomAvailable)throw new Error("ROOM_NOT_FOUND");
     const policy=getRoomAccessPolicy(this.roomCode);
@@ -1605,15 +1613,17 @@ export class SharedWorldRoom extends Room<WorldState> {
     return true;
   }
 
-  onJoin(client: Client, options: { name?: string; clientId?: string }) {
+  onJoin(client: Client, options: { name?: string; clientId?: string; clientMode?: string }) {
     const angle = Math.random() * Math.PI * 2;
     const radius = 1.8 + Math.random() * 1.5;
     const safeName = String(options.name || "Guest").trim().slice(0, 16) || "Guest";
     const clientId = String(options.clientId || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
+    const controlOnly=options.clientMode==="director-remote";
 
     this.state.players.set(client.sessionId, new Player({
       name: safeName,
       clientId,
+      controlOnly,
       x: Math.cos(angle) * radius,
       y: 0.65,
       z: Math.sin(angle) * radius
@@ -1625,7 +1635,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.sendEditHistoryState(client);
     this.sendCueTimelineState(client);
 
-    console.log(`[join] ${safeName} / ${client.sessionId} / client:${clientId || "legacy"}`);
+    console.log(`[join] ${safeName} / ${client.sessionId} / client:${clientId || "legacy"} / ${controlOnly?"control-only":"avatar"}`);
     console.log("[AUTHORITATIVE SNAPSHOT]", {
       players: this.state.players.size,
       mediaObjects: this.state.mediaObjects.size

@@ -1,3 +1,4 @@
+import { createArtworkTimelineDock } from "./artworkTimelineDock";
 import { artworkPoseAt, artworkPlaybackAt, retimeArtworkTrack, cleanArtworkTimeline, emptyArtworkTimeline, type ArtworkKey, type ArtworkTimeline } from "./artworkTimeline";
 
 type Context={
@@ -12,13 +13,14 @@ export function createArtworkTimelineUI(ctx:Context){
   const transports=new Map<string,any>();
   const animated=new Map<string,{entity:any;position:any;rotation:any;scale:any;materials:Map<any,{original:any;copy:any;opacity:number;blend:number;depth:boolean;alphaTest:number}>}>();
   const panel=document.createElement("section");panel.id="artworkTimelinePanel";panel.hidden=false;
-  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.26.1.3</small></strong></header>
+  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.26.2</small></strong></header>
     <select data-f="target" hidden aria-label="Selected artwork"></select>
     <div class="at-clock"><span data-f="clock">0.0 / 10.0 s</span><strong data-f="state">STOPPED</strong></div>
     <input type="range" data-f="scrub" min="0" max="10000" step="100" value="0" aria-label="Timeline position">
     <div class="at-buttons at-transport"><button data-a="media">▶ PLAY</button><button data-a="play">DO · TIMELINE</button><button data-a="pause">Ⅱ PAUSE TL</button><button data-a="stop">■ STOP</button></div>
     <div class="at-pair"><label>LENGTH (s)<input data-f="duration" type="number" min="1" max="3600" step="1" value="10"></label><button data-a="length">SET LENGTH</button></div>
     <div class="at-pair"><label>REPEAT COUNT (0 = ∞)<input data-f="repeat" type="number" min="0" max="1000" step="1" value="1"></label><button data-a="repeat">SET REPEAT</button></div>
+    <button data-a="open">OPEN TIMELINE ↗</button>
     <div class="at-keys" data-f="keys"></div>
     <div class="at-grid">
       <label>TIME (s)<input data-f="time" type="number" min="0" max="3600" step="0.1" value="0"></label>
@@ -33,12 +35,27 @@ export function createArtworkTimelineUI(ctx:Context){
   const style=document.createElement("style");style.textContent=`
     #artworkTimelinePanel{position:relative;width:100%;max-width:100%;overflow:auto;box-sizing:border-box;padding:14px;background:#101923;color:#f2f6fa;border:1px solid #4c7795;border-radius:14px;font:12px system-ui;box-shadow:0 12px 40px #0008}
     #artworkTimelinePanel[hidden]{display:none!important}#artworkTimelinePanel header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}#artworkTimelinePanel small{color:#90a9bc;font-size:10px}
-    #artworkTimelinePanel label{display:grid;gap:4px;font-size:10px;color:#a8bdcc;margin:0}#artworkTimelinePanel input,#artworkTimelinePanel select{width:100%;box-sizing:border-box;min-width:0;padding:8px;border:1px solid #3b5465;border-radius:7px;background:#1a2834;color:white}
-    #artworkTimelinePanel button{padding:10px 6px;background:#263f51;color:white;border:1px solid #53758d;border-radius:7px;min-width:0;cursor:pointer}#artworkTimelinePanel button:disabled{opacity:.35;cursor:default}#artworkTimelinePanel button[data-a="close"]{padding:4px 10px;font-size:22px}
-    .at-clock,.at-pair{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:12px 0}.at-pair label{flex:1}.at-clock{color:#ffca79;font-variant-numeric:tabular-nums}.at-buttons,.at-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:10px 0}.at-transport{grid-template-columns:repeat(2,minmax(0,1fr))}.at-keys{display:grid;gap:5px;max-height:140px;overflow:auto}.at-keys button{text-align:left}.at-keys button[aria-pressed="true"]{outline:2px solid #67d4ff;background:#25465e!important}.at-help{font-size:10px;color:#a2b5c3;line-height:1.6}#artworkTimelinePanel [data-f="message"]{padding:8px;background:#0b1119;border-radius:7px;white-space:pre-wrap}
-    @media(max-width:640px){#artworkTimelinePanel{padding:10px}#artworkTimelinePanel input,#artworkTimelinePanel select{font-size:16px}#artworkTimelinePanel button{min-height:42px;font-size:10px}}`;
+    :is(#artworkTimelinePanel,#artworkTimelineDock) label{display:grid;gap:4px;font-size:10px;color:#a8bdcc;margin:0}:is(#artworkTimelinePanel,#artworkTimelineDock) input,:is(#artworkTimelinePanel,#artworkTimelineDock) select{width:100%;box-sizing:border-box;min-width:0;padding:8px;border:1px solid #3b5465;border-radius:7px;background:#1a2834;color:white}
+    :is(#artworkTimelinePanel,#artworkTimelineDock) button{padding:10px 6px;background:#263f51;color:white;border:1px solid #53758d;border-radius:7px;min-width:0;cursor:pointer}:is(#artworkTimelinePanel,#artworkTimelineDock) button:disabled{opacity:.35;cursor:default}:is(#artworkTimelinePanel,#artworkTimelineDock) button[data-a="close"]{padding:4px 10px;font-size:22px}
+    .at-clock,.at-pair{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:12px 0}.at-pair label{flex:1}.at-clock{color:#ffca79;font-variant-numeric:tabular-nums}.at-buttons,.at-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:10px 0}.at-transport{grid-template-columns:repeat(2,minmax(0,1fr))}.at-keys{display:grid;gap:5px;max-height:140px;overflow:auto}.at-keys button{text-align:left}.at-keys button[aria-pressed="true"]{outline:2px solid #67d4ff;background:#25465e!important}.at-help{font-size:10px;color:#a2b5c3;line-height:1.6}:is(#artworkTimelinePanel,#artworkTimelineDock) [data-f="message"]{padding:8px;background:#0b1119;border-radius:7px;white-space:pre-wrap}
+    @media(max-width:640px){#artworkTimelinePanel{padding:10px}:is(#artworkTimelinePanel,#artworkTimelineDock) input,:is(#artworkTimelinePanel,#artworkTimelineDock) select{font-size:16px}:is(#artworkTimelinePanel,#artworkTimelineDock) button{min-height:42px;font-size:10px}}`;
   document.head.append(style);
-  const field=<T extends HTMLElement>(name:string)=>panel.querySelector<T>(`[data-f="${name}"]`)!;
+  const dock=createArtworkTimelineDock({
+    revision:()=>revision,
+    select:(index:number)=>{const key=currentTrack()?.keys[index];if(!key||state().status==="playing")return;selectedKey=index;fill(key);refresh(true);},
+    move:(index:number,timeMs:number,expectedRevision:number,id:string)=>{
+      if(id!==target.value||expectedRevision!==revision||busy||!ctx.canEdit()||state().status==="playing"){message("Timeline changed. Select the key again.");return;}
+      const definition=JSON.parse(JSON.stringify(timeline)) as ArtworkTimeline,track=definition.tracks.find(t=>t.mediaId===id);
+      if(!track?.keys[index])return;
+      if(track.keys.some((key,i)=>i!==index&&key.timeMs===timeMs)){message("A key already exists at this time. Move to another time.");refresh(true);return;}
+      track.keys[index].timeMs=timeMs;selectedKey=-1;field<HTMLInputElement>("time").value=String(timeMs/1000);save(definition);
+    },
+    seek:(timeMs:number)=>{field<HTMLInputElement>("time").value=String(timeMs/1000);selectedKey=-1;transport("seek",timeMs);},
+    action:(action:string)=>panel.querySelector<HTMLButtonElement>(`[data-a="${action}"]`)?.click()
+  });
+  for(const selector of [".at-keys",".at-grid",".at-buttons:not(.at-transport)",".at-help",'[data-f="message"]']){const node=panel.querySelector<HTMLElement>(selector);if(node)dock.editor.append(node);}
+  const field=<T extends HTMLElement>(name:string)=>(panel.querySelector<T>(`[data-f="${name}"]`)??dock.editor.querySelector<T>(`[data-f="${name}"]`))!;
+  const actionButton=(name:string)=>(panel.querySelector<HTMLButtonElement>(`[data-a="${name}"]`)??dock.editor.querySelector<HTMLButtonElement>(`[data-a="${name}"]`))!;
   const target=field<HTMLSelectElement>("target"),scrub=field<HTMLInputElement>("scrub"),keys=field<HTMLElement>("keys");
   const message=(text:string)=>{field<HTMLElement>("message").textContent=text;};
   const numbers=["x","y","z","rotationX","rotationY","rotationZ","scale","opacity"] as const;
@@ -71,15 +88,17 @@ export function createArtworkTimelineUI(ctx:Context){
     const status=state().status,track=currentTrack(),duration=track?.durationMs??timeline.durationMs;
     const valid=items.some(i=>i.id===selected);
     const canEdit=!!room&&valid&&ctx.canEdit()&&status!=="playing"&&!busy,canDirect=!!room&&valid&&ctx.canDirect()&&!busy;
-    for(const a of ["save","capture","delete","length","repeat"])panel.querySelector<HTMLButtonElement>(`[data-a="${a}"]`)!.disabled=!canEdit;
-    panel.querySelector<HTMLButtonElement>('[data-a="delete"]')!.disabled=!canEdit||selectedKey<0;
-    for(const a of ["media","play","pause","stop"])panel.querySelector<HTMLButtonElement>(`[data-a="${a}"]`)!.disabled=!canDirect||(a==="play"&&!track);
+    for(const a of ["save","capture","delete","length","repeat"])actionButton(a).disabled=!canEdit;
+    actionButton("delete").disabled=!canEdit||selectedKey<0;
+    for(const a of ["media","play","pause","stop"])actionButton(a).disabled=!canDirect||(a==="play"&&!track);
     scrub.disabled=!canDirect;target.disabled=true;
     for(const n of [...numbers,"time","duration","repeat"])field<HTMLInputElement>(n).disabled=!canEdit;
     const pos=position();field<HTMLElement>("clock").textContent=`${(pos/1000).toFixed(1)} / ${(duration/1000).toFixed(1)} s · ${frame().cycle} / ${track?.repeatCount===0?"∞":track?.repeatCount??1}`;field<HTMLElement>("state").textContent=status.toUpperCase();
     scrub.max=String(duration);if(document.activeElement!==scrub)scrub.value=String(pos);
     if(rebuild&&!dirtySettings.has("duration")&&document.activeElement!==field("duration"))field<HTMLInputElement>("duration").value=String(duration/1000);
     if(rebuild&&!dirtySettings.has("repeat")&&document.activeElement!==field("repeat"))field<HTMLInputElement>("repeat").value=String(track?.repeatCount??1);
+    panel.querySelector<HTMLButtonElement>('[data-a="open"]')!.disabled=!valid;
+    dock.update({id:selected,title:ctx.getItems().get(selected)?.title||"SELECT ARTWORK",durationMs:duration,positionMs:pos,keys:track?.keys??[],selectedKey,canEdit,canSeek:canDirect,status});
     if(rebuild){keys.replaceChildren();const track=currentTrack();if(!track)keys.textContent="No keys. Capture a pose at 0 s and SAVE KEY.";
       track?.keys.forEach((key,index)=>{const b=document.createElement("button");b.type="button";b.textContent=`${(key.timeMs/1000).toFixed(1)} s · size ${key.scale.toFixed(2)} · opacity ${key.opacity.toFixed(2)}`;b.setAttribute("aria-pressed",String(index===selectedKey));
         b.addEventListener("click",()=>{if(state().status==="playing")return;selectedKey=index;fill(key);refresh(true);});keys.append(b);});}
@@ -91,9 +110,10 @@ export function createArtworkTimelineUI(ctx:Context){
     const sentRoom=room;setTimeout(()=>{if(room===sentRoom&&busy){busy=false;message("No confirmation yet. Refresh before retrying.");room.send("artwork:timeline:get",{requestAt:Date.now()});refresh();}},5000);
   }
   function transport(action:string,pos?:number){if(room&&ctx.canDirect()){message(action.toUpperCase()+"…");room.send("artwork:timeline:transport",{action,mediaId:target.value,...(pos===undefined?{}:{positionMs:pos})});}}
-  panel.addEventListener("click",event=>{
+  const handleAction=(event:Event)=>{
     const action=(event.target as HTMLElement).closest<HTMLButtonElement>("[data-a]")?.dataset.a;if(!action)return;
-if(action==="capture"){capture();return;}
+    if(action==="open"){dock.open();refresh();return;}
+    if(action==="capture"){capture();return;}
     if(action==="media"){if(ctx.canDirect())ctx.dispatchAction(target.value,"play");return;}
     if(action==="stop"){if(ctx.canDirect())ctx.dispatchAction(target.value,"stop");return;}
     if(["play","pause"].includes(action)){transport(action);return;}
@@ -120,7 +140,8 @@ if(action==="capture"){capture();return;}
       track.keys=track.keys.filter(k=>k.timeMs!==key.timeMs);track.keys.push(key);
       selectedKey=-1;save(definition);
     }else if(action==="delete"&&track&&selectedKey>=0){track.keys.splice(selectedKey,1);definition.tracks=definition.tracks.filter(t=>t.keys.length);selectedKey=-1;save(definition);}
-  });
+  };
+  panel.addEventListener("click",handleAction);dock.editor.addEventListener("click",handleAction);
   for(const name of ["duration","repeat"])field<HTMLInputElement>(name).addEventListener("input",()=>dirtySettings.add(name));
   target.addEventListener("change",()=>{selectedKey=-1;capture();refresh(true);});
   scrub.addEventListener("change",()=>transport("seek",Number(scrub.value)));
@@ -178,7 +199,7 @@ if(action==="capture"){capture();return;}
     next.send("artwork:timeline:get",{requestAt:Date.now()});lastPing=Date.now();message("Loading ROOM keyframes…");refresh(true);
   }
   ctx.app.on("update",()=>{
-    if(room&&ctx.getRoom()!==room){for(const id of Array.from(animated.keys()))release(id);room=null;transports.clear();timeline=emptyArtworkTimeline();busy=false;message("Connect to a ROOM.");refresh(true);}
+    if(room&&ctx.getRoom()!==room){for(const id of Array.from(animated.keys()))release(id);room=null;dock.close();transports.clear();timeline=emptyArtworkTimeline();busy=false;message("Connect to a ROOM.");refresh(true);}
     if(room&&Date.now()-lastPing>5000){lastPing=Date.now();room.send("artwork:timeline:get",{requestAt:Date.now()});}
     render();if(Date.now()-uiAt>100){uiAt=Date.now();refresh();}
   });

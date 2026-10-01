@@ -11,7 +11,7 @@ export function createArtworkTimelineUI(ctx:Context){
   const transports=new Map<string,any>();
   const animated=new Map<string,{entity:any;position:any;rotation:any;scale:any;materials:Map<any,{original:any;copy:any;opacity:number;blend:number;depth:boolean;alphaTest:number}>}>();
   const panel=document.createElement("section");panel.id="artworkTimelinePanel";panel.hidden=false;
-  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.26.1.1</small></strong></header>
+  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.26.1.2</small></strong></header>
     <select data-f="target" hidden aria-label="Selected artwork"></select>
     <div class="at-clock"><span data-f="clock">0.0 / 10.0 s</span><strong data-f="state">STOPPED</strong></div>
     <input type="range" data-f="scrub" min="0" max="10000" step="100" value="0" aria-label="Timeline position">
@@ -81,7 +81,7 @@ export function createArtworkTimelineUI(ctx:Context){
     if(rebuild&&document.activeElement!==field("repeat"))field<HTMLInputElement>("repeat").value=String(track?.repeatCount??1);
     if(rebuild){keys.replaceChildren();const track=currentTrack();if(!track)keys.textContent="No keys. Capture a pose at 0 s and SAVE KEY.";
       track?.keys.forEach((key,index)=>{const b=document.createElement("button");b.type="button";b.textContent=`${(key.timeMs/1000).toFixed(1)} s · size ${key.scale.toFixed(2)} · opacity ${key.opacity.toFixed(2)}`;b.setAttribute("aria-pressed",String(index===selectedKey));
-        b.addEventListener("click",()=>{if(status==="playing")return;selectedKey=index;fill(key);refresh(true);});keys.append(b);});}
+        b.addEventListener("click",()=>{if(state().status==="playing")return;selectedKey=index;fill(key);refresh(true);});keys.append(b);});}
   }
   function save(definition:ArtworkTimeline){
     if(!room||!ctx.canEdit()||state().status==="playing"||busy)return;
@@ -157,11 +157,12 @@ if(action==="capture"){capture();return;}
       const received=Date.now();
       if(Number.isFinite(payload.requestAt)&&received-payload.requestAt>=0&&received-payload.requestAt<10000){offset=Number(payload.serverAt)-(received+payload.requestAt)/2;clockReady=true;}
       else if(!clockReady)offset=Number(payload.serverAt)-received;
-      if(payload.timeline){try{timeline=cleanArtworkTimeline(payload.timeline);}catch{message("Invalid timeline received.");return;}}
+      let definitionChanged=false;
+      if(payload.timeline){try{const nextDefinition=cleanArtworkTimeline(payload.timeline);definitionChanged=JSON.stringify(nextDefinition)!==JSON.stringify(timeline);timeline=nextDefinition;}catch{message("Invalid timeline received.");return;}}
       if(revision!==(Number(payload.revision)||0))selectedKey=-1;
       revision=Number(payload.revision)||0;
       transports.clear();for(const t of payload.transports||[])transports.set(t.mediaId,t);
-      refresh(!!payload.timeline);render();
+      refresh(definitionChanged);render();
     });
     next.onMessage("artwork:timeline:result",(payload:any)=>{
       if(room!==next||ctx.getRoom()!==next)return;

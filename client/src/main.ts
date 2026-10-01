@@ -19,7 +19,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.26.1.1 ARTWORK TIMELINE LOADED]");
+console.log("[PROTOTYPE 0.26.1.2 ARTWORK TIMELINE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1080,7 +1080,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList,#roomManager #archivedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.26.1.1</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.26.1.2</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -5839,7 +5839,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.26.1.1</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.26.1.2</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -6232,7 +6232,7 @@ mediaManagerStyle.textContent = `
   .media-manager-kind { opacity:.62; font-size:10px; font-weight:800; }
   .media-manager-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   .media-manager-empty { opacity:.55; padding:18px 6px; text-align:center; font-size:12px; }
-  .selected-artwork-inspector { grid-column:1/-1;margin:4px 0 0;padding:12px;border:1px solid #526276;border-radius:11px;background:#0b1119;animation:inlineInspectorOpen .14s ease-out; }
+  .selected-artwork-inspector { grid-column:1/-1;margin:4px 0 0;padding:12px;border:1px solid #526276;border-radius:11px;background:#0b1119; }
   .selected-artwork-inspector.reorder-suspended { display:none!important; }
   @keyframes inlineInspectorOpen { from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none} }
   .selected-artwork-heading { display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.12); }
@@ -7075,8 +7075,8 @@ behaviorTestLeave.addEventListener("click", (event) => {
   executeBehaviorTestAction("leave");
 });
 
+let artworkListRenderSignature="";
 function refreshMediaManagerUI() {
-  mediaManagerList.innerHTML = "";
   const artworkListCount=document.getElementById("artworkListCount");
   if(artworkListCount)artworkListCount.textContent=`${managedPlacedMedia.size} ${managedPlacedMedia.size===1?"ARTWORK":"ARTWORKS"}`;
   const groups=Array.from(new Set(Array.from(mediaMetadata.values()).map(v=>v.groupName).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
@@ -7090,6 +7090,14 @@ function refreshMediaManagerUI() {
     return (!groupFilter||meta.groupName===groupFilter)&&(!tagFilter||meta.tags.some(tag=>tag.toLocaleLowerCase().includes(tagFilter)));
   });
 
+  const renderSignature=JSON.stringify({groupFilter,tagFilter,canEdit:environmentCanEdit,items:objects.map(item=>{
+    const meta=mediaMetadata.get(item.id)||{groupName:"",tags:[]};
+    const raw:any=getAuthoritativeMediaMap()?.get?.(item.id);
+    return [item.id,item.title,item.kind,meta.groupName,meta.tags,pendingMediaVisibility.has(item.id)?pendingMediaVisibility.get(item.id):raw?.visible!==false];
+  })});
+  if(renderSignature!==artworkListRenderSignature){
+    artworkListRenderSignature=renderSignature;
+    mediaManagerList.innerHTML="";
   if (objects.length === 0) {
     const empty = document.createElement("div");
     empty.className = "media-manager-empty";
@@ -7129,10 +7137,14 @@ function refreshMediaManagerUI() {
     });
   }
 
+  }
+  for(const row of mediaManagerList.querySelectorAll<HTMLElement>(".media-manager-row[data-media-id]"))
+    row.classList.toggle("selected",row.dataset.mediaId===selectedManagedMediaId);
+
   const hasSelection = !!selectedManagedMediaId && managedPlacedMedia.has(selectedManagedMediaId);
   const selectedRow=hasSelection?mediaManagerList.querySelector<HTMLElement>(`.media-manager-row[data-media-id="${CSS.escape(String(selectedManagedMediaId))}"]`):null;
   if(selectedArtworkInspector){
-    if(selectedRow)selectedRow.appendChild(selectedArtworkInspector);
+    if(selectedRow){if(selectedArtworkInspector.parentElement!==selectedRow)selectedRow.appendChild(selectedArtworkInspector);}
     else selectedArtworkInspector.remove();
   }
   editManagedMediaButton.disabled = !hasSelection;
@@ -7151,7 +7163,7 @@ function refreshMediaManagerUI() {
   refreshMediaMetadataEditor();
   refreshCueTargetUI();
   refreshBehaviorEditorUI();
-  artworkTimelineUI?.refresh(true);
+  artworkTimelineUI?.refresh();
 }
 
 function setManagedMediaVisibility(id:string,visible:boolean){
@@ -7452,7 +7464,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.26.1.1</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.26.1.2</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

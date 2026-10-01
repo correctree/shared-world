@@ -1,4 +1,4 @@
-import { artworkPoseAt, artworkPlaybackAt, cleanArtworkTimeline, emptyArtworkTimeline, type ArtworkKey, type ArtworkTimeline } from "./artworkTimeline";
+import { artworkPoseAt, artworkPlaybackAt, retimeArtworkTrack, cleanArtworkTimeline, emptyArtworkTimeline, type ArtworkKey, type ArtworkTimeline } from "./artworkTimeline";
 
 type Context={
   app:any;pc:any;getRoom:()=>any;getItems:()=>Map<string,any>;getSelected:()=>string|null;
@@ -6,12 +6,13 @@ type Context={
 };
 export function createArtworkTimelineUI(ctx:Context){
   let room:any=null,timeline=emptyArtworkTimeline(),revision=0;
+  const dirtySettings=new Set<string>();
   let lastSelected:string|null=null;
   let offset=0,clockReady=false,selectedKey=-1,busy=false,lastPing=0,uiAt=0;
   const transports=new Map<string,any>();
   const animated=new Map<string,{entity:any;position:any;rotation:any;scale:any;materials:Map<any,{original:any;copy:any;opacity:number;blend:number;depth:boolean;alphaTest:number}>}>();
   const panel=document.createElement("section");panel.id="artworkTimelinePanel";panel.hidden=false;
-  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.26.1.2</small></strong></header>
+  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.26.1.3</small></strong></header>
     <select data-f="target" hidden aria-label="Selected artwork"></select>
     <div class="at-clock"><span data-f="clock">0.0 / 10.0 s</span><strong data-f="state">STOPPED</strong></div>
     <input type="range" data-f="scrub" min="0" max="10000" step="100" value="0" aria-label="Timeline position">
@@ -27,7 +28,7 @@ export function createArtworkTimelineUI(ctx:Context){
       <label>OPACITY<input data-f="opacity" type="number" min="0" max="1" step="0.1" value="1"></label>
     </div>
     <div class="at-buttons"><button data-a="capture">CAPTURE POSE</button><button data-a="save">SAVE KEY</button><button data-a="delete">DELETE KEY</button></div>
-    <p class="at-help">Select a saved key to edit. SAVE KEY stores all values at TIME. Equal time replaces a key. Angles 0 → 360 make one full turn. PLAY starts media + timeline. DO starts only this timeline. Repeat 0 = infinite; 1 = once. Natural end holds the final pose. STOP restores this artwork’s saved placement. Owner / Editor edits; Director can play. Up to 120 keys per artwork, 512 per ROOM.</p>
+    <p class="at-help">Select a saved key to edit. SAVE KEY stores all values at TIME. Equal time replaces a key. Angles 0 → 360 make one full turn. PLAY starts media + timeline. DO starts only this timeline. SET LENGTH rescales all key times proportionally. Repeat 0 = infinite; 1 = once. Natural end holds the final pose. STOP restores this artwork’s saved placement. Owner / Editor edits; Director can play. Up to 120 keys per artwork, 512 per ROOM.</p>
     <div data-f="message" role="status">Connect to a ROOM.</div>`;
   const style=document.createElement("style");style.textContent=`
     #artworkTimelinePanel{position:relative;width:100%;max-width:100%;overflow:auto;box-sizing:border-box;padding:14px;background:#101923;color:#f2f6fa;border:1px solid #4c7795;border-radius:14px;font:12px system-ui;box-shadow:0 12px 40px #0008}
@@ -66,7 +67,7 @@ export function createArtworkTimelineUI(ctx:Context){
       rebuild=true;
     }
     const selected=ctx.getSelected()||"";
-    if(lastSelected!==selected){lastSelected=selected;target.value=selected;selectedKey=-1;field<HTMLInputElement>("time").value="0";if(selected)capture();rebuild=true;}
+    if(lastSelected!==selected){lastSelected=selected;dirtySettings.clear();target.value=selected;selectedKey=-1;field<HTMLInputElement>("time").value="0";if(selected)capture();rebuild=true;}
     const status=state().status,track=currentTrack(),duration=track?.durationMs??timeline.durationMs;
     const valid=items.some(i=>i.id===selected);
     const canEdit=!!room&&valid&&ctx.canEdit()&&status!=="playing"&&!busy,canDirect=!!room&&valid&&ctx.canDirect()&&!busy;
@@ -77,8 +78,8 @@ export function createArtworkTimelineUI(ctx:Context){
     for(const n of [...numbers,"time","duration","repeat"])field<HTMLInputElement>(n).disabled=!canEdit;
     const pos=position();field<HTMLElement>("clock").textContent=`${(pos/1000).toFixed(1)} / ${(duration/1000).toFixed(1)} s · ${frame().cycle} / ${track?.repeatCount===0?"∞":track?.repeatCount??1}`;field<HTMLElement>("state").textContent=status.toUpperCase();
     scrub.max=String(duration);if(document.activeElement!==scrub)scrub.value=String(pos);
-    if(rebuild&&document.activeElement!==field("duration"))field<HTMLInputElement>("duration").value=String(duration/1000);
-    if(rebuild&&document.activeElement!==field("repeat"))field<HTMLInputElement>("repeat").value=String(track?.repeatCount??1);
+    if(rebuild&&!dirtySettings.has("duration")&&document.activeElement!==field("duration"))field<HTMLInputElement>("duration").value=String(duration/1000);
+    if(rebuild&&!dirtySettings.has("repeat")&&document.activeElement!==field("repeat"))field<HTMLInputElement>("repeat").value=String(track?.repeatCount??1);
     if(rebuild){keys.replaceChildren();const track=currentTrack();if(!track)keys.textContent="No keys. Capture a pose at 0 s and SAVE KEY.";
       track?.keys.forEach((key,index)=>{const b=document.createElement("button");b.type="button";b.textContent=`${(key.timeMs/1000).toFixed(1)} s · size ${key.scale.toFixed(2)} · opacity ${key.opacity.toFixed(2)}`;b.setAttribute("aria-pressed",String(index===selectedKey));
         b.addEventListener("click",()=>{if(state().status==="playing")return;selectedKey=index;fill(key);refresh(true);});keys.append(b);});}
@@ -102,7 +103,11 @@ if(action==="capture"){capture();return;}
     let track=definition.tracks.find(t=>t.mediaId===target.value);
     if(action==="length"||action==="repeat"){
       if(!track){message("SAVE KEY first.");return;}
-      if(action==="length")track.durationMs=Math.round(Number(field<HTMLInputElement>("duration").value)*1000);
+      if(action==="length"){
+        try{const retimed=retimeArtworkTrack(track,Math.round(Number(field<HTMLInputElement>("duration").value)*1000),timeline.durationMs);Object.assign(track,retimed);}
+        catch(error){message(error instanceof Error?error.message:"Invalid LENGTH");return;}
+        selectedKey=-1;
+      }
       else track.repeatCount=Number(field<HTMLInputElement>("repeat").value);
       save(definition);return;
     }
@@ -116,6 +121,7 @@ if(action==="capture"){capture();return;}
       selectedKey=-1;save(definition);
     }else if(action==="delete"&&track&&selectedKey>=0){track.keys.splice(selectedKey,1);definition.tracks=definition.tracks.filter(t=>t.keys.length);selectedKey=-1;save(definition);}
   });
+  for(const name of ["duration","repeat"])field<HTMLInputElement>(name).addEventListener("input",()=>dirtySettings.add(name));
   target.addEventListener("change",()=>{selectedKey=-1;capture();refresh(true);});
   scrub.addEventListener("change",()=>transport("seek",Number(scrub.value)));
   function release(id:string){
@@ -166,7 +172,7 @@ if(action==="capture"){capture();return;}
     });
     next.onMessage("artwork:timeline:result",(payload:any)=>{
       if(room!==next||ctx.getRoom()!==next)return;
-      busy=false;if(payload.ok&&payload.operation==="save")ctx.onSaved?.();
+      busy=false;if(payload.ok&&payload.operation==="save"){dirtySettings.clear();ctx.onSaved?.();}
       message(payload.ok?(payload.operation==="save"?"SAVED · ROOM keyframes":String(payload.operation).toUpperCase()):`FAILED · ${payload.reason||"unknown"}`);refresh(true);
     });
     next.send("artwork:timeline:get",{requestAt:Date.now()});lastPing=Date.now();message("Loading ROOM keyframes…");refresh(true);

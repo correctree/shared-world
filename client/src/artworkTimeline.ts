@@ -46,3 +46,12 @@ export function artworkPlaybackAt(track:ArtworkTrack,elapsedMs:number,defaultDur
   const ended=repeats>0&&elapsed>=duration*repeats;
   return {positionMs:ended?duration:elapsed%duration,cycle:ended?repeats:Math.floor(elapsed/duration)+1,ended};
 }
+
+// Preserve relative key positions when the user changes playback length.
+export function retimeArtworkTrack(track:ArtworkTrack,durationMs:number,defaultDuration=10000):ArtworkTrack {
+  if(!Number.isFinite(durationMs)||durationMs<1000||durationMs>3600000)throw new Error("LENGTH must be between 1 and 3600 seconds.");
+  const previous=track.durationMs??defaultDuration,next=Math.round(durationMs);
+  const keys=track.keys.map(key=>({...key,timeMs:Math.round(key.timeMs*next/previous)}));
+  if(new Set(keys.map(key=>key.timeMs)).size!==keys.length)throw new Error("LENGTH is too short to keep these keys separate. Choose a longer length.");
+  return {...track,durationMs:next,keys};
+}

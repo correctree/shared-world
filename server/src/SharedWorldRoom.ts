@@ -1,4 +1,4 @@
-import { cleanArtworkTimeline, emptyArtworkTimeline, type ArtworkTimeline } from "./artworkTimeline.js";
+import { cleanArtworkTimeline, emptyArtworkTimeline, artworkPlaybackAt, type ArtworkTimeline } from "./artworkTimeline.js";
 import { Room, type Client } from "colyseus";
 import { assetExists, getRoomAccessPolicy, isRoomArchived, loadWorld, loadWorldCheckpoint, loadWorldGeneration, saveWorld, saveWorldCheckpoint, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
 import { Player, SharedMediaObject, WorldState } from "./state.js";
@@ -50,7 +50,7 @@ type SceneSnapshot = {
 };
 type CueDefinition = {
   id:string;name:string;targetType:"scene"|"group"|"tag";target:string;
-  action:"recall"|"play"|"stop"|"move"|"rotate"|"scale"|"float"|"orbit"|"shake";
+  action:"recall"|"play"|"timeline"|"stop"|"move"|"rotate"|"scale"|"float"|"orbit"|"shake";
   startMs:number;updatedAt:number;
 };
 type MediaHistorySnapshot = {
@@ -69,56 +69,75 @@ type ActorEditHistory = {undo:EditHistoryEntry[];redo:EditHistoryEntry[]};
 export class SharedWorldRoom extends Room<WorldState> {
   private artworkTimeline=emptyArtworkTimeline();
   private artworkTimelineRevision=0;
-  private artworkTransport={status:"stopped" as "stopped"|"playing"|"paused",positionMs:0,startedAt:0,preview:false};
+  private artworkTransports=new Map<string,{status:"stopped"|"playing"|"paused";elapsedMs:number;startedAt:number;preview:boolean}>();
   private artworkTimelineTimer:ReturnType<typeof setInterval>|null=null;
-  private artworkPosition() {
-    return Math.min(this.artworkTimeline.durationMs,this.artworkTransport.status==="playing"?Math.max(0,Date.now()-this.artworkTransport.startedAt):this.artworkTransport.positionMs);
-  }
+  private artworkElapsed(id:string){const t=this.artworkTransports.get(id);return !t?0:t.status==="playing"?Math.max(0,Date.now()-t.startedAt):t.elapsedMs;}
   private sendArtworkTimeline(target?:Client,requestAt?:number,includeDefinition=true) {
-    const payload={revision:this.artworkTimelineRevision,...this.artworkTransport,positionMs:this.artworkPosition(),serverAt:Date.now(),requestAt,
-      ...(includeDefinition?{timeline:this.artworkTimeline}:{})};
+    const transports=this.artworkTimeline.tracks.map(track=>{
+      const t=this.artworkTransports.get(track.mediaId)??{status:"stopped",elapsedMs:0,startedAt:0,preview:false};
+      const elapsedMs=this.artworkElapsed(track.mediaId),frame=artworkPlaybackAt(track,elapsedMs,this.artworkTimeline.durationMs);
+      return {...t,mediaId:track.mediaId,elapsedMs,...frame};
+    });
+    const payload={revision:this.artworkTimelineRevision,transports,serverAt:Date.now(),requestAt,...(includeDefinition?{timeline:this.artworkTimeline}:{})};
     if(target)target.send("artwork:timeline:state",payload);else this.broadcast("artwork:timeline:state",payload);
   }
-  private resetArtworkTransport() {
-    this.artworkTransport={status:"stopped",positionMs:0,startedAt:0,preview:false};
+  private resetArtworkTransport(id?:string){if(id)this.artworkTransports.delete(id);else this.artworkTransports.clear();}
+  private artworkAction(id:string,action:string){
+    if(!["play","timeline","stop"].includes(action))return;
+    if(action==="stop")this.resetArtworkTransport(id);
+    else if(this.artworkTimeline.tracks.some(t=>t.mediaId===id))this.artworkTransports.set(id,{status:"playing",elapsedMs:0,startedAt:Date.now(),preview:true});
+    else return;
+    this.sendArtworkTimeline(undefined,undefined,false);
   }
   private registerArtworkTimeline() {
     this.onMessage("artwork:timeline:get",(client:Client,payload:any)=>this.sendArtworkTimeline(client,Number(payload?.requestAt)));
     this.onMessage("artwork:timeline:save",(client:Client,payload:any)=>{
       const fail=(reason:string)=>client.send("artwork:timeline:result",{ok:false,operation:"save",reason});
       if(!this.canEditEnvironment(client,true)){fail("owner-required");return;}
-      if(this.artworkTransport.status==="playing"){fail("pause-before-editing");return;}
+      const id=String(payload?.mediaId||"");
+      if(!this.state.mediaObjects.has(id)||this.state.mediaObjects.get(id)?.type==="audio"){fail("visual-artwork-required");return;}
+      if(this.artworkTransports.get(id)?.status==="playing"){fail("pause-before-editing");return;}
       if(payload?.revision!==this.artworkTimelineRevision){fail("timeline-changed-refresh-first");this.sendArtworkTimeline(client);return;}
       try{
-        const timeline=cleanArtworkTimeline(payload?.timeline);
-        if(timeline.tracks.some(track=>!this.state.mediaObjects.has(track.mediaId)||this.state.mediaObjects.get(track.mediaId)?.type==="audio"))throw new Error("visual-artwork-required");
-        this.artworkTimeline=timeline;this.artworkTimelineRevision++;this.resetArtworkTransport();
+        if(payload.track&&payload.track.mediaId!==id)throw new Error("track-id-mismatch");
+        const tracks=this.artworkTimeline.tracks.filter(t=>t.mediaId!==id);
+        if(payload.track)tracks.push(payload.track);
+        const timeline=cleanArtworkTimeline({...this.artworkTimeline,tracks});
+        this.artworkTimeline=timeline;this.artworkTimelineRevision++;this.resetArtworkTransport(id);
         this.schedulePersistence("artwork-timeline-save");this.sendArtworkTimeline();
-        client.send("artwork:timeline:result",{ok:true,operation:"save"});
+        client.send("artwork:timeline:result",{ok:true,operation:"save",mediaId:id});
       }catch(error){fail(error instanceof Error?error.message:"invalid-timeline");}
     });
     this.onMessage("artwork:timeline:transport",(client:Client,payload:any)=>{
-      const action=String(payload?.action||"");
+      const action=String(payload?.action||""),id=String(payload?.mediaId||"");
       const fail=(reason:string)=>client.send("artwork:timeline:result",{ok:false,operation:action,reason});
       if(!this.canDirect(client)){fail("director-required");return;}
       if(!["play","pause","stop","seek"].includes(action)){fail("invalid-action");return;}
-      const position=payload?.positionMs===undefined?this.artworkPosition():Number(payload.positionMs);
+      const track=this.artworkTimeline.tracks.find(t=>t.mediaId===id);if(!track){fail("save-keyframes-first");return;}
+      const duration=track.durationMs??this.artworkTimeline.durationMs;
+      const position=payload?.positionMs===undefined?0:Number(payload.positionMs);
       if(!Number.isFinite(position)){fail("invalid-position");return;}
-      const bounded=Math.max(0,Math.min(this.artworkTimeline.durationMs,position));
-      if(action==="stop")this.resetArtworkTransport();
-      else if(action==="pause")this.artworkTransport={status:"paused",positionMs:this.artworkPosition(),startedAt:0,preview:true};
-      else if(action==="seek")this.artworkTransport={status:"paused",positionMs:bounded,startedAt:0,preview:true};
-      else {if(!this.artworkTimeline.tracks.length){fail("save-keyframes-first");return;}
-        const start=bounded>=this.artworkTimeline.durationMs?0:bounded;
-        this.artworkTransport={status:"playing",positionMs:start,startedAt:Date.now()-start,preview:true};}
-      this.sendArtworkTimeline(undefined,undefined,false);client.send("artwork:timeline:result",{ok:true,operation:action});
+      const elapsed=this.artworkElapsed(id);
+      if(action==="stop")this.resetArtworkTransport(id);
+      else if(action==="pause")this.artworkTransports.set(id,{status:"paused",elapsedMs:elapsed,startedAt:0,preview:true});
+      else if(action==="seek")this.artworkTransports.set(id,{status:"paused",elapsedMs:Math.max(0,Math.min(duration,position)),startedAt:0,preview:true});
+      else {
+        const previous=this.artworkTransports.get(id),frame=artworkPlaybackAt(track,elapsed,this.artworkTimeline.durationMs);
+        const start=previous?.status==="paused"&&!frame.ended?elapsed:0;
+        this.artworkTransports.set(id,{status:"playing",elapsedMs:start,startedAt:Date.now()-start,preview:true});
+      }
+      this.sendArtworkTimeline(undefined,undefined,false);client.send("artwork:timeline:result",{ok:true,operation:action,mediaId:id});
     });
     this.artworkTimelineTimer=setInterval(()=>{
-      if(this.artworkTransport.status!=="playing")return;
-      const position=this.artworkPosition();
-      if(position>=this.artworkTimeline.durationMs)this.artworkTransport={status:"paused",positionMs:this.artworkTimeline.durationMs,startedAt:0,preview:true};
-      this.sendArtworkTimeline(undefined,undefined,false);
-    },1000);
+      let active=false;
+      for(const track of this.artworkTimeline.tracks){
+        const t=this.artworkTransports.get(track.mediaId);if(t?.status!=="playing")continue;active=true;
+        if(artworkPlaybackAt(track,this.artworkElapsed(track.mediaId),this.artworkTimeline.durationMs).ended){
+          t.status="paused";t.elapsedMs=(track.durationMs??this.artworkTimeline.durationMs)*(track.repeatCount??1);t.startedAt=0;
+        }
+      }
+      if(active)this.sendArtworkTimeline(undefined,undefined,false);
+    },250);
   }
   private roomCode = "ART001";
   private persistenceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -201,6 +220,7 @@ export class SharedWorldRoom extends Room<WorldState> {
   private applyMediaHistorySnapshot(snapshot:MediaHistorySnapshot|null,targetId:string) {
     if(!snapshot){
       this.state.mediaObjects.delete(targetId);this.mediaBehaviors.delete(targetId);this.proximityActors.delete(targetId);
+      this.resetArtworkTransport(targetId);
       this.artworkTimeline.tracks=this.artworkTimeline.tracks.filter(track=>track.mediaId!==targetId);
       this.artworkTimelineRevision++;this.sendArtworkTimeline();
       this.sendCueList();return;
@@ -348,7 +368,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       const id=String(raw.id||"").slice(0,80),name=String(raw.name||"").trim().slice(0,32);
       const targetType=String(raw.targetType||""),target=String(raw.target||"").slice(0,80),action=String(raw.action||"");
       if(!id||!name||!["scene","group","tag"].includes(targetType)||!target||
-        !["recall","play","stop","move","rotate","scale","float","orbit","shake"].includes(action))continue;
+        !["recall","play","timeline","stop","move","rotate","scale","float","orbit","shake"].includes(action))continue;
       this.cues.set(id,{id,name,targetType:targetType as CueDefinition["targetType"],target,
         action:action as CueDefinition["action"],startMs:Math.max(0,Math.min(3_600_000,Math.round(Number(raw.startMs)||0))),updatedAt:Number(raw.updatedAt)||Date.now()});
     }
@@ -502,6 +522,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         const matches=cue.targetType==="group"?media.groupName.toLocaleLowerCase()===target:
           media.tags.split(",").some(tag=>tag.trim().toLocaleLowerCase()===target);
         if(!matches)continue;
+        this.artworkAction(mediaId,cue.action);
         this.broadcast("media:action",{id:mediaId,action:cue.action,source:`cue-${cue.targetType}`,actorSessionId,eventId:++this.mediaActionSequence});count++;
       }
     }
@@ -557,7 +578,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     };
     if(!this.canEditEnvironment(client,true)){fail("owner-locked");return;}
     const name=String(payload?.name||"").trim().replace(/\s+/g," ").slice(0,32);
-    const targetType=String(payload?.targetType||"");const validActions=["play","stop","move","rotate","scale","float","orbit","shake"];
+    const targetType=String(payload?.targetType||"");const validActions=["play","timeline","stop","move","rotate","scale","float","orbit","shake"];
     let target=String(payload?.target||"").trim().slice(0,80);let action=String(payload?.action||"");
     if(targetType==="scene")action="recall";
     if(targetType==="group"){
@@ -682,7 +703,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       else this.proximityActors.delete(id);
       const action=String(inside?behavior.enterAction:behavior.leaveAction);
       if (action==="none" || (!inside && action==="stop" && actors.size>0) ||
-          (inside && action==="play" && actors.size>1)) continue;
+          (inside && (action==="play"||action==="timeline") && actors.size>1)) continue;
       const params={
         amount:Number(behavior.transformAmount ?? 1),
         speed:Number(behavior.transformSpeed ?? 1),
@@ -691,6 +712,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       };
       const event={id,action,source:inside?"user-proximity-enter":"user-proximity-leave",
         params,actorSessionId:client.sessionId,eventId:++this.mediaActionSequence};
+      this.artworkAction(id,action);
       this.broadcast("media:action",event);
       client.send("media:action",event);
     }
@@ -701,8 +723,10 @@ export class SharedWorldRoom extends Room<WorldState> {
       if (!actors.size) {
         this.proximityActors.delete(id);
         const action=String(this.mediaBehaviors.get(id)?.leaveAction || "stop");
-        if (this.state.mediaObjects.has(id) && action !== "none")
+        if (this.state.mediaObjects.has(id) && action !== "none") {
+          this.artworkAction(id,action);
           this.broadcast("media:action",{id,action,source:"user-proximity-leave",actorSessionId:sessionId,eventId:++this.mediaActionSequence});
+        }
       }
     }
   }
@@ -1194,7 +1218,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       const enterAction = String(input.enterAction || "");
       const leaveAction = String(input.leaveAction || "");
       const triggers = ["user-proximity", "look-at", "touch"];
-      const actions = ["play", "stop", "move", "rotate", "scale", "float", "orbit", "shake", "none"];
+      const actions = ["play", "timeline", "stop", "move", "rotate", "scale", "float", "orbit", "shake", "none"];
       if (!triggers.includes(trigger) || !actions.includes(enterAction) || !actions.includes(leaveAction)) {
         client.send("media:behavior:result",{id,ok:false,reason:"invalid-behavior"});return;
       }
@@ -1336,7 +1360,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         console.warn("[media:action rejected] missing media", id);
         return;
       }
-      const supportedActions = new Set(["play", "stop", "move", "rotate", "scale", "float", "orbit", "shake"]);
+      const supportedActions = new Set(["play", "timeline", "stop", "move", "rotate", "scale", "float", "orbit", "shake"]);
       if (!supportedActions.has(action)) {
         console.warn("[media:action rejected] unsupported action", action);
         return;
@@ -1350,7 +1374,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         if (actors.size) this.proximityActors.set(id,actors);
         else this.proximityActors.delete(id);
         // PLAY fires when the first player enters; STOP fires when the last leaves.
-        if ((action === "play" && wasInside) || (action === "stop" && actors.size>0)) return;
+        if (((action === "play"||action === "timeline") && wasInside) || (action === "stop" && actors.size>0)) return;
       }
 
       // Prototype 0.15.3.2 / SHARED TRANSFORM ACTION FIX
@@ -1373,6 +1397,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
 
       const event={id, action, source, params, actorSessionId: client.sessionId,eventId:++this.mediaActionSequence};
+      this.artworkAction(id,action);
       this.broadcast("media:action", event);
       // Ensure the actor also receives the shared occupancy decision.
       if (source.startsWith("user-proximity-")) client.send("media:action", event);
@@ -1518,7 +1543,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       for(const raw of scenes){const id=String(raw?.id||"").slice(0,80),name=String(raw?.name||"").slice(0,32),env=this.cleanEnvironment(raw?.environment);
         if(id&&name&&env&&raw?.media&&typeof raw.media==="object")this.scenes.set(id,{id,name,updatedAt:Number(raw.updatedAt)||Date.now(),environment:env,media:raw.media});}
       for(const raw of cues){const id=String(raw?.id||"").slice(0,80),name=String(raw?.name||"").slice(0,32),targetType=String(raw?.targetType||"") as CueDefinition["targetType"],action=String(raw?.action||"") as CueDefinition["action"],target=String(raw?.target||"").slice(0,80);
-        if(id&&name&&target&&["scene","group","tag"].includes(targetType)&&["recall","play","stop","move","rotate","scale","float","orbit","shake"].includes(action))this.cues.set(id,{id,name,targetType,target,action,startMs:Math.max(0,Math.min(3_600_000,Math.round(Number(raw.startMs)||0))),updatedAt:Number(raw.updatedAt)||Date.now()});}
+        if(id&&name&&target&&["scene","group","tag"].includes(targetType)&&["recall","play","timeline","stop","move","rotate","scale","float","orbit","shake"].includes(action))this.cues.set(id,{id,name,targetType,target,action,startMs:Math.max(0,Math.min(3_600_000,Math.round(Number(raw.startMs)||0))),updatedAt:Number(raw.updatedAt)||Date.now()});}
       if(this.cueTimelineConfiguredDurationMs>0)this.cueTimelineConfiguredDurationMs=Math.min(3_600_000,Math.max(this.cueTimelineConfiguredDurationMs,...Array.from(this.cues.values(),cue=>cue.startMs+1000)));
       this.scheduleParticleEnd();this.broadcast("world:restored:v2",{roomCode:this.roomCode,revision,count:mediaObjects.length,savedAt});
       client.send("world:restore:v2:result",{ok:true,roomCode:this.roomCode,revision,count:mediaObjects.length,savedAt,backup:true});
@@ -1539,7 +1564,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
       const validTypes = ["sprite", "glb", "webm", "audio"];
       const validTriggers = ["user-proximity", "look-at", "touch"];
-      const validActions = ["play", "stop", "move", "rotate", "scale", "float", "orbit", "shake", "none"];
+      const validActions = ["play", "timeline", "stop", "move", "rotate", "scale", "float", "orbit", "shake", "none"];
       const bounded = (value: unknown, fallback: number, min: number, max: number) => {
         const n = Number(value); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
       };
@@ -1640,7 +1665,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         this.authoringRevision++;
       }
       if(Array.isArray(payload.cues)){
-        const validCueActions=["play","stop","move","rotate","scale","float","orbit","shake"];
+        const validCueActions=["play","timeline","stop","move","rotate","scale","float","orbit","shake"];
         for(const raw of payload.cues.slice(0,24)){
           const name=String(raw?.name||"").trim().replace(/\s+/g," ").slice(0,32);
           const targetType=String(raw?.targetType||"");let target=String(raw?.target||"").trim().slice(0,80);
@@ -1685,6 +1710,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.mediaBehaviors.delete(id);
       this.proximityActors.delete(id);
       this.sendCueList();
+      this.resetArtworkTransport(id);
       this.artworkTimeline.tracks=this.artworkTimeline.tracks.filter(track=>track.mediaId!==id);
       this.artworkTimelineRevision++;this.sendArtworkTimeline();
       console.log("[media:delete stored]", id, "total:", this.state.mediaObjects.size);

@@ -1,4 +1,5 @@
 import { createArtworkTimelineUI } from "./artworkTimelineUI";
+let artworkTimelineUI:ReturnType<typeof createArtworkTimelineUI>|null=null;
 import JSZip from "jszip";
 import "./style.css";
 import * as pc from "playcanvas";
@@ -18,7 +19,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.26.0 ARTWORK TIMELINE LOADED]");
+console.log("[PROTOTYPE 0.26.1 ARTWORK TIMELINE LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1079,7 +1080,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList,#roomManager #archivedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.26.0</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.26.1</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -4362,7 +4363,7 @@ async function enterWorld() {
       applyEnvironmentPermissions({canEdit:false,locked:true,ownerPresent:true});
       if(payload?.reason==="owner-locked")window.alert("WORLD ENVIRONMENT is locked by its owner.");
     });
-    artworkTimelineUI.connect(room);
+    artworkTimelineUI?.connect(room);
     room.send("environment:get",{});
     room.send("scene:list:request",{});
     room.send("cue:list:request",{});
@@ -5645,7 +5646,7 @@ mediaManagerPanel.innerHTML = `
     <select id="cueTargetType"><option value="scene">SCENE</option><option value="group">GROUP</option><option value="tag">TAG</option></select>
     <select id="cueSceneTarget"></select>
     <select id="cueTextTarget" class="hidden"><option value="">SELECT TARGET</option></select>
-    <select id="cueAction"><option value="play">PLAY</option><option value="stop">STOP</option><option value="move">MOVE</option><option value="rotate">ROTATE</option><option value="scale">SCALE</option><option value="float">FLOAT</option><option value="orbit">ORBIT</option><option value="shake">SHAKE</option></select>
+    <select id="cueAction"><option value="play">PLAY</option><option value="timeline">TIMELINE ONLY</option><option value="stop">STOP</option><option value="move">MOVE</option><option value="rotate">ROTATE</option><option value="scale">SCALE</option><option value="float">FLOAT</option><option value="orbit">ORBIT</option><option value="shake">SHAKE</option></select>
     <div class="cue-actions"><button id="cueSaveButton" type="button">SAVE</button><button id="cueFireButton" type="button">FIRE</button><button id="cueDeleteButton" type="button">DELETE</button></div>
     <div id="cueStatus">No cues saved.</div>
     <section id="cueTimeline" class="cue-timeline">
@@ -5733,7 +5734,8 @@ mediaManagerPanel.innerHTML = `
     <label class="behavior-row behavior-action-row">
       <span>Enter Action</span>
       <select id="behaviorEnterAction">
-        <option value="play">PLAY MEDIA</option>
+        <option value="play">PLAY MEDIA + TIMELINE</option>
+        <option value="timeline">TIMELINE ONLY</option>
         <option value="stop">STOP MEDIA</option>
         <option value="move">MOVE</option>
         <option value="rotate">ROTATE</option>
@@ -5749,7 +5751,8 @@ mediaManagerPanel.innerHTML = `
       <span>Leave Action</span>
       <select id="behaviorLeaveAction">
         <option value="stop">STOP MEDIA</option>
-        <option value="play">PLAY MEDIA</option>
+        <option value="play">PLAY MEDIA + TIMELINE</option>
+        <option value="timeline">TIMELINE ONLY</option>
         <option value="move">MOVE</option>
         <option value="rotate">ROTATE</option>
         <option value="scale">SCALE</option>
@@ -5836,7 +5839,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.26.0</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.26.1</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -6830,7 +6833,7 @@ const behaviorTestLeave = mediaManagerPanel.querySelector<HTMLButtonElement>("#b
 // Trigger detection and Actions are intentionally separated. New Actions such as
 // MOVE / ROTATE / SCALE / PLAY SOUND can be added to this dispatcher without
 // rewriting USER PROXIMITY / LOOK AT / TOUCH trigger detection.
-type XRBehaviorActionId = "play" | "stop" | "move" | "rotate" | "scale" | "float" | "orbit" | "shake" | "none";
+type XRBehaviorActionId = "play" | "timeline" | "stop" | "move" | "rotate" | "scale" | "float" | "orbit" | "shake" | "none";
 type XRTransformActionParams = { amount: number; speed: number; axis: "x" | "y" | "z"; duration: number };
 
 function getSelectedInteractiveBehavior() {
@@ -7148,6 +7151,7 @@ function refreshMediaManagerUI() {
   refreshMediaMetadataEditor();
   refreshCueTargetUI();
   refreshBehaviorEditorUI();
+  artworkTimelineUI?.refresh(true);
 }
 
 function setManagedMediaVisibility(id:string,visible:boolean){
@@ -7448,7 +7452,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.26.0</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.26.1</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
@@ -9866,9 +9870,12 @@ app.on("update", (dt: number) => {
 });
 
 // Run after existing media/behavior update callbacks so keyframes own the rendered pose.
-const artworkTimelineUI=createArtworkTimelineUI({
+artworkTimelineUI=createArtworkTimelineUI({
   app,pc,getRoom:()=>activeRoom,getItems:()=>managedPlacedMedia,getSelected:()=>selectedManagedMediaId,
   canEdit:()=>environmentCanEdit,canDirect:()=>directorCanDirect,
   getAuthoritative:(id:string)=>getAuthoritativeMediaMap()?.get(id),
-  buttonHost:mediaManagerPanel,onSaved:()=>requestLocalWorldSave("ARTWORK TIMELINE")
+  buttonHost:mediaManagerPanel,
+  dispatchAction:(id:string,action:string)=>activeRoom?.send("media:action",{id,action,source:"artwork-layer"}),onSaved:()=>requestLocalWorldSave("ARTWORK TIMELINE")
 });
+
+selectedArtworkInspector?.append(createArtworkInspectorSection("ARTWORK TIMELINE",artworkTimelineUI.element,false));

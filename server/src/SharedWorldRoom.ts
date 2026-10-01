@@ -82,12 +82,16 @@ export class SharedWorldRoom extends Room<WorldState> {
     if(target)target.send("artwork:timeline:state",payload);else this.broadcast("artwork:timeline:state",payload);
   }
   private resetArtworkTransport(id?:string){if(id)this.artworkTransports.delete(id);else this.artworkTransports.clear();}
-  private artworkAction(id:string,action:string){
-    if(!["play","timeline","stop"].includes(action))return;
+  private artworkAction(id:string,action:string,source="artwork-layer"){
+    if(!["play","timeline","stop"].includes(action))return true;
+    // Automatic triggers must not rewind a timeline already in progress.
+    const automatic=["user-proximity-","look-at-","touch-"].some(prefix=>source.startsWith(prefix));
+    if(automatic&&(action==="play"||action==="timeline")&&this.artworkTransports.get(id)?.status==="playing")return false;
     if(action==="stop")this.resetArtworkTransport(id);
     else if(this.artworkTimeline.tracks.some(t=>t.mediaId===id))this.artworkTransports.set(id,{status:"playing",elapsedMs:0,startedAt:Date.now(),preview:true});
-    else return;
+    else return true;
     this.sendArtworkTimeline(undefined,undefined,false);
+    return true;
   }
   private registerArtworkTimeline() {
     this.onMessage("artwork:timeline:get",(client:Client,payload:any)=>this.sendArtworkTimeline(client,Number(payload?.requestAt)));
@@ -712,7 +716,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       };
       const event={id,action,source:inside?"user-proximity-enter":"user-proximity-leave",
         params,actorSessionId:client.sessionId,eventId:++this.mediaActionSequence};
-      this.artworkAction(id,action);
+      if(!this.artworkAction(id,action,event.source))continue;
       this.broadcast("media:action",event);
       client.send("media:action",event);
     }
@@ -1366,15 +1370,10 @@ export class SharedWorldRoom extends Room<WorldState> {
         return;
       }
       if (source === "user-proximity-enter" || source === "user-proximity-leave") {
-        if(this.isControlOnly(client))return;
-        const actors=this.proximityActors.get(id) || new Set<string>();
-        const wasInside=actors.size>0;
-        if (source === "user-proximity-enter") actors.add(client.sessionId);
-        else actors.delete(client.sessionId);
-        if (actors.size) this.proximityActors.set(id,actors);
-        else this.proximityActors.delete(id);
-        // PLAY fires when the first player enters; STOP fires when the last leaves.
-        if (((action === "play"||action === "timeline") && wasInside) || (action === "stop" && actors.size>0)) return;
+        // Client-rendered positions can move with a timeline. Only the server's
+        // saved artwork position and player state decide shared occupancy.
+        this.evaluateProximity(client);
+        return;
       }
 
       // Prototype 0.15.3.2 / SHARED TRANSFORM ACTION FIX
@@ -1397,7 +1396,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
 
       const event={id, action, source, params, actorSessionId: client.sessionId,eventId:++this.mediaActionSequence};
-      this.artworkAction(id,action);
+      if(!this.artworkAction(id,action,source))return;
       this.broadcast("media:action", event);
       // Ensure the actor also receives the shared occupancy decision.
       if (source.startsWith("user-proximity-")) client.send("media:action", event);

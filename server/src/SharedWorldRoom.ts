@@ -1,3 +1,4 @@
+import { cleanArtworkTimeline, emptyArtworkTimeline, type ArtworkTimeline } from "./artworkTimeline.js";
 import { Room, type Client } from "colyseus";
 import { assetExists, getRoomAccessPolicy, isRoomArchived, loadWorld, loadWorldCheckpoint, loadWorldGeneration, saveWorld, saveWorldCheckpoint, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
 import { Player, SharedMediaObject, WorldState } from "./state.js";
@@ -66,6 +67,59 @@ type EditHistoryEntry = {
 type ActorEditHistory = {undo:EditHistoryEntry[];redo:EditHistoryEntry[]};
 
 export class SharedWorldRoom extends Room<WorldState> {
+  private artworkTimeline=emptyArtworkTimeline();
+  private artworkTimelineRevision=0;
+  private artworkTransport={status:"stopped" as "stopped"|"playing"|"paused",positionMs:0,startedAt:0,preview:false};
+  private artworkTimelineTimer:ReturnType<typeof setInterval>|null=null;
+  private artworkPosition() {
+    return Math.min(this.artworkTimeline.durationMs,this.artworkTransport.status==="playing"?Math.max(0,Date.now()-this.artworkTransport.startedAt):this.artworkTransport.positionMs);
+  }
+  private sendArtworkTimeline(target?:Client,requestAt?:number,includeDefinition=true) {
+    const payload={revision:this.artworkTimelineRevision,...this.artworkTransport,positionMs:this.artworkPosition(),serverAt:Date.now(),requestAt,
+      ...(includeDefinition?{timeline:this.artworkTimeline}:{})};
+    if(target)target.send("artwork:timeline:state",payload);else this.broadcast("artwork:timeline:state",payload);
+  }
+  private resetArtworkTransport() {
+    this.artworkTransport={status:"stopped",positionMs:0,startedAt:0,preview:false};
+  }
+  private registerArtworkTimeline() {
+    this.onMessage("artwork:timeline:get",(client:Client,payload:any)=>this.sendArtworkTimeline(client,Number(payload?.requestAt)));
+    this.onMessage("artwork:timeline:save",(client:Client,payload:any)=>{
+      const fail=(reason:string)=>client.send("artwork:timeline:result",{ok:false,operation:"save",reason});
+      if(!this.canEditEnvironment(client,true)){fail("owner-required");return;}
+      if(this.artworkTransport.status==="playing"){fail("pause-before-editing");return;}
+      if(payload?.revision!==this.artworkTimelineRevision){fail("timeline-changed-refresh-first");this.sendArtworkTimeline(client);return;}
+      try{
+        const timeline=cleanArtworkTimeline(payload?.timeline);
+        if(timeline.tracks.some(track=>!this.state.mediaObjects.has(track.mediaId)||this.state.mediaObjects.get(track.mediaId)?.type==="audio"))throw new Error("visual-artwork-required");
+        this.artworkTimeline=timeline;this.artworkTimelineRevision++;this.resetArtworkTransport();
+        this.schedulePersistence("artwork-timeline-save");this.sendArtworkTimeline();
+        client.send("artwork:timeline:result",{ok:true,operation:"save"});
+      }catch(error){fail(error instanceof Error?error.message:"invalid-timeline");}
+    });
+    this.onMessage("artwork:timeline:transport",(client:Client,payload:any)=>{
+      const action=String(payload?.action||"");
+      const fail=(reason:string)=>client.send("artwork:timeline:result",{ok:false,operation:action,reason});
+      if(!this.canDirect(client)){fail("director-required");return;}
+      if(!["play","pause","stop","seek"].includes(action)){fail("invalid-action");return;}
+      const position=payload?.positionMs===undefined?this.artworkPosition():Number(payload.positionMs);
+      if(!Number.isFinite(position)){fail("invalid-position");return;}
+      const bounded=Math.max(0,Math.min(this.artworkTimeline.durationMs,position));
+      if(action==="stop")this.resetArtworkTransport();
+      else if(action==="pause")this.artworkTransport={status:"paused",positionMs:this.artworkPosition(),startedAt:0,preview:true};
+      else if(action==="seek")this.artworkTransport={status:"paused",positionMs:bounded,startedAt:0,preview:true};
+      else {if(!this.artworkTimeline.tracks.length){fail("save-keyframes-first");return;}
+        const start=bounded>=this.artworkTimeline.durationMs?0:bounded;
+        this.artworkTransport={status:"playing",positionMs:start,startedAt:Date.now()-start,preview:true};}
+      this.sendArtworkTimeline(undefined,undefined,false);client.send("artwork:timeline:result",{ok:true,operation:action});
+    });
+    this.artworkTimelineTimer=setInterval(()=>{
+      if(this.artworkTransport.status!=="playing")return;
+      const position=this.artworkPosition();
+      if(position>=this.artworkTimeline.durationMs)this.artworkTransport={status:"paused",positionMs:this.artworkTimeline.durationMs,startedAt:0,preview:true};
+      this.sendArtworkTimeline(undefined,undefined,false);
+    },1000);
+  }
   private roomCode = "ART001";
   private persistenceTimer: ReturnType<typeof setTimeout> | null = null;
   private persistenceCheckpointTimer: ReturnType<typeof setInterval> | null = null;
@@ -147,6 +201,8 @@ export class SharedWorldRoom extends Room<WorldState> {
   private applyMediaHistorySnapshot(snapshot:MediaHistorySnapshot|null,targetId:string) {
     if(!snapshot){
       this.state.mediaObjects.delete(targetId);this.mediaBehaviors.delete(targetId);this.proximityActors.delete(targetId);
+      this.artworkTimeline.tracks=this.artworkTimeline.tracks.filter(track=>track.mediaId!==targetId);
+      this.artworkTimelineRevision++;this.sendArtworkTimeline();
       this.sendCueList();return;
     }
     let media=this.state.mediaObjects.get(targetId);
@@ -216,7 +272,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       environmentOwnerClientId:this.environmentOwnerClientId.startsWith("session:")?"":this.environmentOwnerClientId,
       directorClientIds:Array.from(this.directorClientIds).filter(id=>!id.startsWith("session:")), mediaObjects,
       scenes:Array.from(this.scenes.values(),scene=>({...scene})),
-      cues:Array.from(this.cues.values(),cue=>({...cue})),timelineDurationMs:this.cueTimelineConfiguredDurationMs
+      cues:Array.from(this.cues.values(),cue=>({...cue})),timelineDurationMs:this.cueTimelineConfiguredDurationMs,artworkTimeline:this.artworkTimeline
     };
   }
   private persistenceState() {
@@ -254,7 +310,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     this.persistenceTimer=setTimeout(()=>this.persistNow(reason),250);
   }
   private restorePersistentWorld(override?:{world:SavedWorldV2|null;recovered:boolean;source:"current"|"previous"|"stable"|"empty"}) {
-    this.stopCueTimeline(true,false);
+    this.stopCueTimeline(true,false);this.resetArtworkTransport();
     const loaded=override||loadWorld(this.roomCode);
     const saved=loaded.world;
     if(!saved)return;
@@ -297,6 +353,9 @@ export class SharedWorldRoom extends Room<WorldState> {
         action:action as CueDefinition["action"],startMs:Math.max(0,Math.min(3_600_000,Math.round(Number(raw.startMs)||0))),updatedAt:Number(raw.updatedAt)||Date.now()});
     }
     this.cueTimelineConfiguredDurationMs=Math.max(0,Math.min(3_600_000,Math.round(Number(saved.timelineDurationMs)||0)));
+    try{this.artworkTimeline=saved.artworkTimeline?cleanArtworkTimeline(saved.artworkTimeline):emptyArtworkTimeline();}
+    catch(error){console.error("[ARTWORK TIMELINE RESTORE INVALID]",error);this.artworkTimeline=emptyArtworkTimeline();}
+    this.artworkTimelineRevision++;this.sendArtworkTimeline();
     this.persistenceRevision=Math.max(0,Number(saved.revision)||0);
     this.authoringRevision=this.persistenceRevision;
     this.lastSavedAt=String(saved.savedAt||"");
@@ -657,6 +716,7 @@ export class SharedWorldRoom extends Room<WorldState> {
   state = new WorldState();
 
   onCreate(options: { roomCode?: string }) {
+    this.registerArtworkTimeline();
     this.roomCode=String(options.roomCode||"ART001").toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16)||"ART001";
     liveRoomInstances.add(this.roomCode);
     this.setMetadata({ roomCode:this.roomCode });
@@ -1385,7 +1445,7 @@ export class SharedWorldRoom extends Room<WorldState> {
         format: "shared-world-manifest", version: 1,
         roomCode: String(this.metadata?.roomCode || "ART001"),
         exportedAt: new Date().toISOString(), environment:this.environment, mediaObjects,
-        scenes:Array.from(this.scenes.values()),cues:Array.from(this.cues.values()),timelineDurationMs:this.cueTimelineConfiguredDurationMs
+        scenes:Array.from(this.scenes.values()),cues:Array.from(this.cues.values()),timelineDurationMs:this.cueTimelineConfiguredDurationMs,artworkTimeline:this.artworkTimeline
       });
     });
 
@@ -1436,13 +1496,17 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
       const revision=this.persistenceRevision+1,savedAt=new Date().toISOString();
       const timelineDurationMs=Math.max(0,Math.min(3_600_000,Math.round(Number(payload?.timelineDurationMs)||0)));
+      let artworkTimeline:ArtworkTimeline;
+      try{artworkTimeline=payload?.artworkTimeline?cleanArtworkTimeline(payload.artworkTimeline):emptyArtworkTimeline();}
+      catch{fail("invalid-artwork-timeline");return;}
+      if(artworkTimeline.tracks.some(track=>!mediaObjects.some(raw=>raw.id===track.mediaId&&raw.type!=="audio"))){fail("invalid-artwork-timeline-target");return;}
       const proposed:SavedWorldV2={format:"shared-world-room",version:2,roomCode:this.roomCode,revision,savedAt,
         environment:{...environment},environmentOwnerClientId:player.clientId,
-        directorClientIds:Array.from(this.directorClientIds).filter(value=>value!==player.clientId),mediaObjects,scenes,cues,timelineDurationMs};
+        directorClientIds:Array.from(this.directorClientIds).filter(value=>value!==player.clientId),mediaObjects,scenes,cues,timelineDurationMs,artworkTimeline};
       try{saveWorld(this.roomCode,proposed);}catch(error){console.error("[ROOM V2 RESTORE SAVE FAILED]",error);fail("snapshot-save-failed");return;}
       this.state.mediaObjects.clear();this.mediaBehaviors.clear();this.scenes.clear();this.cues.clear();this.resetEditHistory();
       this.environment=environment;this.environmentOwnerClientId=player.clientId;this.persistenceRevision=revision;
-      this.cueTimelineConfiguredDurationMs=timelineDurationMs;
+      this.cueTimelineConfiguredDurationMs=timelineDurationMs;this.artworkTimeline=artworkTimeline;this.artworkTimelineRevision++;this.resetArtworkTransport();this.sendArtworkTimeline();
       this.lastSavedAt=savedAt;this.lastSaveError="";
       this.persistenceDirty=false;this.recoverySource="current";
       for(const raw of mediaObjects){const id=String(raw.id),media=new SharedMediaObject({
@@ -1521,7 +1585,17 @@ export class SharedWorldRoom extends Room<WorldState> {
           scale:bounded(scale,1,.05,20)
         })});
       }
-      if((payload.environment||Array.isArray(payload.scenes)||Array.isArray(payload.cues))&&!this.canEditEnvironment(client,true)) {
+      let importedArtworkTimeline:ArtworkTimeline|null=null;
+      try{
+        if(payload?.artworkTimeline){
+          importedArtworkTimeline=cleanArtworkTimeline(payload.artworkTimeline);
+          if(importedArtworkTimeline.tracks.some(track=>entries.some(entry=>entry.sourceId===track.mediaId&&entry.media.type==="audio")))throw new Error("visual-artwork-required");
+          const idMap=new Map(entries.map(entry=>[entry.sourceId,entry.id]));
+          cleanArtworkTimeline({version:1,durationMs:Math.max(this.artworkTimeline.durationMs,importedArtworkTimeline.durationMs),
+            tracks:[...this.artworkTimeline.tracks,...importedArtworkTimeline.tracks.filter(track=>idMap.has(track.mediaId)).map(track=>({...track,mediaId:idMap.get(track.mediaId)!}))]});
+        }
+      }catch{fail("invalid-artwork-timeline");return;}
+      if((payload.environment||Array.isArray(payload.scenes)||Array.isArray(payload.cues)||importedArtworkTimeline)&&!this.canEditEnvironment(client,true)) {
         fail("environment-owner-locked");this.sendEnvironmentPermissions(client);return;
       }
       for (const entry of entries) {
@@ -1582,6 +1656,12 @@ export class SharedWorldRoom extends Room<WorldState> {
       }
       if(Number.isFinite(Number(payload?.timelineDurationMs)))this.cueTimelineConfiguredDurationMs=Math.max(0,Math.min(3_600_000,Math.round(Number(payload.timelineDurationMs)||0)));
       if(this.cueTimelineConfiguredDurationMs>0)this.cueTimelineConfiguredDurationMs=Math.min(3_600_000,Math.max(this.cueTimelineConfiguredDurationMs,...Array.from(this.cues.values(),cue=>cue.startMs+1000)));
+      if(importedArtworkTimeline){
+        const idMap=new Map(entries.map(entry=>[entry.sourceId,entry.id]));
+        const tracks=importedArtworkTimeline.tracks.filter(track=>idMap.has(track.mediaId)).map(track=>({...track,mediaId:idMap.get(track.mediaId)!}));
+        this.artworkTimeline={version:1,durationMs:Math.max(this.artworkTimeline.durationMs,importedArtworkTimeline.durationMs),tracks:[...this.artworkTimeline.tracks,...tracks].slice(0,64)};
+        this.artworkTimelineRevision++;this.resetArtworkTransport();this.sendArtworkTimeline();
+      }
       this.sendAuthoringState();this.sendCueTimelineState();
       client.send("world:import:result", {ok:true, count:entries.length});
       this.schedulePersistence("world-import");
@@ -1605,6 +1685,8 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.mediaBehaviors.delete(id);
       this.proximityActors.delete(id);
       this.sendCueList();
+      this.artworkTimeline.tracks=this.artworkTimeline.tracks.filter(track=>track.mediaId!==id);
+      this.artworkTimelineRevision++;this.sendArtworkTimeline();
       console.log("[media:delete stored]", id, "total:", this.state.mediaObjects.size);
       client.send("media:delete:result", {id, ok:true});
       this.recordMediaHistory(client,`DELETE · ${String(historyBefore?.title||"ARTWORK").slice(0,32)}`,historyBefore,null);
@@ -1687,6 +1769,7 @@ export class SharedWorldRoom extends Room<WorldState> {
   }
 
   onDispose() {
+    if(this.artworkTimelineTimer)clearInterval(this.artworkTimelineTimer);
     liveRoomInstances.delete(this.roomCode);
     liveRoomClientCounts.delete(this.roomCode);
     if(this.cueTimelineTimer)clearInterval(this.cueTimelineTimer);

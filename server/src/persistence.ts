@@ -1,3 +1,4 @@
+import { cleanArtworkTimeline, type ArtworkTimeline } from "./artworkTimeline.js";
 import {
   copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync,
   renameSync, statSync, unlinkSync, writeFileSync
@@ -27,6 +28,7 @@ export type SavedWorldV2 = {
   scenes: Array<Record<string, unknown>>;
   cues: Array<Record<string, unknown>>;
   timelineDurationMs?: number;
+  artworkTimeline?: ArtworkTimeline;
 };
 
 function safeClientId(value:string) {
@@ -57,6 +59,7 @@ function validateEnvelope(value: unknown, code: string): SavedWorldV2 {
   if(world.timelineDurationMs!==undefined&&(!Number.isFinite(Number(world.timelineDurationMs))||Number(world.timelineDurationMs)<0||Number(world.timelineDurationMs)>3_600_000))throw new Error("invalid timeline duration");
   if (!Array.isArray(world.directorClientIds) || world.directorClientIds.length > 12) throw new Error("invalid director list");
   if (!world.environment || typeof world.environment !== "object") throw new Error("invalid environment");
+  if(world.artworkTimeline!==undefined)cleanArtworkTimeline(world.artworkTimeline);
   const ids = new Set<string>();
   for (const raw of world.mediaObjects) {
     const id=String(raw?.id||"");

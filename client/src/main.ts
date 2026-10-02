@@ -1,3 +1,4 @@
+import { isCameraScreenManifest, createCameraScreenRuntime } from "./cameraScreen";
 import { createCameraBackgroundUI } from "./cameraBackgroundUI";
 let cameraBackgroundUI:ReturnType<typeof createCameraBackgroundUI>|null=null;
 import { createArtworkTimelineUI } from "./artworkTimelineUI";
@@ -21,7 +22,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.28.0 CAMERA BACKGROUND LOADED]");
+console.log("[PROTOTYPE 0.28.1 CAMERA SCREEN LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1099,7 +1100,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList,#roomManager #archivedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.28.0</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.28.1</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -2864,6 +2865,18 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
     try { if (typeof image.decode === "function") await image.decode(); } catch {}
     console.log("[SPRITE RECOVERY 04 IMAGE]", mediaId, image.naturalWidth, image.naturalHeight);
 
+    if(isCameraScreenManifest(meta)){
+      if(!isSharedMediaGenerationCurrent(mediaId,loadGeneration)){URL.revokeObjectURL(imageURL);return;}
+      const screen=createCameraScreenRuntime({pc,app,id:mediaId,media,poster:image,aspect:meta.cameraScreen.aspectRatio,
+        getVideo:()=>cameraBackgroundUI?.getScreenVideo()??null,getDisplay:()=>cameraBackgroundUI?.getScreenDisplay()??{mirror:false,fit:"contain"}});
+      const object=createMediaObject({title:media.title||"Camera Screen",type:"sprite",entity:screen.entity,playable:true,animated:true,playback:screen.playback as any,behavior:[]});
+      object.id=mediaId;xrMediaManager.register(object);
+      managedPlacedMedia.set(mediaId,{id:mediaId,title:`${media.title||"Camera Screen"} [SHARED]`,kind:"sprite",cameraScreen:true,entity:screen.entity});
+      sharedRemoteMediaIds.add(mediaId);
+      placedMediaRuntimes.push({id:mediaId,update:screen.update,dispose:()=>{screen.dispose();URL.revokeObjectURL(imageURL);}});
+      sharedMediaLoadingIds.delete(mediaId);refreshMediaManagerUI();return true;
+    }
+
     const frameWidth = Number(meta.frameWidth);
     const frameHeight = Number(meta.frameHeight);
     const columns = Number(meta.columns);
@@ -3042,7 +3055,7 @@ function updateSharedSpritePlaceholder(mediaId: string, media: any) {
   const animation=activeTransformAnimations.get(mediaId);
   const basePosition=new pc.Vec3(x,y,z);
   const baseEuler=new pc.Vec3(rotationX,rotationY,rotationZ);
-  const baseScale=new pc.Vec3(scale,item.kind==="glb"?scale:1,scale);
+  const baseScale=new pc.Vec3(scale,item.kind==="glb"||item.cameraScreen?scale:1,scale);
   if (animation) {
     animation.basePosition=basePosition;
     animation.baseEuler=baseEuler;
@@ -3111,6 +3124,35 @@ function removeSharedMediaLifecycle(mediaId: string, reason = "server-remove") {
 function removeSharedSpritePlaceholder(mediaId: string) {
   if (!sharedRemoteMediaIds.has(mediaId)) return;
   removeSharedMediaLifecycle(mediaId, "shared-state-remove");
+}
+
+async function createCameraScreenArtwork(){
+  const room=activeRoom;if(!room||!environmentCanEdit)throw new Error("編集権限が必要です。");
+  if((getAuthoritativeMediaMap()?.size??0)>=64)throw new Error("ROOMの作品数上限です。");
+  const id=`camera-${crypto.randomUUID?.()||`${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+  const poster=document.createElement("canvas");poster.width=640;poster.height=360;
+  const draw=poster.getContext("2d");if(!draw)throw new Error("スクリーン画像を作成できません。");
+  draw.fillStyle="#102535";draw.fillRect(0,0,640,360);draw.strokeStyle="#6ed1e0";draw.lineWidth=4;draw.strokeRect(12,12,616,336);
+  draw.fillStyle="#d7f5ff";draw.textAlign="center";draw.font="bold 38px sans-serif";draw.fillText("CAMERA SCREEN",320,160);
+  draw.font="20px sans-serif";draw.fillText("START LOCAL CAMERA / SCREEN MODE",320,208);
+  const png=await new Promise<Blob>((resolve,reject)=>poster.toBlob(blob=>blob?resolve(blob):reject(new Error("スクリーン画像を作成できません。")),"image/png"));
+  const zip=new JSZip();zip.file("screen.png",png);zip.file("screen.json",JSON.stringify({frameWidth:640,frameHeight:360,columns:1,rows:1,frames:1,fps:1,duration:1000,cameraScreen:{version:1,aspectRatio:16/9}}));
+  const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE"});
+  if(activeRoom!==room||!environmentCanEdit)throw new Error("ROOMまたは権限が変更されました。");
+  const assetRef=sharedAssetURL(id,"zip");
+  const response=await fetch(assetRef,{method:"PUT",headers:{"Content-Type":"application/zip"},body:blob});
+  if(!response.ok)throw new Error(`スクリーンの保存に失敗しました（HTTP ${response.status}）。`);
+  await fetchSharedAssetWithRetry(assetRef,`camera-screen:${id}`);
+  if(activeRoom!==room||!environmentCanEdit)throw new Error("ROOMまたは権限が変更されました。");
+  room.send("media:add",{id,title:"Camera Screen",type:"sprite",assetRef,x:localPosition.x,y:localPosition.y+1.5,z:localPosition.z-3,rotationX:0,rotationY:0,rotationZ:0,scale:2.4});
+  const started=Date.now();
+  while(!authoritativeMediaExists(id)){
+    if(activeRoom!==room)throw new Error("ROOMが変更されました。");
+    if(Date.now()-started>10000)throw new Error("追加の確認が届きません。作品一覧を確認してから再操作してください。");
+    await new Promise(resolve=>window.setTimeout(resolve,100));
+  }
+  selectedManagedMediaId=id;refreshMediaManagerUI();
+  return id;
 }
 
 async function publishCommittedSpriteToSharedWorld(mediaId: string, packageBlob: Blob | null) {
@@ -4972,6 +5014,7 @@ type ManagedPlacedMedia = {
   id: string;
   title: string;
   kind: "webm" | "sprite" | "glb" | "audio";
+  cameraScreen?:boolean;
   entity: pc.Entity;
 };
 
@@ -5858,7 +5901,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.28.0</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.28.1</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -7133,7 +7176,7 @@ function refreshMediaManagerUI() {
       const finishDrag=(event:PointerEvent)=>{if(!artworkDrag||artworkDrag.pointerId!==event.pointerId)return;artworkDrag.row.classList.remove("reordering");selectedArtworkInspector?.classList.remove("reorder-suspended");artworkDrag=null;commitArtworkOrderFromList();};
       drag.addEventListener("pointerup",finishDrag);drag.addEventListener("pointercancel",finishDrag);
       const button = document.createElement("button");button.type="button";button.className="media-manager-item";
-      button.innerHTML = `<span class="media-manager-kind">${String(index + 1).padStart(2, "0")} ${item.kind.toUpperCase()}</span><span class="media-manager-title-wrap"><span class="media-manager-title"></span><span class="media-manager-meta"></span></span>`;
+      button.innerHTML = `<span class="media-manager-kind">${String(index + 1).padStart(2, "0")} ${item.cameraScreen?"CAMERA":item.kind.toUpperCase()}</span><span class="media-manager-title-wrap"><span class="media-manager-title"></span><span class="media-manager-meta"></span></span>`;
       const title = button.querySelector<HTMLElement>(".media-manager-title");
       if (title) title.textContent = item.title;
       const meta=mediaMetadata.get(item.id)||{groupName:"",tags:[]};
@@ -7466,8 +7509,8 @@ const advancedGroup=createEnvironmentGroup("ADVANCED / LEGACY","JSON · MERGE ZI
 worldManifestControls.replaceChildren(recoveryGroup,snapshotGroup,advancedGroup);
 
 const environmentSection=createWorldSection("1 · WORLD ENVIRONMENT","LIGHT · GROUND · FOG · PARTICLES",environmentEditor,true);
-cameraBackgroundUI=createCameraBackgroundUI({app,canvas,getRoom:()=>activeRoom,available:()=>!directorRemoteMode,setView:setCameraBackgroundView});
-const cameraBackgroundSection=createWorldSection("2 · CAMERA BACKGROUND","LOCAL CAMERA · REAL WORLD OVERLAY",cameraBackgroundUI.element);
+cameraBackgroundUI=createCameraBackgroundUI({app,canvas,getRoom:()=>activeRoom,available:()=>!directorRemoteMode,setView:setCameraBackgroundView,canAddScreen:()=>environmentCanEdit,addScreen:createCameraScreenArtwork});
+const cameraBackgroundSection=createWorldSection("2 · CAMERA BACKGROUND / SCREEN","LOCAL CAMERA · BACKGROUND · SCREEN",cameraBackgroundUI.element);
 const scenesSection=createWorldSection("3 · SCENES","SAVE · RECALL · LOCAL BACKUP",sceneManagerPanel);
 const roomDataSection=createWorldSection("4 · ROOM DATA & BACKUP","SAVE · RESTORE · TRANSFER",worldManifestControls);
 worldWorkspaceBody.append(environmentSection,cameraBackgroundSection,scenesSection,roomDataSection);worldWorkspacePanel.append(worldWorkspaceHeader,worldWorkspaceBody);document.body.appendChild(worldWorkspacePanel);
@@ -7485,7 +7528,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.28.0</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.28.1</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
@@ -7841,7 +7884,7 @@ editManagedMediaButton.addEventListener("click", () => {
   placementY = position.y;
   placementZ = position.z;
   const rotation=item.entity.getEulerAngles();
-  placementRotationX = item.kind === "glb" ? rotation.x : rotation.x-90;
+  placementRotationX = item.kind === "glb" || item.cameraScreen ? rotation.x : rotation.x-90;
   placementRotationY = rotation.y;
   placementRotationZ = rotation.z;
   const scale = item.entity.getLocalScale();
@@ -8733,7 +8776,7 @@ function applyArtworkPlacement() {
 
   importedArtworkEntity.setPosition(placementX, placementY, placementZ);
 
-  if (importedArtworkKind === "glb") {
+  if (importedArtworkKind === "glb" || importedArtworkEntity.tags.has("camera-screen")) {
     importedArtworkEntity.setLocalScale(
       placementScale,
       placementScale,

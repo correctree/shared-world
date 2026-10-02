@@ -2,6 +2,9 @@ type Context={pc:any;app:any;id:string;media:any;poster:HTMLImageElement;aspect:
 export function isCameraScreenManifest(meta:any){
   return meta?.cameraScreen?.version===1&&typeof meta.cameraScreen.aspectRatio==="number"&&Number.isFinite(meta.cameraScreen.aspectRatio)&&meta.cameraScreen.aspectRatio>=.25&&meta.cameraScreen.aspectRatio<=4;
 }
+export function isBrowserScreenManifest(meta:any){
+  return meta?.browserScreen?.version===1&&typeof meta.browserScreen.aspectRatio==="number"&&Number.isFinite(meta.browserScreen.aspectRatio)&&meta.browserScreen.aspectRatio>=.25&&meta.browserScreen.aspectRatio<=4;
+}
 export function createCameraScreenRuntime(ctx:Context){
   const {pc,app}=ctx,aspect=ctx.aspect;
   if(!Number.isFinite(aspect)||aspect<.25||aspect>4)throw new Error("Invalid camera screen aspect ratio");

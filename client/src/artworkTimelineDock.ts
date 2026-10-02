@@ -40,7 +40,7 @@ export function createArtworkTimelineDock(ctx:Context){
   function layout(){
     if(root.hidden)return;
     const {span,width}=geometry();stage.style.width=width+"px";head.style.left=xFor(snapshot.positionMs)+"px";
-    const next=JSON.stringify([snapshot.id,snapshot.durationMs,snapshot.keys.map(k=>k.timeMs),snapshot.selectedKey,snapshot.selectedIndices,snapshot.canEdit,width]);
+    const next=JSON.stringify([snapshot.id,snapshot.durationMs,snapshot.keys.map(k=>[k.timeMs,k.interpolation??"linear"]),snapshot.selectedKey,snapshot.selectedIndices,snapshot.canEdit,width]);
     if(next===signature||drag)return;signature=next;ruler.replaceChildren();lanes.replaceChildren();
     const desired=snapshot.durationMs/Math.max(1,span/90),power=10**Math.floor(Math.log10(desired));
     const step=[1,2,5,10].map(n=>n*power).find(n=>n>=desired)??power*10;
@@ -50,7 +50,7 @@ export function createArtworkTimelineDock(ctx:Context){
       const name=document.createElement("span");name.className="atd-label";name.textContent=label;lane.append(name);
       snapshot.keys.forEach((key,index)=>{
         const diamond=document.createElement("button");diamond.type="button";diamond.className="atd-key";diamond.textContent="◆";diamond.dataset.index=String(index);diamond.style.left=xFor(key.timeMs)+"px";
-        diamond.setAttribute("aria-pressed",String((snapshot.selectedIndices??[snapshot.selectedKey]).includes(index)));diamond.setAttribute("aria-label",`${label} key ${(key.timeMs/1000).toFixed(3)} seconds`);diamond.title=`${(key.timeMs/1000).toFixed(3)} s · linked key`;diamond.disabled=!snapshot.canEdit;
+        diamond.setAttribute("aria-pressed",String((snapshot.selectedIndices??[snapshot.selectedKey]).includes(index)));diamond.setAttribute("aria-label",`${label} key ${(key.timeMs/1000).toFixed(3)} seconds`);diamond.title=`${(key.timeMs/1000).toFixed(3)} s · ${(key.interpolation??"linear").toUpperCase()} · linked key`;diamond.disabled=!snapshot.canEdit;
         lane.append(diamond);
       });lanes.append(lane);
     }

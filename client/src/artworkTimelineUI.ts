@@ -1,5 +1,5 @@
 import { createArtworkTimelineDock } from "./artworkTimelineDock";
-import { artworkPoseAt, artworkPlaybackAt, retimeArtworkTrack, cleanArtworkTimeline, emptyArtworkTimeline, type ArtworkKey, type ArtworkTimeline } from "./artworkTimeline";
+import { artworkPoseAt, artworkPlaybackAt, retimeArtworkTrack, cleanArtworkTimeline, emptyArtworkTimeline, type ArtworkInterpolation, type ArtworkKey, type ArtworkTimeline } from "./artworkTimeline";
 
 type Context={
   app:any;pc:any;getRoom:()=>any;getItems:()=>Map<string,any>;getSelected:()=>string|null;
@@ -17,7 +17,7 @@ export function createArtworkTimelineUI(ctx:Context){
   const transports=new Map<string,any>();
   const animated=new Map<string,{entity:any;position:any;rotation:any;scale:any;materials:Map<any,{original:any;copy:any;opacity:number;blend:number;depth:boolean;alphaTest:number}>}>();
   const panel=document.createElement("section");panel.id="artworkTimelinePanel";panel.hidden=false;
-  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.26.5</small></strong></header>
+  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.26.6</small></strong></header>
     <select data-f="target" hidden aria-label="Selected artwork"></select>
     <div class="at-clock"><span data-f="clock">0.0 / 10.0 s</span><strong data-f="state">STOPPED</strong></div>
     <input type="range" data-f="scrub" min="0" max="10000" step="100" value="0" aria-label="Timeline position">
@@ -34,6 +34,7 @@ export function createArtworkTimelineUI(ctx:Context){
       <label>OPACITY<input data-f="opacity" type="number" min="0" max="1" step="0.1" value="1"></label>
     </div>
     <div class="at-buttons"><button data-a="capture">CAPTURE POSE</button><button data-a="save">SAVE KEY</button><button data-a="delete">DELETE KEYS</button></div>
+    <div class="at-interpolation"><label>INTERPOLATION · TO NEXT KEY<select data-f="interpolation"><option value="linear">LINEAR</option><option value="ease-in">EASE IN</option><option value="ease-out">EASE OUT</option><option value="ease-in-out">EASE IN OUT</option></select></label><button data-a="interpolation">APPLY TO SELECTED</button></div>
     <div class="at-buttons at-select"><button data-a="multi">MULTI: OFF</button><button data-a="all">SELECT ALL</button><button data-a="clear">CLEAR</button><span data-f="selection">0 selected</span></div>
     <div class="at-buttons at-copy"><button data-a="copy">COPY KEYS</button><button data-a="paste">PASTE KEYS</button><span data-f="clipboard">Select ◆ to copy.</span></div>
     <div class="at-buttons at-history"><button data-a="undo">↶ UNDO</button><button data-a="redo">↷ REDO</button><span data-f="history">UNDO 0 · REDO 0</span></div>
@@ -64,7 +65,7 @@ export function createArtworkTimelineUI(ctx:Context){
     seek:(timeMs:number)=>{field<HTMLInputElement>("time").value=String(timeMs/1000);selectedKey=-1;selectedKeys.clear();transport("seek",timeMs);},
     action:(action:string)=>panel.querySelector<HTMLButtonElement>(`[data-a="${action}"]`)?.click()
   });
-  for(const selector of [".at-keys",".at-grid",".at-buttons:not(.at-transport)",".at-select",".at-copy",".at-history",".at-help",'[data-f="message"]']){const node=panel.querySelector<HTMLElement>(selector);if(node)dock.editor.append(node);}
+  for(const selector of [".at-keys",".at-grid",".at-buttons:not(.at-transport)",".at-interpolation",".at-select",".at-copy",".at-history",".at-help",'[data-f="message"]']){const node=panel.querySelector<HTMLElement>(selector);if(node)dock.editor.append(node);}
   const field=<T extends HTMLElement>(name:string)=>(panel.querySelector<T>(`[data-f="${name}"]`)??dock.editor.querySelector<T>(`[data-f="${name}"]`))!;
   const actionButton=(name:string)=>(panel.querySelector<HTMLButtonElement>(`[data-a="${name}"]`)??dock.editor.querySelector<HTMLButtonElement>(`[data-a="${name}"]`))!;
   const target=field<HTMLSelectElement>("target"),scrub=field<HTMLInputElement>("scrub"),keys=field<HTMLElement>("keys");
@@ -84,7 +85,7 @@ export function createArtworkTimelineUI(ctx:Context){
     return track?artworkPlaybackAt(track,elapsed,timeline.durationMs):{positionMs:0,cycle:0,ended:false};
   }
   function position(){return frame().positionMs;}
-  function fill(key:ArtworkKey){field<HTMLInputElement>("time").value=String(key.timeMs/1000);for(const n of numbers)field<HTMLInputElement>(n).value=String(Math.round(key[n]*10000)/10000);}
+  function fill(key:ArtworkKey){field<HTMLSelectElement>("interpolation").value=key.interpolation??"linear";field<HTMLInputElement>("time").value=String(key.timeMs/1000);for(const n of numbers)field<HTMLInputElement>(n).value=String(Math.round(key[n]*10000)/10000);}
   function capture(){
     const item=ctx.getItems().get(target.value);if(!item){message("Select a loaded visual artwork.");return;}
     const e=item.entity,p=e.getPosition(),r=e.getEulerAngles(),s=e.getLocalScale();
@@ -114,6 +115,8 @@ export function createArtworkTimelineUI(ctx:Context){
     for(const action of ["multi","all","clear"])actionButton(action).disabled=!canEdit;
     actionButton("multi").textContent=`MULTI: ${multiSelect?"ON":"OFF"}`;
     field<HTMLElement>("selection").textContent=`${selectedKeys.size} selected`;
+    field<HTMLSelectElement>("interpolation").disabled=!canEdit;
+    actionButton("interpolation").disabled=!canEdit||!selectedKeys.size;
     actionButton("save").disabled=!canEdit||selectedKeys.size>1;
     actionButton("copy").disabled=!canEdit||selectedKey<0;
     actionButton("paste").disabled=!canEdit||!copiedKey;
@@ -129,7 +132,7 @@ export function createArtworkTimelineUI(ctx:Context){
     panel.querySelector<HTMLButtonElement>('[data-a="open"]')!.disabled=!valid;
     dock.update({id:selected,title:ctx.getItems().get(selected)?.title||"SELECT ARTWORK",durationMs:duration,positionMs:pos,keys:track?.keys??[],selectedKey,selectedIndices:Array.from(selectedKeys),multiSelect,canEdit,canSeek:canDirect,status});
     if(rebuild){keys.replaceChildren();const track=currentTrack();if(!track)keys.textContent="No keys. Capture a pose at 0 s and SAVE KEY.";
-      track?.keys.forEach((key,index)=>{const b=document.createElement("button");b.type="button";b.textContent=`${(key.timeMs/1000).toFixed(1)} s · size ${key.scale.toFixed(2)} · opacity ${key.opacity.toFixed(2)}`;b.setAttribute("aria-pressed",String(selectedKeys.has(index)));
+      track?.keys.forEach((key,index)=>{const b=document.createElement("button");b.type="button";b.textContent=`${(key.timeMs/1000).toFixed(1)} s · size ${key.scale.toFixed(2)} · opacity ${key.opacity.toFixed(2)} · ${(key.interpolation??"linear").toUpperCase()}`;b.setAttribute("aria-pressed",String(selectedKeys.has(index)));
         b.addEventListener("click",event=>selectKey(index,event.shiftKey||event.metaKey||event.ctrlKey));keys.append(b);});}
   }
   function save(definition:ArtworkTimeline){
@@ -153,6 +156,13 @@ export function createArtworkTimelineUI(ctx:Context){
       if(action==="multi")multiSelect=!multiSelect;
       else {selectedKeys.clear();if(action==="all")currentTrack()?.keys.forEach((_,index)=>selectedKeys.add(index));selectedKey=Array.from(selectedKeys).at(-1)??-1;if(selectedKey>=0)fill(currentTrack()!.keys[selectedKey]);}
       refresh(true);return;
+    }
+    if(action==="interpolation"){
+      if(!ctx.canEdit()||busy||state().status==="playing"||!selectedKeys.size)return;
+      const definition=JSON.parse(JSON.stringify(timeline)) as ArtworkTimeline,track=definition.tracks.find(t=>t.mediaId===target.value);
+      if(!track)return;const mode=field<HTMLSelectElement>("interpolation").value as ArtworkInterpolation;
+      for(const index of selectedKeys)if(track.keys[index])track.keys[index].interpolation=mode;
+      save(definition);return;
     }
     if(action==="copy"){
       if(!ctx.canEdit()||state().status==="playing"||busy)return;
@@ -196,7 +206,7 @@ export function createArtworkTimelineUI(ctx:Context){
     }
     if(action==="save"){
       if(selectedKeys.size>1){message("Select one key to edit its properties, or CLEAR before adding a key.");return;}
-      const key={timeMs:Math.round(Number(field<HTMLInputElement>("time").value)*1000)} as ArtworkKey;
+      const key={timeMs:Math.round(Number(field<HTMLInputElement>("time").value)*1000),interpolation:field<HTMLSelectElement>("interpolation").value as ArtworkInterpolation} as ArtworkKey;
       for(const n of numbers)key[n]=Number(field<HTMLInputElement>(n).value);
       if(!track){track={mediaId:target.value,keys:[],durationMs:Math.round(Number(field<HTMLInputElement>("duration").value)*1000),repeatCount:Number(field<HTMLInputElement>("repeat").value)};definition.tracks.push(track);}
       // Changing a selected key's TIME moves it; matching a different key's time replaces it.

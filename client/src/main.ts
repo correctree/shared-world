@@ -1,3 +1,5 @@
+import { createCameraBackgroundUI } from "./cameraBackgroundUI";
+let cameraBackgroundUI:ReturnType<typeof createCameraBackgroundUI>|null=null;
 import { createArtworkTimelineUI } from "./artworkTimelineUI";
 let artworkTimelineUI:ReturnType<typeof createArtworkTimelineUI>|null=null;
 import JSZip from "jszip";
@@ -19,7 +21,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.27.4 ARTWORK TIMELINE LOADED]");
+console.log("[PROTOTYPE 0.28.0 CAMERA BACKGROUND LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -395,7 +397,7 @@ const glbAnimationStatus =
 // =========================================================
 
 const app = new pc.Application(canvas, {
-  graphicsDeviceOptions: { alpha: false, antialias: true, preserveDrawingBuffer: true }
+  graphicsDeviceOptions: { alpha: true, antialias: true, preserveDrawingBuffer: true }
 });
 app.setCanvasFillMode(pc.FILLMODE_FILL_WINDOW);
 app.setCanvasResolution(pc.RESOLUTION_AUTO);
@@ -498,6 +500,7 @@ const defaultWorldEnvironment:WorldEnvironment = {
   groundRepeat:1,groundRotation:0
 };
 let currentWorldEnvironment:WorldEnvironment={...defaultWorldEnvironment};
+let cameraBackgroundEnabled=false,cameraBackgroundGround=false;
 let panoramaEntity:pc.Entity|null=null;
 let panoramaTexture:pc.Texture|null=null;
 let panoramaObjectURL:string|null=null;
@@ -611,7 +614,7 @@ async function setPanorama(ref:string) {
     sphere.render!.material=skyMaterial;
     sphere.render!.castShadows=false;
     app.root.addChild(sphere);
-    panoramaEntity=sphere;panoramaTexture=texture;panoramaObjectURL=url;
+    panoramaEntity=sphere;panoramaTexture=texture;panoramaObjectURL=url;renderCameraBackgroundView();
   } catch(error) {console.warn("[PANORAMA LOAD FAILED]",error);}
 }
 const ambientParticles:pc.Entity[]=[];
@@ -748,7 +751,7 @@ function renderTimeEnvironment() {
     sunlight=first.sunlight+(second.sunlight-first.sunlight)*t;
     sunAngle=first.sunAngle+(second.sunAngle-first.sunAngle)*t;
   }
-  camera.camera!.clearColor=sky;
+  camera.camera!.clearColor=cameraBackgroundEnabled?new pc.Color(0,0,0,0):sky;
   app.scene.ambientLight=new pc.Color(ambient,ambient,ambient);
   light.light!.intensity=sunlight;
   light.light!.color=lightColor;
@@ -761,6 +764,22 @@ app.on("update",(dt:number)=>{
   environmentFrame=0;
   renderTimeEnvironment();
 });
+function renderCameraBackgroundView(){
+  if(!cameraBackgroundEnabled)return;
+  camera.camera!.clearColor=new pc.Color(0,0,0,0);
+  if(panoramaEntity)panoramaEntity.enabled=false;
+  floor.enabled=cameraBackgroundGround;
+  for(const entity of gridEntities)entity.enabled=cameraBackgroundGround&&currentWorldEnvironment.gridVisible;
+  app.scene.fog.type=pc.FOG_NONE;
+}
+function setCameraBackgroundView(enabled:boolean,showGround:boolean){
+  cameraBackgroundEnabled=enabled;cameraBackgroundGround=showGround;
+  if(enabled){renderCameraBackgroundView();return;}
+  floor.enabled=true;for(const entity of gridEntities)entity.enabled=currentWorldEnvironment.gridVisible;
+  if(panoramaEntity)panoramaEntity.enabled=true;
+  renderTimeEnvironment();app.scene.fog.type=currentWorldEnvironment.fogEnabled?pc.FOG_LINEAR:pc.FOG_NONE;
+}
+app.on("update",()=>renderCameraBackgroundView());
 function applyWorldEnvironment(payload:any) {
   if (!payload || typeof payload!=="object") return;
   const color=(v:any,fallback:string)=>typeof v==="string" && /^#[0-9a-fA-F]{6}$/.test(v)?v:fallback;
@@ -834,7 +853,7 @@ function applyWorldEnvironment(payload:any) {
   floorMaterial.diffuseMapTiling=new pc.Vec2(repeats,repeats);
   floorMaterial.diffuseMapRotation=currentWorldEnvironment.groundRotation;
   floorMaterial.update();
-  refreshEnvironmentEditor();
+  refreshEnvironmentEditor();renderCameraBackgroundView();
 }
 
 // =========================================================
@@ -1080,7 +1099,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList,#roomManager #archivedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.27.4</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.28.0</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -3857,7 +3876,7 @@ async function enterWorld() {
     } catch (error) {
       console.warn("[SESSION REENTRY] previous leave warning", error);
     }
-    activeRoom = null;
+    activeRoom = null;cameraBackgroundUI?.stop();
     currentSessionId = "";
     mediaOrderIds=[];
     applyEditHistoryState({});
@@ -3950,7 +3969,7 @@ async function enterWorld() {
     room.onLeave((code:number,reason:string)=>{
       if(room!==activeRoom)return;
       console.warn("[ROOM PERMANENT LEAVE]",code,reason,room.sessionId);
-      activeRoom=null;currentSessionId="";mediaOrderIds=[];
+      activeRoom=null;cameraBackgroundUI?.stop();currentSessionId="";mediaOrderIds=[];
       applyEditHistoryState({});
       updateRoomRoleUI("");
       environmentCanEdit=false;directorCanDirect=false;directorCanManage=false;refreshAccessAwareUI();
@@ -5839,7 +5858,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.27.4</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.28.0</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -7447,9 +7466,11 @@ const advancedGroup=createEnvironmentGroup("ADVANCED / LEGACY","JSON · MERGE ZI
 worldManifestControls.replaceChildren(recoveryGroup,snapshotGroup,advancedGroup);
 
 const environmentSection=createWorldSection("1 · WORLD ENVIRONMENT","LIGHT · GROUND · FOG · PARTICLES",environmentEditor,true);
-const scenesSection=createWorldSection("2 · SCENES","SAVE · RECALL · LOCAL BACKUP",sceneManagerPanel);
-const roomDataSection=createWorldSection("3 · ROOM DATA & BACKUP","SAVE · RESTORE · TRANSFER",worldManifestControls);
-worldWorkspaceBody.append(environmentSection,scenesSection,roomDataSection);worldWorkspacePanel.append(worldWorkspaceHeader,worldWorkspaceBody);document.body.appendChild(worldWorkspacePanel);
+cameraBackgroundUI=createCameraBackgroundUI({app,canvas,getRoom:()=>activeRoom,available:()=>!directorRemoteMode,setView:setCameraBackgroundView});
+const cameraBackgroundSection=createWorldSection("2 · CAMERA BACKGROUND","LOCAL CAMERA · REAL WORLD OVERLAY",cameraBackgroundUI.element);
+const scenesSection=createWorldSection("3 · SCENES","SAVE · RECALL · LOCAL BACKUP",sceneManagerPanel);
+const roomDataSection=createWorldSection("4 · ROOM DATA & BACKUP","SAVE · RESTORE · TRANSFER",worldManifestControls);
+worldWorkspaceBody.append(environmentSection,cameraBackgroundSection,scenesSection,roomDataSection);worldWorkspacePanel.append(worldWorkspaceHeader,worldWorkspaceBody);document.body.appendChild(worldWorkspacePanel);
 worldWorkspaceHeader.querySelector("button")!.addEventListener("click",()=>worldWorkspacePanel.classList.add("hidden"));
 
 // =========================================================
@@ -7464,7 +7485,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.27.4</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.28.0</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

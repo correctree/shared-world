@@ -1,6 +1,6 @@
 import type { ArtworkKey } from "./artworkTimeline";
-type Snapshot={id:string;title:string;durationMs:number;positionMs:number;keys:ArtworkKey[];selectedKey:number;canEdit:boolean;canSeek:boolean;status:string};
-type Context={select:(index:number)=>void;move:(index:number,timeMs:number,revision:number,id:string)=>void;seek:(timeMs:number)=>void;action:(action:string)=>void;revision:()=>number};
+type Snapshot={id:string;title:string;durationMs:number;positionMs:number;keys:ArtworkKey[];selectedKey:number;selectedIndices?:number[];multiSelect?:boolean;canEdit:boolean;canSeek:boolean;status:string};
+type Context={select:(index:number,toggle?:boolean,preserve?:boolean)=>void;move:(index:number,timeMs:number,revision:number,id:string)=>void;seek:(timeMs:number)=>void;action:(action:string)=>void;revision:()=>number};
 export function createArtworkTimelineDock(ctx:Context){
   const root=document.createElement("section");root.id="artworkTimelineDock";root.hidden=true;root.setAttribute("aria-label","Artwork timeline editor");
   root.innerHTML=`<div class="atd-resize" role="separator" aria-label="Resize timeline" tabindex="0"></div>
@@ -31,7 +31,7 @@ export function createArtworkTimelineDock(ctx:Context){
   `;
   document.head.append(css);document.body.append(root);
   let snapshot:Snapshot={id:"",title:"SELECT ARTWORK",durationMs:10000,positionMs:0,keys:[],selectedKey:-1,canEdit:false,canSeek:false,status:"stopped"};
-  let zoom=1,signature="",drag:null|{pointer:number;index:number;time:number;initial:number;x:number;revision:number;id:string;duration:number;span:number;node:HTMLElement;seek:boolean}=null;
+  let zoom=1,signature="",drag:null|{pointer:number;index:number;time:number;initial:number;x:number;revision:number;id:string;duration:number;span:number;node:HTMLElement;seek:boolean;toggleOff?:boolean}=null;
   let resize:null|{pointer:number;y:number;height:number}=null;
   const labelWidth=112;
   function geometry(){const span=Math.max(180,(scroll.clientWidth||700)-labelWidth-24)*zoom;return {span,width:labelWidth+span+24};}
@@ -40,7 +40,7 @@ export function createArtworkTimelineDock(ctx:Context){
   function layout(){
     if(root.hidden)return;
     const {span,width}=geometry();stage.style.width=width+"px";head.style.left=xFor(snapshot.positionMs)+"px";
-    const next=JSON.stringify([snapshot.id,snapshot.durationMs,snapshot.keys.map(k=>k.timeMs),snapshot.selectedKey,snapshot.canEdit,width]);
+    const next=JSON.stringify([snapshot.id,snapshot.durationMs,snapshot.keys.map(k=>k.timeMs),snapshot.selectedKey,snapshot.selectedIndices,snapshot.canEdit,width]);
     if(next===signature||drag)return;signature=next;ruler.replaceChildren();lanes.replaceChildren();
     const desired=snapshot.durationMs/Math.max(1,span/90),power=10**Math.floor(Math.log10(desired));
     const step=[1,2,5,10].map(n=>n*power).find(n=>n>=desired)??power*10;
@@ -50,7 +50,7 @@ export function createArtworkTimelineDock(ctx:Context){
       const name=document.createElement("span");name.className="atd-label";name.textContent=label;lane.append(name);
       snapshot.keys.forEach((key,index)=>{
         const diamond=document.createElement("button");diamond.type="button";diamond.className="atd-key";diamond.textContent="◆";diamond.dataset.index=String(index);diamond.style.left=xFor(key.timeMs)+"px";
-        diamond.setAttribute("aria-pressed",String(index===snapshot.selectedKey));diamond.setAttribute("aria-label",`${label} key ${(key.timeMs/1000).toFixed(3)} seconds`);diamond.title=`${(key.timeMs/1000).toFixed(3)} s · linked key`;diamond.disabled=!snapshot.canEdit;
+        diamond.setAttribute("aria-pressed",String((snapshot.selectedIndices??[snapshot.selectedKey]).includes(index)));diamond.setAttribute("aria-label",`${label} key ${(key.timeMs/1000).toFixed(3)} seconds`);diamond.title=`${(key.timeMs/1000).toFixed(3)} s · linked key`;diamond.disabled=!snapshot.canEdit;
         lane.append(diamond);
       });lanes.append(lane);
     }
@@ -77,27 +77,30 @@ export function createArtworkTimelineDock(ctx:Context){
     if(seek&&(event.target as HTMLElement).closest(".atd-label"))return;
     event.preventDefault();const index=diamond?Number(diamond.dataset.index):-1;
     const time=seek?timeFor(event.clientX):snapshot.keys[index].timeMs;
-    drag={pointer:event.pointerId,index,time,initial:time,x:event.clientX,revision:ctx.revision(),id:snapshot.id,duration:snapshot.durationMs,span:geometry().span,node:diamond??stage,seek};
+    drag={pointer:event.pointerId,index,time,initial:time,x:event.clientX,revision:ctx.revision(),id:snapshot.id,duration:snapshot.durationMs,span:geometry().span,node:diamond??stage,seek,toggleOff:!!diamond&&snapshot.multiSelect===true&&(snapshot.selectedIndices??[]).includes(index)&&!event.shiftKey&&!event.metaKey&&!event.ctrlKey};
     stage.setPointerCapture(event.pointerId);
-    if(diamond)ctx.select(index);else head.style.left=xFor(time)+"px";
+    if(diamond)ctx.select(index,event.shiftKey||event.metaKey||event.ctrlKey||snapshot.multiSelect===true&&!(snapshot.selectedIndices??[]).includes(index),true);else head.style.left=xFor(time)+"px";
   });
   stage.addEventListener("pointermove",event=>{
     if(!drag||drag.pointer!==event.pointerId)return;event.preventDefault();
     drag.time=drag.seek?timeFor(event.clientX):Math.max(0,Math.min(drag.duration,Math.round((drag.initial+(event.clientX-drag.x)/drag.span*drag.duration)/100)*100));
     if(drag.seek)head.style.left=xFor(drag.time)+"px";
-    else for(const key of lanes.querySelectorAll<HTMLElement>(`.atd-key[data-index="${drag.index}"]`))key.style.left=xFor(drag.time)+"px";
+    else {
+      const indices=(snapshot.selectedIndices??[drag.index]).includes(drag.index)?snapshot.selectedIndices??[drag.index]:[drag.index];
+      for(const index of indices)for(const key of lanes.querySelectorAll<HTMLElement>(`.atd-key[data-index="${index}"]`))key.style.left=xFor(snapshot.keys[index].timeMs+drag.time-drag.initial)+"px";
+    }
     q("clock").textContent=`${(drag.time/1000).toFixed(1)} s · ${drag.seek?"PREVIEW ON RELEASE":"MOVE KEY"}`;
   });
   stage.addEventListener("pointerup",event=>{
     if(!drag||drag.pointer!==event.pointerId)return;const done=drag;drag=null;
     if(stage.hasPointerCapture(event.pointerId))stage.releasePointerCapture(event.pointerId);
-    if(done.seek)ctx.seek(done.time);else if(done.time!==done.initial)ctx.move(done.index,done.time,done.revision,done.id);
+    if(done.seek)ctx.seek(done.time);else if(done.time!==done.initial)ctx.move(done.index,done.time,done.revision,done.id);else if(done.toggleOff)ctx.select(done.index,true);
     signature="";layout();
   });
   stage.addEventListener("pointercancel",()=>cancel());stage.addEventListener("lostpointercapture",()=>{if(drag)cancel();});
   stage.addEventListener("keydown",event=>{
     const key=(event.target as HTMLElement).closest<HTMLButtonElement>(".atd-key");if(!key)return;
-    if(event.key==="Enter"||event.key===" "){event.preventDefault();ctx.select(Number(key.dataset.index));}
+    if(event.key==="Enter"||event.key===" "){event.preventDefault();ctx.select(Number(key.dataset.index),event.shiftKey||event.metaKey||event.ctrlKey);}
     if((event.key==="ArrowLeft"||event.key==="ArrowRight")&&snapshot.canEdit){event.preventDefault();const index=Number(key.dataset.index);ctx.move(index,Math.max(0,Math.min(snapshot.durationMs,snapshot.keys[index].timeMs+(event.key==="ArrowLeft"?-100:100))),ctx.revision(),snapshot.id);}
   });
   const grip=root.querySelector<HTMLElement>(".atd-resize")!;

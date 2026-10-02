@@ -1,3 +1,4 @@
+import { createQuestVRFlashlight } from "./questVRView";
 import { questVRHeading } from "./questVRMovement";
 import { createQuestVRInteraction } from "./questVRInteraction";
 import { createSharedBrowserScreenUI } from "./sharedBrowserScreenUI";
@@ -32,7 +33,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.30.5 BROWSER SCREEN LOADED]");
+console.log("[PROTOTYPE 0.30.6 BROWSER SCREEN LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1110,7 +1111,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList,#roomManager #archivedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.5</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.6</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -1510,13 +1511,14 @@ function applyFlashlightState(avatar:Avatar,enabled:boolean) {
     if(dockButton){dockButton.textContent=flashlightButton.textContent;dockButton.classList.toggle("active",avatar.flashlightOn);dockButton.setAttribute("aria-pressed",String(avatar.flashlightOn));}
   }
 }
-flashlightButton.addEventListener("click",()=>{
+function toggleLocalFlashlight(){
   if(!activeRoom||!currentSessionId)return;
   const avatar=avatars.get(currentSessionId);if(!avatar)return;
   const enabled=!avatar.flashlightOn;
   applyFlashlightState(avatar,enabled);
   activeRoom.send("avatar:flashlight",{enabled});
-});
+}
+flashlightButton.addEventListener("click",toggleLocalFlashlight);
 const initialAvatarStyle=savedAvatarStyle();
 avatarControls.querySelector<HTMLInputElement>("#avatarBodyColor")!.value=initialAvatarStyle.color;
 avatarControls.querySelector<HTMLInputElement>("#avatarAccentColor")!.value=initialAvatarStyle.accent;
@@ -1640,7 +1642,7 @@ function setFlightMode(enabled:boolean) {
   flyButton.textContent=flying?"FLY ON":"FLY OFF";
   flyButton.style.borderColor=flying?"#50caff":"#9fb3c6";
   const avatar=currentSessionId?avatars.get(currentSessionId):undefined;
-  if(activeRoom && avatar) sendLocalMovement(avatar.entity.getEulerAngles().y);
+  if(activeRoom && avatar) sendLocalMovement(questVRUI?.isActive()?questVRHeading(camera.forward):avatar.entity.getEulerAngles().y);
 }
 flyButton.addEventListener("click",()=>{if(activeRoom) setFlightMode(!flying);});
 const jumpButton=flightControls.querySelector<HTMLButtonElement>("#jumpButton")!;
@@ -5918,7 +5920,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.5</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.6</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -7548,6 +7550,7 @@ questVRUI=createQuestVRUI({app,pc,camera,getRoom:()=>activeRoom,available:()=>!d
 createQuestVRInteraction({app,pc,camera,getRig:()=>questVRUI?.getRig(),getRoom:()=>activeRoom,
   getItems:()=>Array.from(managedPlacedMedia.values()),
   getMovement:()=>questVRUI?.getMovement()??"stick",getSpeed:()=>questVRUI?.getSpeed()??1.2,toggleMovement:()=>questVRUI?.toggleMovement(),adjustSpeed:(direction)=>questVRUI?.adjustSpeed(direction),
+  getFlying:()=>flying,toggleFlight:()=>setFlightMode(!flying),getLight:()=>avatars.get(currentSessionId)?.flashlightOn??false,toggleLight:toggleLocalFlashlight,
   getGround:(x,z,foot)=>architectureGroundHeight(x,z,foot),
   isBlocked:(x,z,foot)=>{const limit=Math.max(6.5,currentWorldEnvironment.groundSize/2-1);return Math.abs(x)>limit||Math.abs(z)>limit||architectureBlocked(x,z,foot+AVATAR_FOOT_OFFSET);},
   onWalk:(x,z,foot)=>{localPosition.x=x;localPosition.y=foot+AVATAR_FOOT_OFFSET;localPosition.z=z;},
@@ -7572,7 +7575,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.5</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.6</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
@@ -10008,3 +10011,6 @@ artworkTimelineUI=createArtworkTimelineUI({
 });
 
 selectedArtworkInspector?.append(createArtworkInspectorSection("ARTWORK TIMELINE",artworkTimelineUI.element,false));
+
+// Aim the existing self spotlight after avatar/terrain updates have completed.
+createQuestVRFlashlight({app,camera,active:()=>questVRUI?.isActive()??false,getRoot:()=>avatars.get(currentSessionId)?.flashlightRoot??null});

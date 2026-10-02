@@ -15,15 +15,18 @@ export function createArtworkTimelineUI(ctx:Context){
   let lastSelected:string|null=null;
   let offset=0,clockReady=false,selectedKey=-1,busy=false,lastPing=0,uiAt=0;
   const transports=new Map<string,any>();
+  let seekRequestId=0;
+  let scrubPreview:null|{id:string;timeMs:number;revision:number;pending:boolean;requestId?:number}=null;
   const animated=new Map<string,{entity:any;position:any;rotation:any;scale:any;materials:Map<any,{original:any;copy:any;opacity:number;blend:number;depth:boolean;alphaTest:number}>}>();
   const panel=document.createElement("section");panel.id="artworkTimelinePanel";panel.hidden=false;
-  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.27.3</small></strong></header>
+  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.27.4</small></strong></header>
     <select data-f="target" hidden aria-label="Selected artwork"></select>
     <div class="at-clock"><span data-f="clock">0.0 / 10.0 s</span><strong data-f="state">STOPPED</strong></div>
     <input type="range" data-f="scrub" min="0" max="10000" step="100" value="0" aria-label="Timeline position">
     <div class="at-buttons at-transport"><button data-a="media">▶ PLAY</button><button data-a="play">DO · TIMELINE</button><button data-a="pause">Ⅱ PAUSE TL</button><button data-a="stop">■ STOP</button></div>
     <div class="at-pair"><label>LENGTH (s)<input data-f="duration" type="number" min="1" max="3600" step="1" value="10"></label><button data-a="length">SET LENGTH</button></div>
     <div class="at-pair"><label>REPEAT COUNT (0 = ∞)<input data-f="repeat" type="number" min="0" max="1000" step="1" value="1"></label><button data-a="repeat">SET REPEAT</button></div>
+    <div class="at-range"><div class="at-grid"><label>IN (s)<input data-f="range-in" type="number" min="0" step="0.001" value="0"></label><label>OUT (s)<input data-f="range-out" type="number" min="0" step="0.001" value="10"></label></div><div class="at-buttons"><button data-a="range-in">IN AT HEAD</button><button data-a="range-out">OUT AT HEAD</button><button data-a="range-save">SET RANGE</button><button data-a="range">RANGE: OFF</button><button data-a="loop">LOOP: OFF</button><button data-a="range-reset">RESET RANGE</button></div></div>
     <button data-a="open">OPEN TIMELINE ↗</button>
     <div class="at-keys" data-f="keys"></div>
     <div class="at-grid">
@@ -70,10 +73,11 @@ export function createArtworkTimelineUI(ctx:Context){
       if(new Set(moved.map(artworkKeyIdentity)).size!==moved.length){message("A key already exists at this time. Nothing changed.");return;}
       track.keys=moved;selectedKey=-1;selectedKeys.clear();field<HTMLInputElement>("time").value=String(timeMs/1000);save(definition);
     },
-    seek:(timeMs:number)=>{field<HTMLInputElement>("time").value=String(timeMs/1000);selectedKey=-1;selectedKeys.clear();transport("seek",timeMs);},
+    preview:(timeMs:number|null)=>previewScrub(timeMs),
+    seek:(timeMs:number)=>commitScrub(timeMs),
     action:(action:string)=>actionButton(action)?.click()
   });
-  for(const selector of [".at-keys",".at-grid",".at-buttons:not(.at-transport)",".at-channel",".at-interpolation",".at-select",".at-copy",".at-history",".at-help",'[data-f="message"]']){const node=panel.querySelector<HTMLElement>(selector);if(node)dock.editor.append(node);}
+  for(const selector of [".at-range",".at-keys",".at-grid",".at-buttons:not(.at-transport)",".at-channel",".at-interpolation",".at-select",".at-copy",".at-history",".at-help",'[data-f="message"]']){const node=panel.querySelector<HTMLElement>(selector);if(node)dock.editor.append(node);}
   const field=<T extends HTMLElement>(name:string)=>(panel.querySelector<T>(`[data-f="${name}"]`)??dock.editor.querySelector<T>(`[data-f="${name}"]`))!;
   const actionButton=(name:string)=>(panel.querySelector<HTMLButtonElement>(`[data-a="${name}"]`)??dock.editor.querySelector<HTMLButtonElement>(`[data-a="${name}"]`))!;
   const target=field<HTMLSelectElement>("target"),scrub=field<HTMLInputElement>("scrub"),keys=field<HTMLElement>("keys");
@@ -93,7 +97,10 @@ export function createArtworkTimelineUI(ctx:Context){
   function currentTrack(){return timeline.tracks.find(t=>t.mediaId===target.value);}
   function state(id=target.value){return transports.get(id)??{status:"stopped",elapsedMs:0,startedAt:0,preview:false};}
   function frame(track=currentTrack()){
-    const t=state(track?.mediaId),elapsed=t.status==="playing"?Date.now()+offset-t.startedAt:t.elapsedMs;
+    if(track&&scrubPreview?.id===track.mediaId)return {positionMs:scrubPreview.timeMs,cycle:1,ended:false};
+    const t=state(track?.mediaId);
+    if(track&&t.seekMs!==undefined)return {positionMs:t.seekMs,cycle:1,ended:false};
+    const elapsed=t.status==="playing"?Date.now()+offset-t.startedAt:t.elapsedMs;
     return track?artworkPlaybackAt(track,elapsed,timeline.durationMs):{positionMs:0,cycle:0,ended:false};
   }
   function position(){return frame().positionMs;}
@@ -101,7 +108,7 @@ export function createArtworkTimelineUI(ctx:Context){
   function capture(){
     const item=ctx.getItems().get(target.value);if(!item){message("Select a loaded visual artwork.");return;}
     const e=item.entity,p=e.getPosition(),r=e.getEulerAngles(),s=e.getLocalScale();
-    const track=currentTrack(),pose=state().preview&&track?artworkPoseAt(track,frame(track).positionMs,basePose(target.value)):null;
+    const track=currentTrack(),pose=(state().preview||scrubPreview?.id===target.value)&&track?artworkPoseAt(track,frame(track).positionMs,basePose(target.value)):null;
     fill({timeMs:Math.round(Number(field<HTMLInputElement>("time").value)*1000)||0,x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:s.x,opacity:pose?.opacity??1});
     selectedKey=-1;selectedKeys.clear();message("Pose captured. Set TIME and SAVE KEY.");
   }
@@ -115,7 +122,7 @@ export function createArtworkTimelineUI(ctx:Context){
       rebuild=true;
     }
     const selected=ctx.getSelected()||"";
-    if(lastSelected!==selected){lastSelected=selected;dirtySettings.clear();target.value=selected;selectedKey=-1;selectedKeys.clear();field<HTMLInputElement>("time").value="0";if(selected)capture();rebuild=true;}
+    if(lastSelected!==selected){lastSelected=selected;scrubPreview=null;dirtySettings.clear();target.value=selected;selectedKey=-1;selectedKeys.clear();field<HTMLInputElement>("time").value="0";if(selected)capture();rebuild=true;}
     const status=state().status,track=currentTrack(),duration=track?.durationMs??timeline.durationMs;
     const valid=items.some(i=>i.id===selected);
     const canEdit=!!room&&valid&&ctx.canEdit()&&status!=="playing"&&!busy,canDirect=!!room&&valid&&ctx.canDirect()&&!busy;
@@ -140,6 +147,11 @@ export function createArtworkTimelineUI(ctx:Context){
     field<HTMLElement>("clipboard").textContent=copiedKey?`COPIED · ${copiedTitle} · ${copiedKeys.length} key(s)` : "Select ◆ to copy.";
     actionButton("delete").disabled=!canEdit||selectedKey<0;
     for(const a of ["media","play","pause","stop"])actionButton(a).disabled=!canDirect||(a==="play"&&!track);
+    for(const name of ["range-in","range-out"])field<HTMLInputElement>(name).disabled=!canEdit||!track;
+    for(const name of ["range-in","range-out","range-save","range","loop","range-reset"])actionButton(name).disabled=!canEdit||!track;
+    actionButton("range").textContent=`RANGE: ${track?.playbackRange?.enabled?"ON":"OFF"}`;
+    actionButton("loop").textContent=`LOOP: ${track?.playbackRange?.loop?"ON":"OFF"}`;
+    if(rebuild)for(const name of ["range-in","range-out"])if(!dirtySettings.has(name)&&document.activeElement!==field(name))field<HTMLInputElement>(name).value=String((name==="range-in"?track?.playbackRange?.inMs??0:track?.playbackRange?.outMs??duration)/1000);
     scrub.disabled=!canDirect;target.disabled=true;
     for(const n of [...numbers,"time","duration","repeat"])field<HTMLInputElement>(n).disabled=!canEdit;
     const pos=position();field<HTMLElement>("clock").textContent=`${(pos/1000).toFixed(1)} / ${(duration/1000).toFixed(1)} s · ${frame().cycle} / ${track?.repeatCount===0?"∞":track?.repeatCount??1}`;field<HTMLElement>("state").textContent=status.toUpperCase();
@@ -147,7 +159,7 @@ export function createArtworkTimelineUI(ctx:Context){
     if(rebuild&&!dirtySettings.has("duration")&&document.activeElement!==field("duration"))field<HTMLInputElement>("duration").value=String(duration/1000);
     if(rebuild&&!dirtySettings.has("repeat")&&document.activeElement!==field("repeat"))field<HTMLInputElement>("repeat").value=String(track?.repeatCount??1);
     panel.querySelector<HTMLButtonElement>('[data-a="open"]')!.disabled=!valid;
-    dock.update({id:selected,title:ctx.getItems().get(selected)?.title||"SELECT ARTWORK",durationMs:duration,positionMs:pos,keys:track?.keys??[],selectedKey,selectedIndices:Array.from(selectedKeys),multiSelect,canEdit,canSeek:canDirect,status});
+    dock.update({id:selected,title:ctx.getItems().get(selected)?.title||"SELECT ARTWORK",durationMs:duration,positionMs:pos,keys:track?.keys??[],selectedKey,selectedIndices:Array.from(selectedKeys),multiSelect,canEdit,canSeek:canDirect,status,playbackRange:track?.playbackRange});
     if(rebuild){keys.replaceChildren();const track=currentTrack();if(!track)keys.textContent="No keys. Capture a pose at 0 s and SAVE KEY.";
       track?.keys.forEach((key,index)=>{const b=document.createElement("button");b.type="button";b.textContent=`${(key.timeMs/1000).toFixed(1)} s · size ${key.scale.toFixed(2)} · ${(key.channel??"all").toUpperCase()} · opacity ${key.opacity.toFixed(2)} · ${(key.interpolation??"linear").toUpperCase()}`;b.setAttribute("aria-pressed",String(selectedKeys.has(index)));
         b.addEventListener("click",event=>selectKey(index,event.shiftKey||event.metaKey||event.ctrlKey));keys.append(b);});}
@@ -158,9 +170,42 @@ export function createArtworkTimelineUI(ctx:Context){
     busy=true;message("SAVING…");room.send("artwork:timeline:save",{revision,mediaId:target.value,track:definition.tracks.find(t=>t.mediaId===target.value)??null});refresh();
     const sentRoom=room;setTimeout(()=>{if(room===sentRoom&&busy){busy=false;message("No confirmation yet. Refresh before retrying.");room.send("artwork:timeline:get",{requestAt:Date.now()});refresh();}},5000);
   }
-  function transport(action:string,pos?:number){if(room&&ctx.canDirect()){message(action.toUpperCase()+"…");room.send("artwork:timeline:transport",{action,mediaId:target.value,...(pos===undefined?{}:{positionMs:pos})});}}
+  function transport(action:string,pos?:number,requestId?:number){if(action!=="seek")scrubPreview=null;if(room&&ctx.canDirect()){message(action.toUpperCase()+"…");room.send("artwork:timeline:transport",{action,mediaId:target.value,...(pos===undefined?{}:{positionMs:pos}),...(requestId===undefined?{}:{requestId})});}}
+  function previewScrub(timeMs:number|null){
+    if(timeMs===null){scrubPreview=null;render();refresh();return;}
+    const track=currentTrack();if(!room||!ctx.canDirect()||busy||!track)return;
+    scrubPreview={id:target.value,timeMs:Math.max(0,Math.min(track.durationMs??timeline.durationMs,Math.round(timeMs))),revision,pending:false};
+    render();refresh();
+  }
+  function commitScrub(timeMs:number){
+    if(!room||!ctx.canDirect()||busy)return;
+    previewScrub(timeMs);const requestId=++seekRequestId;if(scrubPreview){scrubPreview.pending=true;scrubPreview.requestId=requestId;}
+    field<HTMLInputElement>("time").value=String(timeMs/1000);selectedKey=-1;selectedKeys.clear();transport("seek",timeMs,requestId);
+    const sentRoom=room;setTimeout(()=>{if(room===sentRoom&&scrubPreview?.pending&&scrubPreview.requestId===requestId){scrubPreview=null;render();refresh();}},5000);
+  }
   const handleAction=(event:Event)=>{
     const action=(event.target as HTMLElement).closest<HTMLButtonElement>("[data-a]")?.dataset.a;if(!action)return;
+    if(["range-in","range-out","range-save","range","loop","range-reset"].includes(action)){
+      if(!room||!ctx.canEdit()||busy||state().status==="playing")return;
+      const definition=JSON.parse(JSON.stringify(timeline)) as ArtworkTimeline,track=definition.tracks.find(t=>t.mediaId===target.value);if(!track)return;
+      const duration=track.durationMs??timeline.durationMs;
+      const r=track.playbackRange??{inMs:0,outMs:duration,enabled:false,loop:false};
+      if(action==="range-reset")delete track.playbackRange;
+      else {
+        if(action==="range")r.enabled=!r.enabled;
+        else if(action==="loop")r.loop=!r.loop;
+        else if(action==="range-in")r.inMs=Math.round(position());
+        else if(action==="range-out")r.outMs=Math.round(position());
+        else {
+          const a=field<HTMLInputElement>("range-in").value,b=field<HTMLInputElement>("range-out").value;
+          if(!a.trim()||!b.trim()){message("Enter IN and OUT times.");return;}
+          r.inMs=Math.round(Number(a)*1000);r.outMs=Math.round(Number(b)*1000);
+        }
+        if(!Number.isFinite(r.inMs)||!Number.isFinite(r.outMs)||r.inMs<0||r.outMs>duration||r.outMs<=r.inMs){message("Use 0 ≤ IN < OUT ≤ LENGTH. Nothing changed.");return;}
+        track.playbackRange=r;
+      }
+      scrubPreview=null;save(definition);return;
+    }
     if(action==="open"){dock.open();refresh();return;}
     if(action==="undo"||action==="redo"){
       if(!room||!ctx.canEdit()||busy||state().status==="playing"||actionButton(action).disabled)return;
@@ -180,7 +225,7 @@ export function createArtworkTimelineUI(ctx:Context){
       const timeMs=Math.round(position()),channel=field<HTMLSelectElement>("channel").value as ArtworkChannel;
       const definition=JSON.parse(JSON.stringify(timeline)) as ArtworkTimeline;let track=definition.tracks.find(t=>t.mediaId===id);
       const entity=item.entity,p=entity.getPosition(),r=entity.getEulerAngles(),scale=entity.getLocalScale();
-      const visible=state().preview&&track?artworkPoseAt(track,timeMs,basePose(id)):{x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:scale.x,opacity:1};
+      const visible=(state().preview||scrubPreview?.id===id)&&track?artworkPoseAt(track,timeMs,basePose(id)):{x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:scale.x,opacity:1};
       const key={...visible,timeMs,channel,interpolation:field<HTMLSelectElement>("interpolation").value as ArtworkInterpolation} as ArtworkKey;
       if(track?.keys.some(existing=>artworkKeyIdentity(existing)===artworkKeyIdentity(key))){message("A key already exists at the playhead for this channel. Nothing was overwritten.");return;}
       if(!track){track={mediaId:id,durationMs:Math.round(Number(field<HTMLInputElement>("duration").value)*1000),repeatCount:Number(field<HTMLInputElement>("repeat").value),keys:[]};definition.tracks.push(track);}
@@ -221,8 +266,8 @@ export function createArtworkTimelineUI(ctx:Context){
       track.keys.push(...pasted);selectedKey=-1;selectedKeys.clear();fill(pasted[0]);save(definition);return;
     }
     if(action==="capture"){capture();return;}
-    if(action==="media"){if(ctx.canDirect())ctx.dispatchAction(target.value,"play");return;}
-    if(action==="stop"){if(ctx.canDirect())ctx.dispatchAction(target.value,"stop");return;}
+    if(action==="media"){scrubPreview=null;if(ctx.canDirect())ctx.dispatchAction(target.value,"play");return;}
+    if(action==="stop"){scrubPreview=null;if(ctx.canDirect())ctx.dispatchAction(target.value,"stop");return;}
     if(["play","pause"].includes(action)){transport(action);return;}
     const definition=JSON.parse(JSON.stringify(timeline)) as ArtworkTimeline;
 
@@ -250,10 +295,13 @@ export function createArtworkTimelineUI(ctx:Context){
     }else if(action==="delete"&&track&&selectedKey>=0){track.keys=track.keys.filter((_,index)=>!selectedKeys.has(index));definition.tracks=definition.tracks.filter(t=>t.keys.length);selectedKey=-1;selectedKeys.clear();save(definition);}
   };
   panel.addEventListener("click",handleAction);dock.editor.addEventListener("click",handleAction);
-  for(const name of ["duration","repeat"])field<HTMLInputElement>(name).addEventListener("input",()=>dirtySettings.add(name));
+  for(const name of ["duration","repeat","range-in","range-out"])field<HTMLInputElement>(name).addEventListener("input",()=>dirtySettings.add(name));
   field<HTMLSelectElement>("channel").addEventListener("change",()=>refresh());
   target.addEventListener("change",()=>{selectedKey=-1;selectedKeys.clear();capture();refresh(true);});
-  scrub.addEventListener("change",()=>transport("seek",Number(scrub.value)));
+  scrub.step="1";
+  scrub.addEventListener("input",()=>previewScrub(Number(scrub.value)));
+  scrub.addEventListener("change",()=>commitScrub(Number(scrub.value)));
+  scrub.addEventListener("pointercancel",()=>previewScrub(null));
   function release(id:string){
     const base=animated.get(id);if(!base)return;
     const item=ctx.getItems().get(id);
@@ -266,10 +314,10 @@ export function createArtworkTimelineUI(ctx:Context){
     animated.delete(id);
   }
   function render(){
-    const ids=new Set(timeline.tracks.filter(t=>state(t.mediaId).preview).map(t=>t.mediaId));
+    const ids=new Set(timeline.tracks.filter(t=>state(t.mediaId).preview||scrubPreview?.id===t.mediaId).map(t=>t.mediaId));
     for(const [id,base] of animated)if(!ids.has(id)||ctx.getItems().get(id)?.entity!==base.entity)release(id);
     for(const track of timeline.tracks){
-      if(!state(track.mediaId).preview)continue;
+      if(!state(track.mediaId).preview&&scrubPreview?.id!==track.mediaId)continue;
       const item=ctx.getItems().get(track.mediaId);if(!item||!ctx.getAuthoritative(track.mediaId))continue;
       const entity=item.entity,pose=artworkPoseAt(track,frame(track).positionMs,basePose(track.mediaId));
       let base=animated.get(track.mediaId);
@@ -287,7 +335,7 @@ export function createArtworkTimelineUI(ctx:Context){
   }
   function connect(next:any){
     for(const id of Array.from(animated.keys()))release(id);
-    room=next;histories.clear();copiedKeys=[];copiedKey=null;copiedTitle="";timeline=emptyArtworkTimeline();revision=0;transports.clear();busy=false;clockReady=false;selectedKey=-1;selectedKeys.clear();
+    scrubPreview=null;room=next;histories.clear();copiedKeys=[];copiedKey=null;copiedTitle="";timeline=emptyArtworkTimeline();revision=0;transports.clear();busy=false;clockReady=false;selectedKey=-1;selectedKeys.clear();
     next.onMessage("artwork:timeline:history:state",(payload:any)=>{
       if(room!==next||ctx.getRoom()!==next)return;
       histories.clear();for(const history of payload.tracks||[])histories.set(history.mediaId,history);refresh();
@@ -300,20 +348,23 @@ export function createArtworkTimelineUI(ctx:Context){
       let definitionChanged=false;
       if(payload.timeline){try{const nextDefinition=cleanArtworkTimeline(payload.timeline);definitionChanged=JSON.stringify(nextDefinition)!==JSON.stringify(timeline);timeline=nextDefinition;}catch{message("Invalid timeline received.");return;}}
       if(revision!==(Number(payload.revision)||0)){selectedKey=-1;selectedKeys.clear();}
+      if(scrubPreview&&scrubPreview.revision!==(Number(payload.revision)||0))scrubPreview=null;
       revision=Number(payload.revision)||0;
       transports.clear();for(const t of payload.transports||[])transports.set(t.mediaId,t);
       refresh(definitionChanged);render();
     });
     next.onMessage("artwork:timeline:result",(payload:any)=>{
       if(room!==next||ctx.getRoom()!==next)return;
+      if(payload.operation==="seek"&&scrubPreview?.pending&&(payload.requestId===undefined||payload.requestId===scrubPreview.requestId)){scrubPreview=null;render();}
       busy=false;if(payload.ok&&["save","undo","redo"].includes(payload.operation)){dirtySettings.clear();ctx.onSaved?.();}
       message(payload.ok?(payload.operation==="save"?"SAVED · ROOM keyframes":String(payload.operation).toUpperCase()):`FAILED · ${payload.reason||"unknown"}`);refresh(true);
     });
     next.send("artwork:timeline:get",{requestAt:Date.now()});lastPing=Date.now();message("Loading ROOM keyframes…");refresh(true);
   }
   ctx.app.on("update",()=>{
-    if(room&&ctx.getRoom()!==room){for(const id of Array.from(animated.keys()))release(id);room=null;histories.clear();copiedKeys=[];copiedKey=null;copiedTitle="";dock.close();transports.clear();timeline=emptyArtworkTimeline();busy=false;message("Connect to a ROOM.");refresh(true);}
+    if(room&&ctx.getRoom()!==room){for(const id of Array.from(animated.keys()))release(id);room=null;scrubPreview=null;histories.clear();copiedKeys=[];copiedKey=null;copiedTitle="";dock.close();transports.clear();timeline=emptyArtworkTimeline();busy=false;message("Connect to a ROOM.");refresh(true);}
     if(room&&Date.now()-lastPing>5000){lastPing=Date.now();room.send("artwork:timeline:get",{requestAt:Date.now()});}
+    if(scrubPreview&&(!ctx.canDirect()||busy||!currentTrack()))scrubPreview=null;
     render();if(Date.now()-uiAt>100){uiAt=Date.now();refresh();}
   });
   return {connect,refresh,element:panel};

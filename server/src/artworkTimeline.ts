@@ -3,7 +3,7 @@ export type ArtworkPose={x:number;y:number;z:number;rotationX:number;rotationY:n
 export type ArtworkInterpolation="linear"|"ease-in"|"ease-out"|"ease-in-out";
 export type ArtworkChannel="all"|"position"|"size"|"angle"|"opacity";
 export type ArtworkKey=ArtworkPose&{timeMs:number;channel?:ArtworkChannel;interpolation?:ArtworkInterpolation};
-export type ArtworkTrack={mediaId:string;durationMs?:number;repeatCount?:number;keys:ArtworkKey[]};
+export type ArtworkTrack={mediaId:string;durationMs?:number;repeatCount?:number;playbackRange?:{inMs:number;outMs:number;enabled:boolean;loop:boolean};keys:ArtworkKey[]};
 export type ArtworkTimeline={version:1;durationMs:number;tracks:ArtworkTrack[]};
 export const emptyArtworkTimeline=():ArtworkTimeline=>({version:1,durationMs:10000,tracks:[]});
 export function cleanArtworkTimeline(raw:any):ArtworkTimeline {
@@ -38,7 +38,13 @@ export function cleanArtworkTimeline(raw:any):ArtworkTimeline {
       const channelTimes=new Set(keys.filter(k=>(k.channel??"all")==="all"||k.channel===channel).map(k=>k.timeMs));
       if(channelTimes.size>120)throw new Error("channel-key-limit-120");
     }
-    return {mediaId,keys,durationMs:Math.round(trackDuration),repeatCount};
+    let playbackRange:ArtworkTrack["playbackRange"];
+    if(track.playbackRange!==undefined){
+      const r=track.playbackRange;
+      if(!r||!Number.isInteger(r.inMs)||!Number.isInteger(r.outMs)||r.inMs<0||r.outMs>Math.round(trackDuration)||r.outMs<=r.inMs||typeof r.enabled!=="boolean"||typeof r.loop!=="boolean")throw new Error("invalid-playback-range");
+      playbackRange={inMs:r.inMs,outMs:r.outMs,enabled:r.enabled,loop:r.loop};
+    }
+    return {mediaId,keys,durationMs:Math.round(trackDuration),repeatCount,...(playbackRange?{playbackRange}:{})};
   });
   return {version:1,durationMs:Math.round(durationMs),tracks};
 }
@@ -70,10 +76,15 @@ export function splitArtworkKeys(track:ArtworkTrack):ArtworkTrack {
   return {...track,keys:Array.from(keys.values()).sort((a,b)=>a.timeMs-b.timeMs)};
 }
 
+export function artworkPlaybackRange(track:ArtworkTrack,defaultDuration=10000){
+  const r=track.playbackRange;
+  return r?.enabled?{inMs:r.inMs,outMs:r.outMs,loop:r.loop}:{inMs:0,outMs:track.durationMs??defaultDuration,loop:false};
+}
 export function artworkPlaybackAt(track:ArtworkTrack,elapsedMs:number,defaultDuration=10000){
-  const duration=track.durationMs??defaultDuration,repeats=track.repeatCount??1,elapsed=Math.max(0,elapsedMs);
+  const range=artworkPlaybackRange(track,defaultDuration),duration=range.outMs-range.inMs;
+  const repeats=range.loop?0:track.repeatCount??1,elapsed=Math.max(0,elapsedMs);
   const ended=repeats>0&&elapsed>=duration*repeats;
-  return {positionMs:ended?duration:elapsed%duration,cycle:ended?repeats:Math.floor(elapsed/duration)+1,ended};
+  return {positionMs:ended?range.outMs:range.inMs+elapsed%duration,cycle:ended?repeats:Math.floor(elapsed/duration)+1,ended};
 }
 
 // Preserve relative key positions when the user changes playback length.
@@ -82,7 +93,10 @@ export function retimeArtworkTrack(track:ArtworkTrack,durationMs:number,defaultD
   const previous=track.durationMs??defaultDuration,next=Math.round(durationMs);
   const keys=track.keys.map(key=>({...key,timeMs:Math.round(key.timeMs*next/previous)}));
   if(new Set(keys.map(artworkKeyIdentity)).size!==keys.length)throw new Error("LENGTH is too short to keep these keys separate. Choose a longer length.");
-  return {...track,durationMs:next,keys};
+  const range=track.playbackRange;
+  const playbackRange=range?{...range,inMs:Math.min(next-1,Math.round(range.inMs*next/previous)),outMs:Math.round(range.outMs*next/previous)}:undefined;
+  if(playbackRange)playbackRange.outMs=Math.max(playbackRange.inMs+1,playbackRange.outMs);
+  return {...track,durationMs:next,keys,...(playbackRange?{playbackRange}:{})};
 }
 
 export function artworkEase(progress:number,mode:ArtworkInterpolation="linear"){

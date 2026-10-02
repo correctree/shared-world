@@ -1,13 +1,13 @@
 import type { ArtworkKey } from "./artworkTimeline";
-type Snapshot={id:string;title:string;durationMs:number;positionMs:number;keys:ArtworkKey[];selectedKey:number;selectedIndices?:number[];multiSelect?:boolean;canEdit:boolean;canSeek:boolean;status:string};
-type Context={selectRange:(indices:number[],add:boolean)=>void;select:(index:number,toggle?:boolean,preserve?:boolean)=>void;move:(index:number,timeMs:number,revision:number,id:string)=>void;seek:(timeMs:number)=>void;action:(action:string)=>void;revision:()=>number};
+type Snapshot={id:string;title:string;durationMs:number;positionMs:number;keys:ArtworkKey[];selectedKey:number;selectedIndices?:number[];multiSelect?:boolean;canEdit:boolean;canSeek:boolean;status:string;playbackRange?:{inMs:number;outMs:number;enabled:boolean;loop:boolean}};
+type Context={selectRange:(indices:number[],add:boolean)=>void;select:(index:number,toggle?:boolean,preserve?:boolean)=>void;move:(index:number,timeMs:number,revision:number,id:string)=>void;preview?:(timeMs:number|null)=>void;seek:(timeMs:number)=>void;action:(action:string)=>void;revision:()=>number};
 export function createArtworkTimelineDock(ctx:Context){
   const root=document.createElement("section");root.id="artworkTimelineDock";root.hidden=true;root.setAttribute("aria-label","Artwork timeline editor");
   root.innerHTML=`<div class="atd-resize" role="separator" aria-label="Resize timeline" tabindex="0"></div>
     <header class="atd-header"><strong>ARTWORK TIMELINE <span data-d="title">SELECT ARTWORK</span></strong>
     <div class="atd-tools"><button data-d="media">▶ PLAY</button><button data-d="play">DO</button><button data-d="pause">Ⅱ</button><button data-d="stop">■</button><button data-d="add" aria-label="Add key at playhead">◆＋</button><button data-d="out" aria-label="Zoom out">−</button><button data-d="in" aria-label="Zoom in">＋</button><button data-d="fit">FIT</button><button data-d="snap" aria-pressed="true">SNAP: ON</button><select data-d="step" aria-label="Snap interval in seconds"><option value="10">0.01s</option><option value="50">0.05s</option><option value="100" selected>0.1s</option><option value="250">0.25s</option><option value="500">0.5s</option><option value="1000">1s</option><option value="2000">2s</option><option value="5000">5s</option></select><button data-d="box" aria-pressed="false">BOX: OFF</button><button data-d="collapse" aria-label="Collapse timeline">⌄</button><button data-d="close" aria-label="Close timeline">×</button></div></header>
-    <div class="atd-body"><div class="atd-main"><div class="atd-scroll" data-d="scroll"><div class="atd-stage" data-d="stage"><div class="atd-ruler" data-d="ruler"></div><div data-d="lanes"></div><div class="atd-playhead" data-d="head"><span>▼</span></div></div></div>
-    <div class="atd-footer"><span data-d="clock"></span><span>Drag ◆ to move a key · Drag time ruler to preview · BOX or Shift + empty area to select keys</span></div></div><div class="atd-editor" data-d="editor"></div></div>`;
+    <div class="atd-body"><div class="atd-main"><div class="atd-scroll" data-d="scroll"><div class="atd-stage" data-d="stage"><div class="atd-range-band" data-d="range-band"></div><div class="atd-ruler" data-d="ruler"></div><div data-d="lanes"></div><div class="atd-playhead" data-d="head"><span>▼</span></div></div></div>
+    <div class="atd-footer"><span data-d="clock"></span><span>Drag ◆ to move a key · Drag red line or ruler to preview · BOX or Shift + empty area to select keys</span></div></div><div class="atd-editor" data-d="editor"></div></div>`;
   const q=<T extends HTMLElement>(name:string)=>root.querySelector<T>(`[data-d="${name}"]`)!;
   const stage=q("stage"),scroll=q("scroll"),ruler=q("ruler"),lanes=q("lanes"),head=q("head"),editor=q("editor");
   const css=document.createElement("style");css.textContent=`
@@ -24,7 +24,8 @@ export function createArtworkTimelineDock(ctx:Context){
     #artworkTimelineDock .atd-tick{position:absolute;top:0;height:222px;border-left:1px solid #38516977;pointer-events:none;color:#a9c5d9;font-size:10px;padding-left:4px;box-sizing:border-box}
     #artworkTimelineDock .atd-lane{position:relative;height:37px;border-bottom:1px solid #2d4154;box-sizing:border-box}#artworkTimelineDock .atd-label{position:sticky;left:0;display:block;width:112px;height:100%;box-sizing:border-box;padding:11px 9px;background:#1e2e3f;z-index:3;color:#b9cddd;font-size:10px;pointer-events:none}
     #artworkTimelineDock button.atd-key{position:absolute;top:5px;padding:0;width:28px!important;min-width:28px!important;max-width:28px!important;height:28px!important;min-height:28px!important;max-height:28px!important;margin:0!important;margin-left:-14px!important;box-sizing:border-box;border:0;background:transparent;color:#efc665;font-size:22px;touch-action:none;z-index:2}#artworkTimelineDock button.atd-key[aria-pressed="true"]{color:#68d9ff;text-shadow:0 0 8px #5dc8ff;outline:1px solid #68d9ff}
-    #artworkTimelineDock .atd-playhead{position:absolute;top:0;height:222px;width:2px;background:#ff8274;pointer-events:none;z-index:4}#artworkTimelineDock .atd-playhead span{position:absolute;left:-7px;top:0;color:#ff8274;font-size:15px}
+    #artworkTimelineDock .atd-playhead{position:absolute;top:0;height:222px;width:12px;margin-left:-6px;background:linear-gradient(90deg,transparent 5px,#ff8274 5px,#ff8274 7px,transparent 7px);pointer-events:auto;touch-action:none;cursor:ew-resize;z-index:4}#artworkTimelineDock .atd-playhead span{position:absolute;left:-1px;top:0;color:#ff8274;font-size:15px;pointer-events:none}
+    #artworkTimelineDock .atd-range-band{position:absolute;top:0;height:222px;background:#48aab622;border-left:1px solid #6de2d1;border-right:1px solid #6de2d1;pointer-events:none;z-index:1}#artworkTimelineDock .atd-range-band[hidden]{display:none!important}
     #artworkTimelineDock .atd-selection-box{position:absolute;pointer-events:none;z-index:5;border:1px solid #77d8ff;background:#55c5ff33;box-sizing:border-box}
     #artworkTimelineDock .atd-selection-box[hidden]{display:none!important}#artworkTimelineDock button[data-d="box"][aria-pressed="true"]{background:#166080;border-color:#8fddff}
     #artworkTimelineDock.atd-box-mode .atd-stage{touch-action:none;cursor:crosshair}
@@ -47,7 +48,9 @@ export function createArtworkTimelineDock(ctx:Context){
   function timeFor(clientX:number){const x=clientX-stage.getBoundingClientRect().left;return snapTime((x-labelWidth)/geometry().span*snapshot.durationMs);}
   function layout(){
     if(root.hidden)return;
-    const {span,width}=geometry();stage.style.width=width+"px";head.style.left=xFor(snapshot.positionMs)+"px";
+    const {span,width}=geometry();stage.style.width=width+"px";if(!drag?.seek)head.style.left=xFor(snapshot.positionMs)+"px";
+    const range=snapshot.playbackRange,band=q("range-band");band.hidden=!range?.enabled;
+    if(range){band.style.left=xFor(range.inMs)+"px";band.style.width=(range.outMs-range.inMs)/snapshot.durationMs*span+"px";}
     const next=JSON.stringify([snapshot.id,snapshot.durationMs,snapshot.keys.map(k=>[k.timeMs,k.interpolation??"linear",k.channel??"all"]),snapshot.selectedKey,snapshot.selectedIndices,snapshot.canEdit,width]);
     if(next===signature||drag||boxDrag)return;signature=next;ruler.replaceChildren();lanes.replaceChildren();
     const desired=snapshot.durationMs/Math.max(1,span/90),power=10**Math.floor(Math.log10(desired));
@@ -67,7 +70,7 @@ export function createArtworkTimelineDock(ctx:Context){
     }
   }
   function update(next:Snapshot){
-    if(drag&&(drag.id!==next.id||drag.revision!==ctx.revision()||!next.canEdit&& !drag.seek||drag.seek&&!next.canSeek)){drag=null;signature="";}
+    if(drag&&(drag.id!==next.id||drag.revision!==ctx.revision()||!next.canEdit&& !drag.seek||drag.seek&&!next.canSeek)){const wasSeek=drag.seek;drag=null;signature="";if(wasSeek)ctx.preview?.(null);}
     if(boxDrag&&(boxDrag.id!==next.id||boxDrag.revision!==ctx.revision()||!next.canEdit)){boxDrag=null;rectangle.hidden=true;signature="";}
     q<HTMLButtonElement>("add").disabled=!next.canEdit;
     q<HTMLButtonElement>("box").disabled=!next.canEdit;
@@ -76,7 +79,7 @@ export function createArtworkTimelineDock(ctx:Context){
     for(const action of ["media","play","pause","stop"])q<HTMLButtonElement>(action).disabled=!next.canSeek||(action==="play"&&!next.keys.length);
     layout();
   }
-  function cancel(){drag=null;boxDrag=null;rectangle.hidden=true;signature="";layout();}
+  function cancel(){const wasSeek=drag?.seek;drag=null;boxDrag=null;rectangle.hidden=true;signature="";if(wasSeek)ctx.preview?.(null);layout();}
   root.addEventListener("click",event=>{
     const button=(event.target as HTMLElement).closest<HTMLButtonElement>("button[data-d]");if(!button)return;
     const action=button.dataset.d;
@@ -109,10 +112,11 @@ export function createArtworkTimelineDock(ctx:Context){
     return Array.from(indices).sort((a,b)=>a-b);
   }
   stage.addEventListener("pointerdown",event=>{
-    const diamond=(event.target as HTMLElement).closest<HTMLButtonElement>(".atd-key"),seek=!diamond;
+    const onHead=event.target===head||(event.target as HTMLElement).closest(".atd-playhead")===head;
+    const diamond=onHead?null:(event.target as HTMLElement).closest<HTMLButtonElement>(".atd-key"),seek=!diamond;
     if(!diamond&&event.clientX-scroll.getBoundingClientRect().left<labelWidth)return;
     const bounds=stage.getBoundingClientRect(),inLanes=event.clientY-bounds.top>=34;
-    if(!diamond&&inLanes&&!(event.target as HTMLElement).closest(".atd-label")&&(boxMode||event.shiftKey||event.metaKey||event.ctrlKey)){
+    if(!onHead&&!diamond&&inLanes&&!(event.target as HTMLElement).closest(".atd-label")&&(boxMode||event.shiftKey||event.metaKey||event.ctrlKey)){
       if(!snapshot.canEdit)return;event.preventDefault();const point=boxPoint(event);
       boxDrag={pointer:event.pointerId,id:snapshot.id,revision:ctx.revision(),x0:point.x,y0:point.y,x:point.x,y:point.y,add:!!(event.shiftKey||event.metaKey||event.ctrlKey)};
       stage.setPointerCapture(event.pointerId);drawBox();return;
@@ -123,13 +127,13 @@ export function createArtworkTimelineDock(ctx:Context){
     const time=seek?timeFor(event.clientX):snapshot.keys[index].timeMs;
     drag={pointer:event.pointerId,index,time,initial:time,x:event.clientX,revision:ctx.revision(),id:snapshot.id,duration:snapshot.durationMs,span:geometry().span,node:diamond??stage,seek,toggleOff:!!diamond&&snapshot.multiSelect===true&&(snapshot.selectedIndices??[]).includes(index)&&!event.shiftKey&&!event.metaKey&&!event.ctrlKey};
     stage.setPointerCapture(event.pointerId);
-    if(diamond)ctx.select(index,event.shiftKey||event.metaKey||event.ctrlKey||snapshot.multiSelect===true&&!(snapshot.selectedIndices??[]).includes(index),true);else head.style.left=xFor(time)+"px";
+    if(diamond)ctx.select(index,event.shiftKey||event.metaKey||event.ctrlKey||snapshot.multiSelect===true&&!(snapshot.selectedIndices??[]).includes(index),true);else {head.style.left=xFor(time)+"px";ctx.preview?.(time);}
   });
   stage.addEventListener("pointermove",event=>{
     if(boxDrag?.pointer===event.pointerId){event.preventDefault();const point=boxPoint(event);boxDrag.x=point.x;boxDrag.y=point.y;drawBox();q("clock").textContent=`${enclosedKeys(boxDrag).length} keys in box`;return;}
     if(!drag||drag.pointer!==event.pointerId)return;event.preventDefault();
     drag.time=drag.seek?timeFor(event.clientX):snapTime(drag.initial+(event.clientX-drag.x)/drag.span*drag.duration);
-    if(drag.seek)head.style.left=xFor(drag.time)+"px";
+    if(drag.seek){head.style.left=xFor(drag.time)+"px";ctx.preview?.(drag.time);}
     else {
       const indices=(snapshot.selectedIndices??[drag.index]).includes(drag.index)?snapshot.selectedIndices??[drag.index]:[drag.index];
       for(const index of indices)for(const key of lanes.querySelectorAll<HTMLElement>(`.atd-key[data-index="${index}"]`))key.style.left=xFor(snapshot.keys[index].timeMs+drag.time-drag.initial)+"px";

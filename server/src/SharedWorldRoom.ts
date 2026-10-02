@@ -1,4 +1,4 @@
-import { cleanArtworkTimeline, emptyArtworkTimeline, artworkPlaybackAt, type ArtworkTimeline, type ArtworkTrack } from "./artworkTimeline.js";
+import { cleanArtworkTimeline, emptyArtworkTimeline, artworkPlaybackAt, artworkPlaybackRange, type ArtworkTimeline, type ArtworkTrack } from "./artworkTimeline.js";
 import { Room, type Client } from "colyseus";
 import { assetExists, getRoomAccessPolicy, isRoomArchived, loadWorld, loadWorldCheckpoint, loadWorldGeneration, saveWorld, saveWorldCheckpoint, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
 import { Player, SharedMediaObject, WorldState } from "./state.js";
@@ -102,13 +102,13 @@ export class SharedWorldRoom extends Room<WorldState> {
     if(history.undo.length>40)history.undo.splice(0,history.undo.length-40);
     history.redo=history.redo.filter(e=>e.mediaId!==mediaId);
   }
-  private artworkTransports=new Map<string,{status:"stopped"|"playing"|"paused";elapsedMs:number;startedAt:number;preview:boolean}>();
+  private artworkTransports=new Map<string,{status:"stopped"|"playing"|"paused";elapsedMs:number;startedAt:number;preview:boolean;seekMs?:number}>();
   private artworkTimelineTimer:ReturnType<typeof setInterval>|null=null;
   private artworkElapsed(id:string){const t=this.artworkTransports.get(id);return !t?0:t.status==="playing"?Math.max(0,Date.now()-t.startedAt):t.elapsedMs;}
   private sendArtworkTimeline(target?:Client,requestAt?:number,includeDefinition=true) {
     const transports=this.artworkTimeline.tracks.map(track=>{
-      const t=this.artworkTransports.get(track.mediaId)??{status:"stopped",elapsedMs:0,startedAt:0,preview:false};
-      const elapsedMs=this.artworkElapsed(track.mediaId),frame=artworkPlaybackAt(track,elapsedMs,this.artworkTimeline.durationMs);
+      const t=this.artworkTransports.get(track.mediaId)??{status:"stopped",elapsedMs:0,startedAt:0,preview:false,seekMs:undefined};
+      const elapsedMs=this.artworkElapsed(track.mediaId),frame=t.seekMs!==undefined?{positionMs:t.seekMs,cycle:1,ended:false}:artworkPlaybackAt(track,elapsedMs,this.artworkTimeline.durationMs);
       return {...t,mediaId:track.mediaId,elapsedMs,...frame};
     });
     const payload={revision:this.artworkTimelineRevision,transports,serverAt:Date.now(),requestAt,...(includeDefinition?{timeline:this.artworkTimeline}:{})};
@@ -172,7 +172,8 @@ export class SharedWorldRoom extends Room<WorldState> {
     });
     this.onMessage("artwork:timeline:transport",(client:Client,payload:any)=>{
       const action=String(payload?.action||""),id=String(payload?.mediaId||"");
-      const fail=(reason:string)=>client.send("artwork:timeline:result",{ok:false,operation:action,reason});
+      const requestId=Number.isSafeInteger(payload?.requestId)?payload.requestId:undefined;
+      const fail=(reason:string)=>client.send("artwork:timeline:result",{ok:false,operation:action,reason,requestId});
       if(!this.canDirect(client)){fail("director-required");return;}
       if(!["play","pause","stop","seek"].includes(action)){fail("invalid-action");return;}
       const track=this.artworkTimeline.tracks.find(t=>t.mediaId===id);if(!track){fail("save-keyframes-first");return;}
@@ -181,21 +182,22 @@ export class SharedWorldRoom extends Room<WorldState> {
       if(!Number.isFinite(position)){fail("invalid-position");return;}
       const elapsed=this.artworkElapsed(id);
       if(action==="stop")this.resetArtworkTransport(id);
-      else if(action==="pause")this.artworkTransports.set(id,{status:"paused",elapsedMs:elapsed,startedAt:0,preview:true});
-      else if(action==="seek")this.artworkTransports.set(id,{status:"paused",elapsedMs:Math.max(0,Math.min(duration,position)),startedAt:0,preview:true});
+      else if(action==="pause")this.artworkTransports.set(id,{status:"paused",elapsedMs:elapsed,startedAt:0,preview:true,...(this.artworkTransports.get(id)?.seekMs===undefined?{}:{seekMs:this.artworkTransports.get(id)!.seekMs})});
+      else if(action==="seek")this.artworkTransports.set(id,{status:"paused",elapsedMs:Math.max(0,Math.min(duration,position)),startedAt:0,preview:true,seekMs:Math.max(0,Math.min(duration,Math.round(position)))});
       else {
         const previous=this.artworkTransports.get(id),frame=artworkPlaybackAt(track,elapsed,this.artworkTimeline.durationMs);
-        const start=previous?.status==="paused"&&!frame.ended?elapsed:0;
+        const range=artworkPlaybackRange(track,this.artworkTimeline.durationMs);
+        const start=previous?.seekMs!==undefined?(previous.seekMs>=range.outMs?0:Math.max(0,previous.seekMs-range.inMs)):previous?.status==="paused"&&!frame.ended?elapsed:0;
         this.artworkTransports.set(id,{status:"playing",elapsedMs:start,startedAt:Date.now()-start,preview:true});
       }
-      this.sendArtworkTimeline(undefined,undefined,false);client.send("artwork:timeline:result",{ok:true,operation:action,mediaId:id});
+      this.sendArtworkTimeline(undefined,undefined,false);client.send("artwork:timeline:result",{ok:true,operation:action,mediaId:id,requestId});
     });
     this.artworkTimelineTimer=setInterval(()=>{
       let active=false;
       for(const track of this.artworkTimeline.tracks){
         const t=this.artworkTransports.get(track.mediaId);if(t?.status!=="playing")continue;active=true;
         if(artworkPlaybackAt(track,this.artworkElapsed(track.mediaId),this.artworkTimeline.durationMs).ended){
-          t.status="paused";t.elapsedMs=(track.durationMs??this.artworkTimeline.durationMs)*(track.repeatCount??1);t.startedAt=0;
+          t.status="paused";t.elapsedMs=(artworkPlaybackRange(track,this.artworkTimeline.durationMs).outMs-artworkPlaybackRange(track,this.artworkTimeline.durationMs).inMs)*(track.repeatCount??1);t.startedAt=0;
         }
       }
       if(active)this.sendArtworkTimeline(undefined,undefined,false);

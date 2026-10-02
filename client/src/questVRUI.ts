@@ -1,14 +1,14 @@
 type Context={app:any;pc:any;camera:any;getRoom:()=>any;available:()=>boolean;getOrigin:()=>{x:number;y:number;z:number;yaw:number};prepare:()=>void;resetInput:()=>void};
 export function createQuestVRUI(ctx:Context){
   const element=document.createElement("section");element.id="questVRPanel";
-  element.innerHTML=`<strong>QUEST VR <small>0.30.0</small></strong><p>Quest BrowserでROOMに入り、ENTER VRを押してください。開始位置はアバターの足元です。退出はQuestのシステム操作、またはブラウザ画面のEXIT VR。</p><button type="button" data-v="enter">ENTER VR</button> <button type="button" data-v="exit">EXIT VR</button><p data-v="status" role="status">CHECKING VR…</p>`;
+  element.innerHTML=`<strong>QUEST VR <small>0.30.3</small></strong><p>Quest BrowserでROOMに入り、ENTER VRを押してください。開始位置はアバターの足元です。退出はQuestのシステム操作、またはブラウザ画面のEXIT VR。</p><button type="button" data-v="enter">ENTER VR</button> <button type="button" data-v="exit">EXIT VR</button><p data-v="status" role="status">CHECKING VR…</p>`;
   const enter=element.querySelector<HTMLButtonElement>('[data-v="enter"]')!,exit=element.querySelector<HTMLButtonElement>('[data-v="exit"]')!,status=element.querySelector<HTMLElement>('[data-v="status"]')!;
   const style=document.createElement("style");style.textContent="#questVRPanel{padding:12px;color:inherit}#questVRPanel button{padding:8px;margin:4px 0}";document.head.appendChild(style);
   const xr=ctx.app.xr;let pending=false,active=false,cancelled=false,ending=false,room:any=null,rig:any=null,saved:any=null,lastMessage="",disposed=false;
   const supported=()=>!!xr&&window.isSecureContext&&xr.isAvailable(ctx.pc.XRTYPE_VR);
   const busy=()=>pending||active;
   function controls(){enter.disabled=busy()||!supported()||!ctx.getRoom()||!ctx.available();exit.disabled=!busy()||ending;
-    status.textContent=lastMessage||(active?"VR ACTIVE · 頭の動きで見回せます。":pending?"STARTING VR…":!window.isSecureContext?"HTTPSが必要です。":!xr||!xr.supported?"このブラウザではWebXRを利用できません。":!supported()?"VR非対応、または対応確認中です。Quest Browserで開いてください。":!ctx.getRoom()?"ROOMに入室してからENTER VRを押してください。":"VR READY · ENTER VRで開始");}
+    status.textContent=lastMessage||(active?"VR ACTIVE · 左スティックで移動・右で旋回・トリガーでPLAY。":pending?"STARTING VR…":!window.isSecureContext?"HTTPSが必要です。":!xr||!xr.supported?"このブラウザではWebXRを利用できません。":!supported()?"VR非対応、または対応確認中です。Quest Browserで開いてください。":!ctx.getRoom()?"ROOMに入室してからENTER VRを押してください。":"VR READY · ENTER VRで開始");}
   function restore(message="VR ENDED · 通常画面へ戻りました。"){
     pending=false;active=false;ending=false;cancelled=false;room=null;ctx.resetInput();
     if(saved){ctx.camera.reparent(saved.parent);ctx.camera.setLocalPosition(saved.position);ctx.camera.setLocalRotation(saved.rotation);ctx.camera.camera.fov=saved.fov;saved=null;}
@@ -36,5 +36,5 @@ export function createQuestVRUI(ctx:Context){
   for(const name of events)window.addEventListener(name,guard,{capture:true,passive:false});
   xr?.on("start",started);xr?.on("end",ended);xr?.on("available",controls);ctx.app.on("update",update);window.addEventListener("pagehide",stop);
   enter.addEventListener("click",start);exit.addEventListener("click",stop);controls();
-  return {element,start,stop,isActive:()=>active,isBusy:busy,getTrackedPosition:()=>active?ctx.camera.getPosition():null,getFloorY:()=>rig?.getPosition().y??0,dispose:()=>{disposed=true;stop();xr?.off("start",started);xr?.off("available",controls);ctx.app.off("update",update);window.removeEventListener("pagehide",stop);for(const name of events)window.removeEventListener(name,guard,true);element.remove();style.remove();if(!busy())xr?.off("end",ended);}};
+  return {element,start,stop,isActive:()=>active,isBusy:busy,getTrackedPosition:()=>active?ctx.camera.getPosition():null,getFloorY:()=>rig?.getPosition().y??0,getRig:()=>active?rig:null,dispose:()=>{disposed=true;stop();xr?.off("start",started);xr?.off("available",controls);ctx.app.off("update",update);window.removeEventListener("pagehide",stop);for(const name of events)window.removeEventListener(name,guard,true);element.remove();style.remove();if(!busy())xr?.off("end",ended);}};
 }

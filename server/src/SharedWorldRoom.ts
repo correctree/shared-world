@@ -1,3 +1,4 @@
+import { QuestVRTeleport } from "./questVRTeleport.js";
 import { SharedScreenRelay } from "./sharedScreenRelay.js";
 import { cleanArtworkTimeline, emptyArtworkTimeline, artworkPlaybackAt, artworkPlaybackRange, type ArtworkTimeline, type ArtworkTrack } from "./artworkTimeline.js";
 import { Room, type Client } from "colyseus";
@@ -807,7 +808,9 @@ export class SharedWorldRoom extends Room<WorldState> {
 
   private sharedScreenRelay:SharedScreenRelay|null=null;
 
+  private questVRTeleport:QuestVRTeleport|null=null;
   onCreate(options: { roomCode?: string }) {
+    this.questVRTeleport=new QuestVRTeleport(this,()=>this.worldLimit(),client=>this.evaluateProximity(client));
     this.sharedScreenRelay=new SharedScreenRelay(this,client=>this.canEditEnvironment(client,false));
     this.registerArtworkTimeline();
     this.roomCode=String(options.roomCode||"ART001").toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16)||"ART001";
@@ -1843,6 +1846,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
   // Called only after a consented leave or reconnection failure/timeout.
   onLeave(client: Client, code: number) {
+    this.questVRTeleport?.leave(client);
     this.sharedScreenRelay?.leave(client);
     this.artworkHistories.delete(client.sessionId);
     this.mediaEditScopes.delete(client.sessionId);

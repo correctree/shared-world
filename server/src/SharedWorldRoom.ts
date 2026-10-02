@@ -1,4 +1,4 @@
-import { cleanArtworkTimeline, emptyArtworkTimeline, artworkPlaybackAt, type ArtworkTimeline } from "./artworkTimeline.js";
+import { cleanArtworkTimeline, emptyArtworkTimeline, artworkPlaybackAt, type ArtworkTimeline, type ArtworkTrack } from "./artworkTimeline.js";
 import { Room, type Client } from "colyseus";
 import { assetExists, getRoomAccessPolicy, isRoomArchived, loadWorld, loadWorldCheckpoint, loadWorldGeneration, saveWorld, saveWorldCheckpoint, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
 import { Player, SharedMediaObject, WorldState } from "./state.js";
@@ -69,6 +69,39 @@ type ActorEditHistory = {undo:EditHistoryEntry[];redo:EditHistoryEntry[]};
 export class SharedWorldRoom extends Room<WorldState> {
   private artworkTimeline=emptyArtworkTimeline();
   private artworkTimelineRevision=0;
+  private artworkHistories=new Map<string,{undo:{mediaId:string;before:ArtworkTrack|null;after:ArtworkTrack|null}[];redo:{mediaId:string;before:ArtworkTrack|null;after:ArtworkTrack|null}[]}>();
+  private artworkHistory(client:Client){
+    let history=this.artworkHistories.get(client.sessionId);
+    if(!history){history={undo:[],redo:[]};this.artworkHistories.set(client.sessionId,history);}
+    return history;
+  }
+  private artworkTrackSnapshot(id:string):ArtworkTrack|null {
+    const track=this.artworkTimeline.tracks.find(t=>t.mediaId===id);return track?JSON.parse(JSON.stringify(track)):null;
+  }
+  private sendArtworkHistory(client:Client){
+    const history=this.artworkHistory(client),ids=new Set([...history.undo,...history.redo].map(e=>e.mediaId));
+    const tracks=Array.from(ids).map(mediaId=>{
+      const undo=history.undo.filter(e=>e.mediaId===mediaId),redo=history.redo.filter(e=>e.mediaId===mediaId),current=this.artworkTrackSnapshot(mediaId);
+      const usable=this.state.mediaObjects.has(mediaId)&&this.state.mediaObjects.get(mediaId)?.type!=="audio";
+      return {mediaId,undoCount:undo.length,redoCount:redo.length,
+        canUndo:usable&&!!undo.length&&JSON.stringify(current)===JSON.stringify(undo.at(-1)!.after),
+        canRedo:usable&&!!redo.length&&JSON.stringify(current)===JSON.stringify(redo.at(-1)!.before)};
+    });
+    client.send("artwork:timeline:history:state",{tracks});
+  }
+  private invalidateArtworkHistory(mediaId:string){
+    for(const history of this.artworkHistories.values()){history.undo=history.undo.filter(e=>e.mediaId!==mediaId);history.redo=history.redo.filter(e=>e.mediaId!==mediaId);}
+  }
+  private recordArtworkHistory(client:Client,mediaId:string,before:ArtworkTrack|null,after:ArtworkTrack|null){
+    if(JSON.stringify(before)===JSON.stringify(after))return;
+    // Another author's change invalidates this track's earlier local history.
+    for(const [sessionId,history] of this.artworkHistories)if(sessionId!==client.sessionId){
+      history.undo=history.undo.filter(e=>e.mediaId!==mediaId);history.redo=history.redo.filter(e=>e.mediaId!==mediaId);
+    }
+    const history=this.artworkHistory(client);history.undo.push({mediaId,before,after});
+    if(history.undo.length>40)history.undo.splice(0,history.undo.length-40);
+    history.redo=history.redo.filter(e=>e.mediaId!==mediaId);
+  }
   private artworkTransports=new Map<string,{status:"stopped"|"playing"|"paused";elapsedMs:number;startedAt:number;preview:boolean}>();
   private artworkTimelineTimer:ReturnType<typeof setInterval>|null=null;
   private artworkElapsed(id:string){const t=this.artworkTransports.get(id);return !t?0:t.status==="playing"?Math.max(0,Date.now()-t.startedAt):t.elapsedMs;}
@@ -79,9 +112,10 @@ export class SharedWorldRoom extends Room<WorldState> {
       return {...t,mediaId:track.mediaId,elapsedMs,...frame};
     });
     const payload={revision:this.artworkTimelineRevision,transports,serverAt:Date.now(),requestAt,...(includeDefinition?{timeline:this.artworkTimeline}:{})};
-    if(target)target.send("artwork:timeline:state",payload);else this.broadcast("artwork:timeline:state",payload);
+    if(target){target.send("artwork:timeline:state",payload);this.sendArtworkHistory(target);}
+    else {this.broadcast("artwork:timeline:state",payload);if(includeDefinition)for(const client of this.clients)this.sendArtworkHistory(client);}
   }
-  private resetArtworkTransport(id?:string){if(id)this.artworkTransports.delete(id);else this.artworkTransports.clear();}
+  private resetArtworkTransport(id?:string){if(id)this.artworkTransports.delete(id);else {this.artworkTransports.clear();this.artworkHistories.clear();}}
   private artworkAction(id:string,action:string,source="artwork-layer"){
     if(!["play","timeline","stop"].includes(action))return true;
     // Automatic triggers must not rewind a timeline already in progress.
@@ -104,12 +138,36 @@ export class SharedWorldRoom extends Room<WorldState> {
       if(payload?.revision!==this.artworkTimelineRevision){fail("timeline-changed-refresh-first");this.sendArtworkTimeline(client);return;}
       try{
         if(payload.track&&payload.track.mediaId!==id)throw new Error("track-id-mismatch");
+        const before=this.artworkTrackSnapshot(id);
         const tracks=this.artworkTimeline.tracks.filter(t=>t.mediaId!==id);
         if(payload.track)tracks.push(payload.track);
         const timeline=cleanArtworkTimeline({...this.artworkTimeline,tracks});
         this.artworkTimeline=timeline;this.artworkTimelineRevision++;this.resetArtworkTransport(id);
+        this.recordArtworkHistory(client,id,before,this.artworkTrackSnapshot(id));
         this.schedulePersistence("artwork-timeline-save");this.sendArtworkTimeline();
-        client.send("artwork:timeline:result",{ok:true,operation:"save",mediaId:id});
+        client.send("artwork:timeline:result",{ok:true,operation:"save",mediaId:id});this.sendArtworkHistory(client);
+      }catch(error){fail(error instanceof Error?error.message:"invalid-timeline");}
+    });
+    this.onMessage("artwork:timeline:history",(client:Client,payload:any)=>{
+      const direction=String(payload?.direction||""),id=String(payload?.mediaId||"");
+      const fail=(reason:string)=>{client.send("artwork:timeline:result",{ok:false,operation:direction,reason});this.sendArtworkHistory(client);};
+      if(!this.canEditEnvironment(client,true)){fail("editor-required");return;}
+      if(!["undo","redo"].includes(direction)){fail("invalid-history-action");return;}
+      if(payload?.revision!==this.artworkTimelineRevision){fail("timeline-changed-refresh-first");this.sendArtworkTimeline(client);return;}
+      if(!this.state.mediaObjects.has(id)||this.state.mediaObjects.get(id)?.type==="audio"){fail("visual-artwork-required");return;}
+      if(this.artworkTransports.get(id)?.status==="playing"){fail("pause-before-editing");return;}
+      const history=this.artworkHistory(client),source=direction==="undo"?history.undo:history.redo,destination=direction==="undo"?history.redo:history.undo;
+      const index=source.map(e=>e.mediaId).lastIndexOf(id),entry=source[index];
+      if(!entry){fail("history-empty");return;}
+      const expected=direction==="undo"?entry.after:entry.before,desired=direction==="undo"?entry.before:entry.after;
+      if(JSON.stringify(this.artworkTrackSnapshot(id))!==JSON.stringify(expected)){fail("artwork-changed-history-blocked");return;}
+      try{
+        const tracks=this.artworkTimeline.tracks.filter(t=>t.mediaId!==id);if(desired)tracks.push(desired);
+        this.artworkTimeline=cleanArtworkTimeline({...this.artworkTimeline,tracks});
+        source.splice(index,1);destination.push(entry);if(destination.length>40)destination.splice(0,destination.length-40);
+        for(const [sessionId,other] of this.artworkHistories)if(sessionId!==client.sessionId){other.undo=other.undo.filter(e=>e.mediaId!==id);other.redo=other.redo.filter(e=>e.mediaId!==id);}
+        this.artworkTimelineRevision++;this.resetArtworkTransport(id);this.schedulePersistence("artwork-timeline-"+direction);this.sendArtworkTimeline();
+        client.send("artwork:timeline:result",{ok:true,operation:direction,mediaId:id});this.sendArtworkHistory(client);
       }catch(error){fail(error instanceof Error?error.message:"invalid-timeline");}
     });
     this.onMessage("artwork:timeline:transport",(client:Client,payload:any)=>{
@@ -225,6 +283,7 @@ export class SharedWorldRoom extends Room<WorldState> {
     if(!snapshot){
       this.state.mediaObjects.delete(targetId);this.mediaBehaviors.delete(targetId);this.proximityActors.delete(targetId);
       this.resetArtworkTransport(targetId);
+      this.invalidateArtworkHistory(targetId);
       this.artworkTimeline.tracks=this.artworkTimeline.tracks.filter(track=>track.mediaId!==targetId);
       this.artworkTimelineRevision++;this.sendArtworkTimeline();
       this.sendCueList();return;
@@ -1710,6 +1769,7 @@ export class SharedWorldRoom extends Room<WorldState> {
       this.proximityActors.delete(id);
       this.sendCueList();
       this.resetArtworkTransport(id);
+      this.invalidateArtworkHistory(id);
       this.artworkTimeline.tracks=this.artworkTimeline.tracks.filter(track=>track.mediaId!==id);
       this.artworkTimelineRevision++;this.sendArtworkTimeline();
       console.log("[media:delete stored]", id, "total:", this.state.mediaObjects.size);
@@ -1777,6 +1837,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
   // Called only after a consented leave or reconnection failure/timeout.
   onLeave(client: Client, code: number) {
+    this.artworkHistories.delete(client.sessionId);
     this.mediaEditScopes.delete(client.sessionId);
     this.leaveProximity(client.sessionId);
     this.broadcast("voice:leave",{sessionId:client.sessionId},{except:client});

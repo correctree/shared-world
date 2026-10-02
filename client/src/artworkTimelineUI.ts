@@ -8,13 +8,14 @@ type Context={
 export function createArtworkTimelineUI(ctx:Context){
   let room:any=null,timeline=emptyArtworkTimeline(),revision=0;
   let copiedKey:ArtworkKey|null=null,copiedTitle="";
+  const histories=new Map<string,any>();
   const dirtySettings=new Set<string>();
   let lastSelected:string|null=null;
   let offset=0,clockReady=false,selectedKey=-1,busy=false,lastPing=0,uiAt=0;
   const transports=new Map<string,any>();
   const animated=new Map<string,{entity:any;position:any;rotation:any;scale:any;materials:Map<any,{original:any;copy:any;opacity:number;blend:number;depth:boolean;alphaTest:number}>}>();
   const panel=document.createElement("section");panel.id="artworkTimelinePanel";panel.hidden=false;
-  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.26.3</small></strong></header>
+  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.26.4</small></strong></header>
     <select data-f="target" hidden aria-label="Selected artwork"></select>
     <div class="at-clock"><span data-f="clock">0.0 / 10.0 s</span><strong data-f="state">STOPPED</strong></div>
     <input type="range" data-f="scrub" min="0" max="10000" step="100" value="0" aria-label="Timeline position">
@@ -32,6 +33,7 @@ export function createArtworkTimelineUI(ctx:Context){
     </div>
     <div class="at-buttons"><button data-a="capture">CAPTURE POSE</button><button data-a="save">SAVE KEY</button><button data-a="delete">DELETE KEY</button></div>
     <div class="at-buttons at-copy"><button data-a="copy">COPY KEY</button><button data-a="paste">PASTE KEY</button><span data-f="clipboard">Select ◆ to copy.</span></div>
+    <div class="at-buttons at-history"><button data-a="undo">↶ UNDO</button><button data-a="redo">↷ REDO</button><span data-f="history">UNDO 0 · REDO 0</span></div>
     <p class="at-help">Select a saved key to edit. SAVE KEY stores all values at TIME. SAVE KEY at equal time replaces a key. COPY KEY copies the selected saved key; PASTE KEY adds it at TIME without replacing existing keys. Angles 0 → 360 make one full turn. PLAY starts media + timeline. DO starts only this timeline. SET LENGTH rescales all key times proportionally. Repeat 0 = infinite; 1 = once. Natural end holds the final pose. STOP restores this artwork’s saved placement. Owner / Editor edits; Director can play. Up to 120 keys per artwork, 512 per ROOM.</p>
     <div data-f="message" role="status">Connect to a ROOM.</div>`;
   const style=document.createElement("style");style.textContent=`
@@ -39,7 +41,7 @@ export function createArtworkTimelineUI(ctx:Context){
     #artworkTimelinePanel[hidden]{display:none!important}#artworkTimelinePanel header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}#artworkTimelinePanel small{color:#90a9bc;font-size:10px}
     :is(#artworkTimelinePanel,#artworkTimelineDock) label{display:grid;gap:4px;font-size:10px;color:#a8bdcc;margin:0}:is(#artworkTimelinePanel,#artworkTimelineDock) input,:is(#artworkTimelinePanel,#artworkTimelineDock) select{width:100%;box-sizing:border-box;min-width:0;padding:8px;border:1px solid #3b5465;border-radius:7px;background:#1a2834;color:white}
     :is(#artworkTimelinePanel,#artworkTimelineDock) button{padding:10px 6px;background:#263f51;color:white;border:1px solid #53758d;border-radius:7px;min-width:0;cursor:pointer}:is(#artworkTimelinePanel,#artworkTimelineDock) button:disabled{opacity:.35;cursor:default}:is(#artworkTimelinePanel,#artworkTimelineDock) button[data-a="close"]{padding:4px 10px;font-size:22px}
-    .at-clock,.at-pair{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:12px 0}.at-pair label{flex:1}.at-clock{color:#ffca79;font-variant-numeric:tabular-nums}.at-buttons,.at-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:10px 0}.at-copy{grid-template-columns:repeat(2,minmax(0,1fr))}.at-copy [data-f="clipboard"]{grid-column:1/-1;font-size:10px;color:#8fc9e7;overflow-wrap:anywhere}.at-transport{grid-template-columns:repeat(2,minmax(0,1fr))}.at-keys{display:grid;gap:5px;max-height:140px;overflow:auto}.at-keys button{text-align:left}.at-keys button[aria-pressed="true"]{outline:2px solid #67d4ff;background:#25465e!important}.at-help{font-size:10px;color:#a2b5c3;line-height:1.6}:is(#artworkTimelinePanel,#artworkTimelineDock) [data-f="message"]{padding:8px;background:#0b1119;border-radius:7px;white-space:pre-wrap}
+    .at-clock,.at-pair{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:12px 0}.at-pair label{flex:1}.at-clock{color:#ffca79;font-variant-numeric:tabular-nums}.at-buttons,.at-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:10px 0}.at-history{grid-template-columns:repeat(2,minmax(0,1fr))}.at-history [data-f="history"]{grid-column:1/-1;color:#8fc9e7;font-size:10px}.at-copy{grid-template-columns:repeat(2,minmax(0,1fr))}.at-copy [data-f="clipboard"]{grid-column:1/-1;font-size:10px;color:#8fc9e7;overflow-wrap:anywhere}.at-transport{grid-template-columns:repeat(2,minmax(0,1fr))}.at-keys{display:grid;gap:5px;max-height:140px;overflow:auto}.at-keys button{text-align:left}.at-keys button[aria-pressed="true"]{outline:2px solid #67d4ff;background:#25465e!important}.at-help{font-size:10px;color:#a2b5c3;line-height:1.6}:is(#artworkTimelinePanel,#artworkTimelineDock) [data-f="message"]{padding:8px;background:#0b1119;border-radius:7px;white-space:pre-wrap}
     @media(max-width:640px){#artworkTimelinePanel{padding:10px}:is(#artworkTimelinePanel,#artworkTimelineDock) input,:is(#artworkTimelinePanel,#artworkTimelineDock) select{font-size:16px}:is(#artworkTimelinePanel,#artworkTimelineDock) button{min-height:42px;font-size:10px}}`;
   document.head.append(style);
   const dock=createArtworkTimelineDock({
@@ -55,7 +57,7 @@ export function createArtworkTimelineUI(ctx:Context){
     seek:(timeMs:number)=>{field<HTMLInputElement>("time").value=String(timeMs/1000);selectedKey=-1;transport("seek",timeMs);},
     action:(action:string)=>panel.querySelector<HTMLButtonElement>(`[data-a="${action}"]`)?.click()
   });
-  for(const selector of [".at-keys",".at-grid",".at-buttons:not(.at-transport)",".at-copy",".at-help",'[data-f="message"]']){const node=panel.querySelector<HTMLElement>(selector);if(node)dock.editor.append(node);}
+  for(const selector of [".at-keys",".at-grid",".at-buttons:not(.at-transport)",".at-copy",".at-history",".at-help",'[data-f="message"]']){const node=panel.querySelector<HTMLElement>(selector);if(node)dock.editor.append(node);}
   const field=<T extends HTMLElement>(name:string)=>(panel.querySelector<T>(`[data-f="${name}"]`)??dock.editor.querySelector<T>(`[data-f="${name}"]`))!;
   const actionButton=(name:string)=>(panel.querySelector<HTMLButtonElement>(`[data-a="${name}"]`)??dock.editor.querySelector<HTMLButtonElement>(`[data-a="${name}"]`))!;
   const target=field<HTMLSelectElement>("target"),scrub=field<HTMLInputElement>("scrub"),keys=field<HTMLElement>("keys");
@@ -91,6 +93,10 @@ export function createArtworkTimelineUI(ctx:Context){
     const valid=items.some(i=>i.id===selected);
     const canEdit=!!room&&valid&&ctx.canEdit()&&status!=="playing"&&!busy,canDirect=!!room&&valid&&ctx.canDirect()&&!busy;
     for(const a of ["save","capture","delete","length","repeat"])actionButton(a).disabled=!canEdit;
+    const history=histories.get(selected);
+    actionButton("undo").disabled=!canEdit||history?.canUndo!==true;
+    actionButton("redo").disabled=!canEdit||history?.canRedo!==true;
+    field<HTMLElement>("history").textContent=`UNDO ${history?.undoCount??0} · REDO ${history?.redoCount??0}`;
     actionButton("copy").disabled=!canEdit||selectedKey<0;
     actionButton("paste").disabled=!canEdit||!copiedKey;
     field<HTMLElement>("clipboard").textContent=copiedKey?`COPIED · ${copiedTitle} · ${(copiedKey.timeMs/1000).toFixed(3)} s` : "Select ◆ to copy.";
@@ -118,6 +124,12 @@ export function createArtworkTimelineUI(ctx:Context){
   const handleAction=(event:Event)=>{
     const action=(event.target as HTMLElement).closest<HTMLButtonElement>("[data-a]")?.dataset.a;if(!action)return;
     if(action==="open"){dock.open();refresh();return;}
+    if(action==="undo"||action==="redo"){
+      if(!room||!ctx.canEdit()||busy||state().status==="playing"||actionButton(action).disabled)return;
+      busy=true;selectedKey=-1;dirtySettings.clear();message(action.toUpperCase()+"…");
+      room.send("artwork:timeline:history",{direction:action,mediaId:target.value,revision});refresh();
+      const sentRoom=room;setTimeout(()=>{if(room===sentRoom&&busy){busy=false;message("No confirmation yet. Refresh before retrying.");room.send("artwork:timeline:get",{requestAt:Date.now()});refresh();}},5000);return;
+    }
     if(action==="copy"){
       if(!ctx.canEdit()||state().status==="playing"||busy)return;
       const key=currentTrack()?.keys[selectedKey];if(!key){message("Select a saved ◆ key first.");return;}
@@ -202,7 +214,11 @@ export function createArtworkTimelineUI(ctx:Context){
   }
   function connect(next:any){
     for(const id of Array.from(animated.keys()))release(id);
-    room=next;copiedKey=null;copiedTitle="";timeline=emptyArtworkTimeline();revision=0;transports.clear();busy=false;clockReady=false;selectedKey=-1;
+    room=next;histories.clear();copiedKey=null;copiedTitle="";timeline=emptyArtworkTimeline();revision=0;transports.clear();busy=false;clockReady=false;selectedKey=-1;
+    next.onMessage("artwork:timeline:history:state",(payload:any)=>{
+      if(room!==next||ctx.getRoom()!==next)return;
+      histories.clear();for(const history of payload.tracks||[])histories.set(history.mediaId,history);refresh();
+    });
     next.onMessage("artwork:timeline:state",(payload:any)=>{
       if(room!==next||ctx.getRoom()!==next)return;
       const received=Date.now();
@@ -217,13 +233,13 @@ export function createArtworkTimelineUI(ctx:Context){
     });
     next.onMessage("artwork:timeline:result",(payload:any)=>{
       if(room!==next||ctx.getRoom()!==next)return;
-      busy=false;if(payload.ok&&payload.operation==="save"){dirtySettings.clear();ctx.onSaved?.();}
+      busy=false;if(payload.ok&&["save","undo","redo"].includes(payload.operation)){dirtySettings.clear();ctx.onSaved?.();}
       message(payload.ok?(payload.operation==="save"?"SAVED · ROOM keyframes":String(payload.operation).toUpperCase()):`FAILED · ${payload.reason||"unknown"}`);refresh(true);
     });
     next.send("artwork:timeline:get",{requestAt:Date.now()});lastPing=Date.now();message("Loading ROOM keyframes…");refresh(true);
   }
   ctx.app.on("update",()=>{
-    if(room&&ctx.getRoom()!==room){for(const id of Array.from(animated.keys()))release(id);room=null;copiedKey=null;copiedTitle="";dock.close();transports.clear();timeline=emptyArtworkTimeline();busy=false;message("Connect to a ROOM.");refresh(true);}
+    if(room&&ctx.getRoom()!==room){for(const id of Array.from(animated.keys()))release(id);room=null;histories.clear();copiedKey=null;copiedTitle="";dock.close();transports.clear();timeline=emptyArtworkTimeline();busy=false;message("Connect to a ROOM.");refresh(true);}
     if(room&&Date.now()-lastPing>5000){lastPing=Date.now();room.send("artwork:timeline:get",{requestAt:Date.now()});}
     render();if(Date.now()-uiAt>100){uiAt=Date.now();refresh();}
   });

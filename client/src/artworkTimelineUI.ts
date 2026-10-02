@@ -17,7 +17,7 @@ export function createArtworkTimelineUI(ctx:Context){
   const transports=new Map<string,any>();
   const animated=new Map<string,{entity:any;position:any;rotation:any;scale:any;materials:Map<any,{original:any;copy:any;opacity:number;blend:number;depth:boolean;alphaTest:number}>}>();
   const panel=document.createElement("section");panel.id="artworkTimelinePanel";panel.hidden=false;
-  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.27.0</small></strong></header>
+  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.27.1</small></strong></header>
     <select data-f="target" hidden aria-label="Selected artwork"></select>
     <div class="at-clock"><span data-f="clock">0.0 / 10.0 s</span><strong data-f="state">STOPPED</strong></div>
     <input type="range" data-f="scrub" min="0" max="10000" step="100" value="0" aria-label="Timeline position">
@@ -51,6 +51,13 @@ export function createArtworkTimelineUI(ctx:Context){
   document.head.append(style);
   const dock=createArtworkTimelineDock({
     revision:()=>revision,
+    selectRange:(indices:number[],add:boolean)=>{
+      if(!ctx.canEdit()||busy||state().status==="playing")return;
+      if(!add)selectedKeys.clear();const track=currentTrack();
+      for(const index of indices)if(track?.keys[index])selectedKeys.add(index);
+      selectedKey=Array.from(selectedKeys).at(-1)??-1;if(selectedKey>=0)fill(track!.keys[selectedKey]);
+      message(`${selectedKeys.size} KEYS SELECTED`);refresh(true);
+    },
     select:(index:number,toggle=false,preserve=false)=>selectKey(index,toggle,preserve),
     move:(index:number,timeMs:number,expectedRevision:number,id:string)=>{
       if(id!==target.value||expectedRevision!==revision||busy||!ctx.canEdit()||state().status==="playing"){message("Timeline changed. Select the key again.");return;}

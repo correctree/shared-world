@@ -30,7 +30,7 @@ export function createCameraScreenRuntime(ctx:Context){
     if(!playing||(source.readyState??2)<2||!sourceWidth||!sourceHeight)return;
     const display=ctx.getDisplay(),signature=`${display.mirror}:${display.fit}`;
     elapsed+=dt;if(video===lastVideo&&signature===lastDisplay&&elapsed<1/30)return;
-    if(video===lastVideo&&sourceTime===lastTime&&signature===lastDisplay)return;
+    if(!source.srcObject&&video===lastVideo&&sourceTime===lastTime&&signature===lastDisplay)return;
     elapsed=0;
     try{
       const ratio=display.fit==="cover"?Math.max(canvas.width/sourceWidth,canvas.height/sourceHeight):Math.min(canvas.width/sourceWidth,canvas.height/sourceHeight);

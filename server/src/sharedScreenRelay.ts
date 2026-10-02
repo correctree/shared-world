@@ -1,11 +1,11 @@
 // ROOM-scoped signalling and bounded JPEG fallback. Live content is never persisted.
 export class SharedScreenRelay {
-  private watchers=new Set<string>();private fallback=new Set<string>();private publisher="";private epoch="";private counter=0;private lastFrameAt=-Infinity;
+  private watchers=new Set<string>();private imageOnly=new Set<string>();private fallback=new Set<string>();private publisher="";private epoch="";private counter=0;private lastFrameAt=-Infinity;
   private host:any;private canPublish:(client:any)=>boolean;
   constructor(host:any,canPublish:(client:any)=>boolean){
     this.host=host;this.canPublish=canPublish;
     const on=(name:string,handler:(client:any,payload:any)=>void)=>host.onMessage(name,handler);
-    on("screen:watch",(client,payload)=>{if(payload?.enabled===false){this.watchers.delete(client.sessionId);this.fallback.delete(client.sessionId);}else this.watchers.add(client.sessionId);client.send("screen:state",this.state());this.viewers();});
+    on("screen:watch",(client,payload)=>{if(payload?.enabled===false){this.watchers.delete(client.sessionId);this.fallback.delete(client.sessionId);this.imageOnly.delete(client.sessionId);}else {this.watchers.add(client.sessionId);if(payload?.mode==="images")this.imageOnly.add(client.sessionId);else this.imageOnly.delete(client.sessionId);}client.send("screen:state",this.state());this.viewers();});
     on("screen:publish",(client)=>{
       if(!this.canPublish(client)){client.send("screen:result",{ok:false,reason:"owner-required"});return;}
       if(this.publisher&&this.publisher!==client.sessionId){client.send("screen:result",{ok:false,reason:"publisher-busy"});return;}
@@ -31,7 +31,7 @@ export class SharedScreenRelay {
   }
   private validEpoch(payload:any){return !!this.publisher&&payload?.epoch===this.epoch;}
   private state(){return {publisherSessionId:this.publisher,epoch:this.epoch};}
-  private viewers(){const client=this.host.clients.find((c:any)=>c.sessionId===this.publisher);client?.send("screen:viewers",{epoch:this.epoch,viewers:[...this.watchers].filter(id=>id!==this.publisher&&this.host.clients.some((c:any)=>c.sessionId===id)),fallback:[...this.fallback]});}
+  private viewers(){const client=this.host.clients.find((c:any)=>c.sessionId===this.publisher);client?.send("screen:viewers",{epoch:this.epoch,viewers:[...this.watchers].filter(id=>id!==this.publisher&&this.host.clients.some((c:any)=>c.sessionId===id)),rtcViewers:[...this.watchers].filter(id=>id!==this.publisher&&!this.imageOnly.has(id)&&this.host.clients.some((c:any)=>c.sessionId===id)),fallback:[...this.fallback]});}
   private stop(){this.publisher="";this.epoch="";this.fallback.clear();this.host.broadcast("screen:state",this.state());}
-  leave(client:any){this.watchers.delete(client.sessionId);this.fallback.delete(client.sessionId);if(client.sessionId===this.publisher)this.stop();else this.viewers();}
+  leave(client:any){this.watchers.delete(client.sessionId);this.fallback.delete(client.sessionId);this.imageOnly.delete(client.sessionId);if(client.sessionId===this.publisher)this.stop();else this.viewers();}
 }

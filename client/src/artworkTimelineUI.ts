@@ -17,7 +17,7 @@ export function createArtworkTimelineUI(ctx:Context){
   const transports=new Map<string,any>();
   const animated=new Map<string,{entity:any;position:any;rotation:any;scale:any;materials:Map<any,{original:any;copy:any;opacity:number;blend:number;depth:boolean;alphaTest:number}>}>();
   const panel=document.createElement("section");panel.id="artworkTimelinePanel";panel.hidden=false;
-  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.27.1</small></strong></header>
+  panel.innerHTML=`<header><strong>ARTWORK TIMELINE <small>0.27.2</small></strong></header>
     <select data-f="target" hidden aria-label="Selected artwork"></select>
     <div class="at-clock"><span data-f="clock">0.0 / 10.0 s</span><strong data-f="state">STOPPED</strong></div>
     <input type="range" data-f="scrub" min="0" max="10000" step="100" value="0" aria-label="Timeline position">
@@ -33,7 +33,7 @@ export function createArtworkTimelineUI(ctx:Context){
       <label>ANGLE X (°)<input data-f="rotationX" type="number" step="5" value="0"></label><label>ANGLE Y (°)<input data-f="rotationY" type="number" step="5" value="0"></label><label>ANGLE Z (°)<input data-f="rotationZ" type="number" step="5" value="0"></label>
       <label>OPACITY<input data-f="opacity" type="number" min="0" max="1" step="0.1" value="1"></label>
     </div>
-    <div class="at-buttons"><button data-a="capture">CAPTURE POSE</button><button data-a="save">SAVE KEY</button><button data-a="delete">DELETE KEYS</button></div>
+    <div class="at-buttons"><button data-a="add">ADD AT HEAD</button><button data-a="capture">CAPTURE POSE</button><button data-a="save">SAVE KEY</button><button data-a="delete">DELETE KEYS</button></div>
     <div class="at-channel"><label>KEY CHANNEL<select data-f="channel"><option value="all">ALL PROPERTIES</option><option value="position">POSITION</option><option value="size">SIZE</option><option value="angle">ANGLE</option><option value="opacity">OPACITY</option></select></label><button data-a="split">SPLIT ALL KEYS</button></div>
     <div class="at-interpolation"><label>INTERPOLATION · TO NEXT KEY<select data-f="interpolation"><option value="linear">LINEAR</option><option value="ease-in">EASE IN</option><option value="ease-out">EASE OUT</option><option value="ease-in-out">EASE IN OUT</option></select></label><button data-a="interpolation">APPLY TO SELECTED</button></div>
     <div class="at-buttons at-select"><button data-a="multi">MULTI: OFF</button><button data-a="all">SELECT ALL</button><button data-a="clear">CLEAR</button><span data-f="selection">0 selected</span></div>
@@ -71,7 +71,7 @@ export function createArtworkTimelineUI(ctx:Context){
       track.keys=moved;selectedKey=-1;selectedKeys.clear();field<HTMLInputElement>("time").value=String(timeMs/1000);save(definition);
     },
     seek:(timeMs:number)=>{field<HTMLInputElement>("time").value=String(timeMs/1000);selectedKey=-1;selectedKeys.clear();transport("seek",timeMs);},
-    action:(action:string)=>panel.querySelector<HTMLButtonElement>(`[data-a="${action}"]`)?.click()
+    action:(action:string)=>actionButton(action)?.click()
   });
   for(const selector of [".at-keys",".at-grid",".at-buttons:not(.at-transport)",".at-channel",".at-interpolation",".at-select",".at-copy",".at-history",".at-help",'[data-f="message"]']){const node=panel.querySelector<HTMLElement>(selector);if(node)dock.editor.append(node);}
   const field=<T extends HTMLElement>(name:string)=>(panel.querySelector<T>(`[data-f="${name}"]`)??dock.editor.querySelector<T>(`[data-f="${name}"]`))!;
@@ -119,7 +119,7 @@ export function createArtworkTimelineUI(ctx:Context){
     const status=state().status,track=currentTrack(),duration=track?.durationMs??timeline.durationMs;
     const valid=items.some(i=>i.id===selected);
     const canEdit=!!room&&valid&&ctx.canEdit()&&status!=="playing"&&!busy,canDirect=!!room&&valid&&ctx.canDirect()&&!busy;
-    for(const a of ["save","capture","delete","length","repeat"])actionButton(a).disabled=!canEdit;
+    for(const a of ["add","save","capture","delete","length","repeat"])actionButton(a).disabled=!canEdit;
     const history=histories.get(selected);
     actionButton("undo").disabled=!canEdit||history?.canUndo!==true;
     actionButton("redo").disabled=!canEdit||history?.canRedo!==true;
@@ -173,6 +173,18 @@ export function createArtworkTimelineUI(ctx:Context){
       if(action==="multi")multiSelect=!multiSelect;
       else {selectedKeys.clear();if(action==="all")currentTrack()?.keys.forEach((_,index)=>selectedKeys.add(index));selectedKey=Array.from(selectedKeys).at(-1)??-1;if(selectedKey>=0)fill(currentTrack()!.keys[selectedKey]);}
       refresh(true);return;
+    }
+    if(action==="add"){
+      if(!room||!ctx.canEdit()||busy||state().status==="playing")return;
+      const id=target.value,item=ctx.getItems().get(id);if(!item||item.kind==="audio"||!ctx.getAuthoritative(id))return;
+      const timeMs=Math.round(position()),channel=field<HTMLSelectElement>("channel").value as ArtworkChannel;
+      const definition=JSON.parse(JSON.stringify(timeline)) as ArtworkTimeline;let track=definition.tracks.find(t=>t.mediaId===id);
+      const entity=item.entity,p=entity.getPosition(),r=entity.getEulerAngles(),scale=entity.getLocalScale();
+      const visible=state().preview&&track?artworkPoseAt(track,timeMs,basePose(id)):{x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:scale.x,opacity:1};
+      const key={...visible,timeMs,channel,interpolation:field<HTMLSelectElement>("interpolation").value as ArtworkInterpolation} as ArtworkKey;
+      if(track?.keys.some(existing=>artworkKeyIdentity(existing)===artworkKeyIdentity(key))){message("A key already exists at the playhead for this channel. Nothing was overwritten.");return;}
+      if(!track){track={mediaId:id,durationMs:Math.round(Number(field<HTMLInputElement>("duration").value)*1000),repeatCount:Number(field<HTMLInputElement>("repeat").value),keys:[]};definition.tracks.push(track);}
+      track.keys.push(key);selectedKey=-1;selectedKeys.clear();fill(key);save(definition);return;
     }
     if(action==="split"){
       if(!ctx.canEdit()||busy||state().status==="playing")return;

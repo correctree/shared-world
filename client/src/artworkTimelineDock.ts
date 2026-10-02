@@ -5,7 +5,7 @@ export function createArtworkTimelineDock(ctx:Context){
   const root=document.createElement("section");root.id="artworkTimelineDock";root.hidden=true;root.setAttribute("aria-label","Artwork timeline editor");
   root.innerHTML=`<div class="atd-resize" role="separator" aria-label="Resize timeline" tabindex="0"></div>
     <header class="atd-header"><strong>ARTWORK TIMELINE <span data-d="title">SELECT ARTWORK</span></strong>
-    <div class="atd-tools"><button data-d="media">▶ PLAY</button><button data-d="play">DO</button><button data-d="pause">Ⅱ</button><button data-d="stop">■</button><button data-d="out" aria-label="Zoom out">−</button><button data-d="in" aria-label="Zoom in">＋</button><button data-d="fit">FIT</button><button data-d="box" aria-pressed="false">BOX: OFF</button><button data-d="collapse" aria-label="Collapse timeline">⌄</button><button data-d="close" aria-label="Close timeline">×</button></div></header>
+    <div class="atd-tools"><button data-d="media">▶ PLAY</button><button data-d="play">DO</button><button data-d="pause">Ⅱ</button><button data-d="stop">■</button><button data-d="add" aria-label="Add key at playhead">◆＋</button><button data-d="out" aria-label="Zoom out">−</button><button data-d="in" aria-label="Zoom in">＋</button><button data-d="fit">FIT</button><button data-d="box" aria-pressed="false">BOX: OFF</button><button data-d="collapse" aria-label="Collapse timeline">⌄</button><button data-d="close" aria-label="Close timeline">×</button></div></header>
     <div class="atd-body"><div class="atd-main"><div class="atd-scroll" data-d="scroll"><div class="atd-stage" data-d="stage"><div class="atd-ruler" data-d="ruler"></div><div data-d="lanes"></div><div class="atd-playhead" data-d="head"><span>▼</span></div></div></div>
     <div class="atd-footer"><span data-d="clock"></span><span>Drag ◆ to move a key · Drag time ruler to preview · BOX or Shift + empty area to select keys</span></div></div><div class="atd-editor" data-d="editor"></div></div>`;
   const q=<T extends HTMLElement>(name:string)=>root.querySelector<T>(`[data-d="${name}"]`)!;
@@ -16,7 +16,7 @@ export function createArtworkTimelineDock(ctx:Context){
     #artworkTimelineDock .atd-resize{height:8px;flex-shrink:0;cursor:ns-resize;touch-action:none;background:linear-gradient(90deg,transparent,#577b98,transparent);border-radius:12px 12px 0 0}
     #artworkTimelineDock .atd-header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 12px;min-height:34px;flex-shrink:0;margin:0}
     #artworkTimelineDock .atd-header strong{min-width:0;font-size:11px}#artworkTimelineDock .atd-header span{display:inline-block;color:#71d4ff;max-width:24vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;margin-left:8px}
-    #artworkTimelineDock .atd-tools{display:flex;gap:4px;flex-shrink:0}#artworkTimelineDock button{cursor:pointer;border:1px solid #4a657a;border-radius:5px;background:#253c4f;color:#eef7ff;padding:6px 9px;font:11px system-ui}#artworkTimelineDock button:disabled{opacity:.4;cursor:default}
+    #artworkTimelineDock .atd-tools{display:flex;flex-wrap:wrap;gap:4px;flex-shrink:0}#artworkTimelineDock button{cursor:pointer;border:1px solid #4a657a;border-radius:5px;background:#253c4f;color:#eef7ff;padding:6px 9px;font:11px system-ui}#artworkTimelineDock button:disabled{opacity:.4;cursor:default}
     #artworkTimelineDock .atd-body{display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0;flex:1;border-top:1px solid #3b5268}
     #artworkTimelineDock .atd-main{display:flex;flex-direction:column;min-width:0;min-height:0}#artworkTimelineDock .atd-scroll{overflow:auto;flex:1;min-height:0;overscroll-behavior:contain}
     #artworkTimelineDock .atd-stage{position:relative;min-width:100%;height:222px;background:#111a24;touch-action:pan-x pan-y}
@@ -66,6 +66,7 @@ export function createArtworkTimelineDock(ctx:Context){
   function update(next:Snapshot){
     if(drag&&(drag.id!==next.id||drag.revision!==ctx.revision()||!next.canEdit&& !drag.seek||drag.seek&&!next.canSeek)){drag=null;signature="";}
     if(boxDrag&&(boxDrag.id!==next.id||boxDrag.revision!==ctx.revision()||!next.canEdit)){boxDrag=null;rectangle.hidden=true;signature="";}
+    q<HTMLButtonElement>("add").disabled=!next.canEdit;
     q<HTMLButtonElement>("box").disabled=!next.canEdit;
     snapshot=next;q("title").textContent=next.title||"SELECT ARTWORK";
     q("clock").textContent=`${(next.positionMs/1000).toFixed(1)} / ${(next.durationMs/1000).toFixed(1)} s · ${next.status.toUpperCase()}`;

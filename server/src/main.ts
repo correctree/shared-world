@@ -1,3 +1,4 @@
+import { WebSocketTransport } from "@colyseus/ws-transport";
 import { assetCount, cloneOwnedWorld, createOwnedWorld, deleteOwnedWorld, inspectRoomEntry, listOwnedWorlds, readAsset, renameOwnedWorld, saveAsset, setOwnedWorldAccess, setOwnedWorldArchived } from "./persistence.js";
 import { defineRoom, defineServer } from "colyseus";
 import { isRoomOccupied, SharedWorldRoom } from "./SharedWorldRoom.js";
@@ -21,6 +22,7 @@ function parseAssetName(raw: string) {
 }
 
 const server = defineServer({
+  transport: new WebSocketTransport({maxPayload:128*1024}),
   rooms: {
     shared_world: defineRoom(SharedWorldRoom).filterBy(["roomCode"])
   },

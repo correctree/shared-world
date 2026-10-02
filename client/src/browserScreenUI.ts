@@ -38,5 +38,5 @@ export function createBrowserScreenUI(ctx:Context){
   const pagehide=()=>stop();ctx.app.on("update",update);window.addEventListener("pagehide",pagehide);
   q("start").addEventListener("click",()=>void start());q("stop").addEventListener("click",()=>stop());q("add").addEventListener("click",()=>void add());
   if(!supported())q("status").textContent="画面共有に対応したHTTPSのPCブラウザーで開いてください。";controls();
-  return {element,start,stop,getVideo:()=>active?video:null,getDisplay:()=>({mirror:false,fit:q<HTMLSelectElement>("fit").value}),dispose:()=>{disposed=true;stop();ctx.app.off("update",update);window.removeEventListener("pagehide",pagehide);video.remove();style.remove();element.remove();}};
+  return {element,start,stop,getVideo:()=>active?video:null,getStream:()=>active?stream:null,getDisplay:()=>({mirror:false,fit:q<HTMLSelectElement>("fit").value}),dispose:()=>{disposed=true;stop();ctx.app.off("update",update);window.removeEventListener("pagehide",pagehide);video.remove();style.remove();element.remove();}};
 }

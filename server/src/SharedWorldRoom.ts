@@ -1,3 +1,4 @@
+import { SharedScreenRelay } from "./sharedScreenRelay.js";
 import { cleanArtworkTimeline, emptyArtworkTimeline, artworkPlaybackAt, artworkPlaybackRange, type ArtworkTimeline, type ArtworkTrack } from "./artworkTimeline.js";
 import { Room, type Client } from "colyseus";
 import { assetExists, getRoomAccessPolicy, isRoomArchived, loadWorld, loadWorldCheckpoint, loadWorldGeneration, saveWorld, saveWorldCheckpoint, storageInfo, worldGenerationInfo, type SavedWorldV2 } from "./persistence.js";
@@ -804,7 +805,10 @@ export class SharedWorldRoom extends Room<WorldState> {
   autoDispose = true;
   state = new WorldState();
 
+  private sharedScreenRelay:SharedScreenRelay|null=null;
+
   onCreate(options: { roomCode?: string }) {
+    this.sharedScreenRelay=new SharedScreenRelay(this,client=>this.canEditEnvironment(client,false));
     this.registerArtworkTimeline();
     this.roomCode=String(options.roomCode||"ART001").toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16)||"ART001";
     liveRoomInstances.add(this.roomCode);
@@ -1839,6 +1843,7 @@ export class SharedWorldRoom extends Room<WorldState> {
 
   // Called only after a consented leave or reconnection failure/timeout.
   onLeave(client: Client, code: number) {
+    this.sharedScreenRelay?.leave(client);
     this.artworkHistories.delete(client.sessionId);
     this.mediaEditScopes.delete(client.sessionId);
     this.leaveProximity(client.sessionId);

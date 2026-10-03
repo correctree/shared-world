@@ -1,4 +1,4 @@
-type Context={app:any;pc:any;camera:any;active:()=>boolean;getRoom:()=>any;overlayLayer:number;host:HTMLElement};
+type Context={app:any;pc:any;camera:any;active:()=>boolean;getRoom:()=>any;overlayLayer:number;host:HTMLElement;getSelfRoot?:()=>any};
 /** Single-camera offscreen capture; never reads the XR swapchain or replaces the tracked camera. */
 export function createQuestVRPhoto(ctx:Context){
   const {app,pc,camera}=ctx;let busy=false,generation=0,disposed=false,lastCanvas:HTMLCanvasElement|null=null,status="",cancelFrame:(()=>void)|null=null;
@@ -10,9 +10,9 @@ export function createQuestVRPhoto(ctx:Context){
     const cancel=()=>{clearTimeout(timer);app.off("frameend",done);cancelFrame=null;reject(new Error("CAPTURE CANCELLED"));};
     const timer=setTimeout(()=>{cancel();},5000);cancelFrame=cancel;app.on("frameend",done);app.renderNextFrame=true;
   });}
-  async function capture(seconds:number){
+  async function capture(seconds:number,mode="view"){
     if(busy||disposed||!ctx.active()||!ctx.getRoom())return false;busy=true;
-    const room=ctx.getRoom(),epoch=++generation;let photoCamera:any=null,texture:any=null,target:any=null;
+    const room=ctx.getRoom(),epoch=++generation;let photoCamera:any=null,texture:any=null,target:any=null,selfClone:any=null,selfLayer:any=null;
     try{
       const timer=[0,3,10].includes(seconds)?seconds:0;
       for(let left=timer;left>0;left--){check(room,epoch);status="PHOTO IN "+left;await new Promise(resolve=>setTimeout(resolve,1000));}
@@ -24,6 +24,14 @@ export function createQuestVRPhoto(ctx:Context){
         nearClip:camera.camera.nearClip,farClip:camera.camera.farClip,clearColor:camera.camera.clearColor.clone(),clearColorBuffer:true,clearDepthBuffer:true,
         layers:camera.camera.layers.filter((id:number)=>id!==ctx.overlayLayer)});
       photoCamera.setPosition(camera.getPosition().clone());photoCamera.setRotation(camera.getRotation().clone());app.root.addChild(photoCamera);
+      if(mode==="selfie"){
+        const self=ctx.getSelfRoot?.();if(!self)throw new Error("SELFIE: NO AVATAR");
+        selfLayer=new pc.Layer({name:"VR Selfie Only"});app.scene.layers.push(selfLayer);selfClone=self.clone();selfClone.name="VR Selfie Avatar";selfClone.enabled=true;
+        selfClone.findComponents("render").forEach((r:any)=>{r.enabled=true;r.layers=[selfLayer.id];});selfClone.findComponents("light").forEach((l:any)=>l.enabled=false);
+        selfClone.setPosition(self.getPosition().clone());selfClone.setRotation(self.getRotation().clone());app.root.addChild(selfClone);photoCamera.camera.layers=[...photoCamera.camera.layers,selfLayer.id];
+        const head=camera.getPosition().clone(),forward=camera.forward.clone();forward.y=0;if(forward.length()<.001)forward.set(0,0,-1);forward.normalize();photoCamera.setPosition(head.clone().add(forward.mulScalar(2.8)).add(new pc.Vec3(0,.15,0)));
+        const body=self.getPosition();photoCamera.lookAt(body.x,body.y+.55,body.z);
+      }
       await frame();check(room,epoch);photoCamera.enabled=false;
       let timeout:any;const pixels:any=await Promise.race([texture.read(0,0,width,height,{renderTarget:target,immediate:true}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error("PHOTO READ TIMEOUT")),10000);})]).finally(()=>clearTimeout(timeout));
       check(room,epoch);if(!pixels||pixels.length!==width*height*4)throw new Error("INVALID PHOTO PIXELS");
@@ -35,7 +43,7 @@ export function createQuestVRPhoto(ctx:Context){
       const node=document.createElement("div"),img=document.createElement("img"),save=document.createElement("a");img.src=url;img.alt=name;img.style.cssText="display:block;max-width:100%;width:320px;margin:8px 0";save.href=url;save.download=name;save.textContent="SAVE PNG · "+name;node.append(img,save);gallery.appendChild(node);
       photos.push({url,name,node});while(photos.length>4){const old=photos.shift()!;URL.revokeObjectURL(old.url);old.node.remove();}lastCanvas=result;status="PHOTO READY · SAVE AFTER EXIT VR";return true;
     }catch(error:any){status=String(error?.message??error);return false;}
-    finally{photoCamera?.destroy();target?.destroy();texture?.destroy();busy=false;}
+    finally{selfClone?.destroy();if(selfLayer)app.scene.layers.remove(selfLayer);photoCamera?.destroy();target?.destroy();texture?.destroy();busy=false;}
   }
   function cancel(){generation++;cancelFrame?.();}
   const ended=()=>cancel();app.xr?.on("end",ended);

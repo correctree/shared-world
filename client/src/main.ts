@@ -1,6 +1,6 @@
 import { createQuestVRMenu } from "./questVRMenu";
 import { createQuestVRFlashlight } from "./questVRView";
-import { questVRHeading } from "./questVRMovement";
+import { questVRHeading, questVRTeleportRay } from "./questVRMovement";
 import { createQuestVRInteraction } from "./questVRInteraction";
 import { createSharedBrowserScreenUI } from "./sharedBrowserScreenUI";
 let sharedBrowserScreenUI:ReturnType<typeof createSharedBrowserScreenUI>|null=null;
@@ -34,7 +34,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.30.7.1 BROWSER SCREEN LOADED]");
+console.log("[PROTOTYPE 0.30.8 BROWSER SCREEN LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1112,7 +1112,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList,#roomManager #archivedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.7.1</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.8</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -1672,6 +1672,7 @@ emoteControls.addEventListener("click",event=>{
     activeRoom.send("avatar:emote",{type});
   }
 });
+const questChatHistory:{name:string;text:string}[]=[];
 const avatarMessageInput=communicationControls.querySelector<HTMLInputElement>("#avatarMessageInput")!;
 const sendAvatarMessageButton=communicationControls.querySelector<HTMLButtonElement>("#sendAvatarMessage")!;
 function sendAvatarMessage(text=avatarMessageInput.value) {
@@ -1910,11 +1911,13 @@ async function handleVoiceSignal(payload:any) {
   } catch(error) {console.warn("[VOICE SIGNAL ERROR]",from,error);setVoiceStatus("ERROR",true);}
 }
 async function enableVoice() {
-  if(voiceEnabled)return;
+  if(voiceEnabled||voiceToggleButton.disabled||!activeRoom)return;
+  const startRoom=activeRoom;
   if(!navigator.mediaDevices?.getUserMedia){setVoiceStatus("UNSUPPORTED",true);return;}
   setVoiceStatus("CONNECTING");voiceToggleButton.disabled=true;
   try {
     voiceRawStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:{ideal:true},noiseSuppression:{ideal:false},autoGainControl:{ideal:false},channelCount:{ideal:1}},video:false});
+    if(activeRoom!==startRoom){voiceRawStream.getTracks().forEach(track=>track.stop());voiceRawStream=null;setVoiceStatus("OFF");return;}
     voiceEnabled=true;await rebuildVoiceSendStream();voiceToggleButton.classList.add("active");setVoiceStatus("READY");
     announceVoicePresence();
     if(voiceMeshTimer!==null)window.clearInterval(voiceMeshTimer);
@@ -4052,7 +4055,7 @@ async function enterWorld() {
     room.send("room:ping",{at:Date.now()});
     room.send("persistence:get",{});
     localAutoRestoreAttempted=false;lastSnapshotMediaCount=-1;
-    currentSessionId = room.sessionId;
+    currentSessionId = room.sessionId;questChatHistory.length=0;
     latestMoveAck=0;
     lastSentMove={x:NaN,y:NaN,z:NaN,rotationY:NaN,flying:false};
     room.onMessage("move:ack",(ack:any) => {
@@ -4098,7 +4101,7 @@ async function enterWorld() {
     room.onMessage("avatar:message",(payload:any)=>{
       if(room!==activeRoom)return;
       const text=String(payload?.text||"").slice(0,48);
-      if(text)showAvatarMessage(String(payload?.sessionId||""),text);
+      if(text){const id=String(payload?.sessionId||"");showAvatarMessage(id,text);questChatHistory.push({name:String((room.state.players as any).get(id)?.name??"Guest"),text});if(questChatHistory.length>8)questChatHistory.shift();}
     });
     room.onMessage("voice:ready",(payload:any)=>{
       if(room!==activeRoom||!voiceEnabled)return;
@@ -5921,7 +5924,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.7.1</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.8</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -7548,20 +7551,26 @@ questVRUI=createQuestVRUI({app,pc,camera,getRoom:()=>activeRoom,available:()=>!d
     if(cameraPointerId!==null&&canvas.hasPointerCapture(cameraPointerId))canvas.releasePointerCapture(cameraPointerId);
     cameraDragging=false;cameraPointerId=null;}
 });
+const toggleQuestVRMovement=()=>{questVRUI?.toggleMovement();if(questVRUI?.getMovement()==="teleport"&&flying)setFlightMode(false);};
+const toggleQuestVRFlight=()=>{if(!flying&&questVRUI?.getMovement()==="teleport")questVRUI.toggleMovement();setFlightMode(!flying);};
 const questVRMenu=createQuestVRMenu({app,pc,camera,active:()=>questVRUI?.isActive()??false,getRoom:()=>activeRoom,host:questVRUI.element,
-  getMovement:()=>questVRUI?.getMovement()??"stick",toggleMovement:()=>questVRUI?.toggleMovement(),getSpeed:()=>questVRUI?.getSpeed()??1.2,adjustSpeed:d=>questVRUI?.adjustSpeed(d),setSpeed:v=>questVRUI?.setSpeed(v),
-  getFlying:()=>flying,toggleFlight:()=>setFlightMode(!flying),getLight:()=>avatars.get(currentSessionId)?.flashlightOn??false,toggleLight:toggleLocalFlashlight,stop:()=>questVRUI?.stop()
+  getMovement:()=>questVRUI?.getMovement()??"stick",toggleMovement:toggleQuestVRMovement,getSpeed:()=>questVRUI?.getSpeed()??1.2,adjustSpeed:d=>questVRUI?.adjustSpeed(d),setSpeed:v=>questVRUI?.setSpeed(v),
+  getSelfRoot:()=>avatars.get(currentSessionId)?.entity??null,getChat:()=>questChatHistory,sendChat:(text)=>sendAvatarMessage(text),
+  getVoice:()=>voiceStatus.textContent??"VOICE OFF",toggleVoice:()=>{if(voiceEnabled)disableVoice();else{unlockVoiceOutput();void enableVoice();}},getTeleportStatus:()=>questVRInteraction.getStatus(),
+  getFlying:()=>flying,toggleFlight:toggleQuestVRFlight,getLight:()=>avatars.get(currentSessionId)?.flashlightOn??false,toggleLight:toggleLocalFlashlight,stop:()=>questVRUI?.stop()
 });
-createQuestVRInteraction({app,pc,camera,overlayLayer:questVRMenu.overlayLayer,isMenuBusy:()=>questVRMenu.isBusy(),consumeMenuJump:()=>questVRMenu.consumeJump(),getRig:()=>questVRUI?.getRig(),getRoom:()=>activeRoom,
+const questVRInteraction=createQuestVRInteraction({app,pc,camera,overlayLayer:questVRMenu.overlayLayer,isMenuBusy:()=>questVRMenu.isBusy(),consumeMenuJump:()=>questVRMenu.consumeJump(),getRig:()=>questVRUI?.getRig(),getRoom:()=>activeRoom,
   getItems:()=>Array.from(managedPlacedMedia.values()),
-  getMovement:()=>questVRUI?.getMovement()??"stick",getSpeed:()=>questVRUI?.getSpeed()??1.2,toggleMovement:()=>questVRUI?.toggleMovement(),adjustSpeed:(direction)=>questVRUI?.adjustSpeed(direction),
-  getFlying:()=>flying,toggleFlight:()=>setFlightMode(!flying),getLight:()=>avatars.get(currentSessionId)?.flashlightOn??false,toggleLight:toggleLocalFlashlight,
+  getMovement:()=>questVRUI?.getMovement()??"stick",getSpeed:()=>questVRUI?.getSpeed()??1.2,toggleMovement:toggleQuestVRMovement,adjustSpeed:(direction)=>questVRUI?.adjustSpeed(direction),
+  getFlying:()=>flying,toggleFlight:toggleQuestVRFlight,getLight:()=>avatars.get(currentSessionId)?.flashlightOn??false,toggleLight:toggleLocalFlashlight,
   getGround:(x,z,foot)=>architectureGroundHeight(x,z,foot),
   isBlocked:(x,z,foot)=>{const limit=Math.max(6.5,currentWorldEnvironment.groundSize/2-1);return Math.abs(x)>limit||Math.abs(z)>limit||architectureBlocked(x,z,foot+AVATAR_FOOT_OFFSET);},
   onWalk:(x,z,foot)=>{localPosition.x=x;localPosition.y=foot+AVATAR_FOOT_OFFSET;localPosition.z=z;},
+  getTeleportTarget:(o,d)=>questVRTeleportRay(o,d,architectureGroundHeight,(x,z,foot)=>{const limit=Math.max(6.5,currentWorldEnvironment.groundSize/2-1);return Math.abs(x)<=limit&&Math.abs(z)<=limit&&!architectureBlocked(x,z,foot+AVATAR_FOOT_OFFSET);}),
   canTeleport:(x,z)=>{const limit=Math.max(6.5,currentWorldEnvironment.groundSize/2-1);return Math.abs(x)<=limit&&Math.abs(z)<=limit&&!architectureBlocked(x,z,AVATAR_FOOT_OFFSET)&&architectureGroundHeight(x,z,0)<.05;},
-  onTeleport:(x,z)=>{localPosition.x=x;localPosition.y=AVATAR_FOOT_OFFSET;localPosition.z=z;verticalVelocity=0;jumpRequested=false;}
+  onTeleport:(x,z)=>{localPosition.x=x;localPosition.y=(questVRUI?.getFloorY()??0)+AVATAR_FOOT_OFFSET;localPosition.z=z;verticalVelocity=0;jumpRequested=false;}
 });
+const prepareVRVoice=document.createElement("button");prepareVRVoice.type="button";prepareVRVoice.textContent="PREPARE VOICE · マイクを許可";prepareVRVoice.addEventListener("click",()=>{unlockVoiceOutput();void enableVoice();});questVRUI.element.appendChild(prepareVRVoice);
 const questVRSection=createWorldSection("5 · QUEST VR","ENTER VR · STICK / TELEPORT · TURN · PLAY / DO",questVRUI.element);
 const scenesSection=createWorldSection("6 · SCENES","SAVE · RECALL · LOCAL BACKUP",sceneManagerPanel);
 const roomDataSection=createWorldSection("7 · ROOM DATA & BACKUP","SAVE · RESTORE · TRANSFER",worldManifestControls);
@@ -7580,7 +7589,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.7.1</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.8</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

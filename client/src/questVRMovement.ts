@@ -40,3 +40,13 @@ export function questVRSnapTurn(rig:any,head:{x:number;z:number},direction:numbe
   rig.setPosition(head.x+Math.cos(angle)*dx+Math.sin(angle)*dz,origin.y,head.z-Math.sin(angle)*dx+Math.cos(angle)*dz);
 }
 export function questVRHeading(forward:{x:number;z:number}){return Math.atan2(-forward.x,-forward.z)*180/Math.PI;}
+/** Find the first supported surface crossed by a downward ray, including stairs/ramps. */
+export function questVRTeleportRay(origin:{x:number;y:number;z:number},direction:{x:number;y:number;z:number},
+ ground:(x:number,z:number,foot:number)=>number,canStand:(x:number,z:number,foot:number)=>boolean){
+ if(![origin.x,origin.y,origin.z,direction.x,direction.y,direction.z].every(Number.isFinite)||direction.y>=-.05)return null;
+ let previousGap=origin.y-ground(origin.x,origin.z,Math.max(0,Math.min(8,origin.y)));
+ for(let t=.05;t<=10;t+=.05){const point={x:origin.x+direction.x*t,y:origin.y+direction.y*t,z:origin.z+direction.z*t};const height=ground(point.x,point.z,Math.max(0,Math.min(8,point.y)));
+  if(Number.isFinite(height)&&height>=0&&height<=8&&previousGap>=-.001&&point.y<=height+.001&&height-point.y<=.08&&canStand(point.x,point.z,height))return {x:point.x,y:height,z:point.z};
+  if(point.y<-.1)break;previousGap=point.y-height;
+ }return null;
+}

@@ -14,7 +14,7 @@ export function createQuestVRInteraction(ctx:Context){
     marker=new pc.Entity("VR teleport target");marker.addComponent("render",{type:"sphere"});marker.setLocalScale(.22,.025,.22);material=new pc.StandardMaterial();material.diffuse=green;material.emissive=green;material.update();marker.render.meshInstances.forEach((m:any)=>m.material=material);app.root.addChild(marker);marker.enabled=false;
     canvas=document.createElement("canvas");canvas.width=1024;canvas.height=384;texture=new pc.Texture(app.graphicsDevice,{width:1024,height:384,mipmaps:false});texture.setSource(canvas);
     hudMaterial=new pc.StandardMaterial();hudMaterial.useLighting=false;hudMaterial.emissive=new pc.Color(1,1,1);hudMaterial.emissiveMap=texture;hudMaterial.cull=pc.CULLFACE_NONE;hudMaterial.depthWrite=false;hudMaterial.depthTest=false;hudMaterial.update();
-    hud=new pc.Entity("VR controls");hud.addComponent("render",{type:"plane",...(ctx.overlayLayer!==undefined?{layers:[ctx.overlayLayer]}:{})});hud.render.meshInstances.forEach((m:any)=>m.material=hudMaterial);camera.addChild(hud);hud.setLocalPosition(0,-.28,-1);hud.setLocalEulerAngles(90,0,0);hud.setLocalScale(.9,1,.3375);
+    hud=new pc.Entity("VR controls");hud.addComponent("render",{type:"plane",...(ctx.overlayLayer!==undefined?{layers:[ctx.overlayLayer]}:{})});hud.render.meshInstances.forEach((m:any)=>m.material=hudMaterial);hud.enabled=false;camera.addChild(hud);hud.setLocalPosition(0,-.28,-1);hud.setLocalEulerAngles(90,0,0);hud.setLocalScale(.9,1,.3375);
     message="READY";
     unsubscribe=room.onMessage("vr:teleport:result",(result:any)=>{
       if(!pending||result?.requestId!==pending.id)return;
@@ -42,7 +42,7 @@ export function createQuestVRInteraction(ctx:Context){
   function update(dt:number){
     const rig=ctx.getRig(),next=ctx.getRoom();if(!rig||!next){if(room)clean();return;}if(room!==next){clean();setup(next);}
     if(app.xr.session?.visibilityState&&app.xr.session.visibilityState!=="visible"){left=right=null;leftButtons=[];viewArmed=false;walkArmed=false;airVelocity=0;aiming=false;marker.enabled=false;return;}
-    hud.enabled=!ctx.isMenuBusy?.();
+    hud.enabled=false;
     if(ctx.isMenuBusy?.()){left=right=null;leftButtons=[];viewArmed=false;walkArmed=false;airVelocity=0;aiming=false;marker.enabled=false;return;}
     if(pending&&performance.now()-pending.at>3000){pending=null;message="TELEPORT TIMEOUT";}
     const sources=app.xr.input?.inputSources??[],l=sources.find((s:any)=>s.handedness==="left"&&s.gamepad),r=sources.find((s:any)=>s.handedness==="right"&&s.gamepad);

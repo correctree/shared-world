@@ -3,7 +3,7 @@ export function questVRStickDelta(x:number,y:number,forward:{x:number;z:number},
   if(![x,y,forward.x,forward.z,speed,dt].every(Number.isFinite))return {x:0,z:0};
   const magnitude=Math.hypot(x,y),length=Math.hypot(forward.x,forward.z);
   if(magnitude<=.18||length<.001||dt<=0)return {x:0,z:0};
-  const amount=(Math.min(1,magnitude)-.18)/.82*Math.max(.25,Math.min(2,speed))*Math.min(dt,.05);
+  const amount=(Math.min(1,magnitude)-.18)/.82*Math.max(.25,Math.min(6,speed))*Math.min(dt,.05);
   const fx=forward.x/length,fz=forward.z/length;
   return {x:(-fz*x-fx*y)/magnitude*amount,z:(fx*x-fz*y)/magnitude*amount};
 }

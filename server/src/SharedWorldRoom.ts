@@ -956,10 +956,10 @@ export class SharedWorldRoom extends Room<WorldState> {
       const dx = clampedX - player.x;
       const dz = clampedZ - player.z;
       const distance = Math.hypot(dx, dz);
-      const clampedY=Math.max(0.65,Math.min(8.65,nextY));
+      const clampedY=Math.max(0.65,Math.min(160.65,nextY));
       const dy=Math.abs(clampedY-player.y);
 
-      if (distance > MAX_STEP || dy > MAX_STEP || nextY<0.65 || nextY>8.65) {
+      if (distance > MAX_STEP || dy > MAX_STEP || nextY<0.65 || nextY>160.65) {
         client.send("move:ack",{seq:payload?.seq,ok:false,x:player.x,y:player.y,z:player.z,rotationY:player.rotationY});
         return;
       }

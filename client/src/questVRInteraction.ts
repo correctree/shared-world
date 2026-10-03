@@ -22,7 +22,7 @@ export function createQuestVRInteraction(ctx:Context){
       const rig=ctx.getRig();const current=pending;pending=null;
       if(!rig||room!==current.room)return;
       if(!result.ok){message=result.reason||"TELEPORT REJECTED";return;}
-      if(![result.x,result.y,result.z].every(Number.isFinite)||result.y<.65||result.y>8.65){message="INVALID RESPONSE";return;}
+      if(![result.x,result.y,result.z].every(Number.isFinite)||result.y<.65||result.y>160.65){message="INVALID RESPONSE";return;}
       const head=camera.getPosition(),origin=rig.getPosition();rig.setPosition(result.x-(head.x-origin.x),result.y-.65,result.z-(head.z-origin.z));airVelocity=0;ctx.onWalk?.(result.x,result.z,result.y-.65);ctx.onTeleport(result.x,result.z);message="TELEPORTED";
     });
   }

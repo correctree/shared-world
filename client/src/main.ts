@@ -3,6 +3,7 @@ import { createQuestVRFlashlight } from "./questVRView";
 import { questVRHeading, questVRTeleportRay } from "./questVRMovement";
 import { createQuestVRInteraction } from "./questVRInteraction";
 import { createSharedBrowserScreenUI } from "./sharedBrowserScreenUI";
+let sharedCameraScreenUI:ReturnType<typeof createSharedBrowserScreenUI>|null=null;
 let sharedBrowserScreenUI:ReturnType<typeof createSharedBrowserScreenUI>|null=null;
 import { createBrowserScreenUI } from "./browserScreenUI";
 let browserScreenUI:ReturnType<typeof createBrowserScreenUI>|null=null;
@@ -34,7 +35,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.30.8.1 BROWSER SCREEN LOADED]");
+console.log("[PROTOTYPE 0.30.9 BROWSER SCREEN LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1112,7 +1113,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList,#roomManager #archivedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.8.1</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.9</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -2885,7 +2886,7 @@ async function createSharedSpriteFromAsset(mediaId: string, media: any) {
       const browser=isBrowserScreenManifest(meta);
       if(!isSharedMediaGenerationCurrent(mediaId,loadGeneration)){URL.revokeObjectURL(imageURL);return;}
       const screen=createCameraScreenRuntime({pc,app,id:mediaId,media,poster:image,aspect:(browser?meta.browserScreen:meta.cameraScreen).aspectRatio,
-        getVideo:()=>browser?(browserScreenUI?.getVideo()??sharedBrowserScreenUI?.getSource()??null):(cameraBackgroundUI?.getScreenVideo()??null),getDisplay:()=>browser?(browserScreenUI?.getDisplay()??{mirror:false,fit:"contain"}):(cameraBackgroundUI?.getScreenDisplay()??{mirror:false,fit:"contain"})});
+        getVideo:()=>browser?(sharedBrowserScreenUI?.getSource()??browserScreenUI?.getVideo()??null):(sharedCameraScreenUI?.getSource()??cameraBackgroundUI?.getScreenVideo()??null),getDisplay:()=>browser?(browserScreenUI?.getDisplay()??{mirror:false,fit:"contain"}):(cameraBackgroundUI?.getScreenDisplay()??{mirror:false,fit:"contain"})});
       const object=createMediaObject({title:media.title||(browser?"Browser Screen":"Camera Screen"),type:"sprite",entity:screen.entity,playable:true,animated:true,playback:screen.playback as any,behavior:[]});
       object.id=mediaId;xrMediaManager.register(object);
       managedPlacedMedia.set(mediaId,{id:mediaId,title:`${media.title||(browser?"Browser Screen":"Camera Screen")} [SHARED]`,kind:"sprite",cameraScreen:!browser,browserScreen:browser,entity:screen.entity});
@@ -3938,7 +3939,7 @@ async function enterWorld() {
     } catch (error) {
       console.warn("[SESSION REENTRY] previous leave warning", error);
     }
-    activeRoom = null;sharedBrowserScreenUI?.leave();browserScreenUI?.stop();questVRUI?.stop();projectionViewUI?.stop();cameraBackgroundUI?.stop();
+    activeRoom = null;sharedBrowserScreenUI?.leave();sharedCameraScreenUI?.leave();browserScreenUI?.stop();questVRUI?.stop();projectionViewUI?.stop();cameraBackgroundUI?.stop();
     currentSessionId = "";
     mediaOrderIds=[];
     applyEditHistoryState({});
@@ -4031,7 +4032,7 @@ async function enterWorld() {
     room.onLeave((code:number,reason:string)=>{
       if(room!==activeRoom)return;
       console.warn("[ROOM PERMANENT LEAVE]",code,reason,room.sessionId);
-      activeRoom=null;sharedBrowserScreenUI?.leave();browserScreenUI?.stop();questVRUI?.stop();projectionViewUI?.stop();cameraBackgroundUI?.stop();currentSessionId="";mediaOrderIds=[];
+      activeRoom=null;sharedBrowserScreenUI?.leave();sharedCameraScreenUI?.leave();browserScreenUI?.stop();questVRUI?.stop();projectionViewUI?.stop();cameraBackgroundUI?.stop();currentSessionId="";mediaOrderIds=[];
       applyEditHistoryState({});
       updateRoomRoleUI("");
       environmentCanEdit=false;directorCanDirect=false;directorCanManage=false;refreshAccessAwareUI();
@@ -5924,7 +5925,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.8.1</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.9</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -7532,21 +7533,23 @@ const advancedGroup=createEnvironmentGroup("ADVANCED / LEGACY","JSON · MERGE ZI
 worldManifestControls.replaceChildren(recoveryGroup,snapshotGroup,advancedGroup);
 
 const environmentSection=createWorldSection("1 · WORLD ENVIRONMENT","LIGHT · GROUND · FOG · PARTICLES",environmentEditor,true);
-cameraBackgroundUI=createCameraBackgroundUI({app,canvas,getRoom:()=>activeRoom,available:()=>!directorRemoteMode&&!questVRUI?.isBusy(),setView:setCameraBackgroundView,canAddScreen:()=>environmentCanEdit,addScreen:createCameraScreenArtwork});
-const cameraBackgroundSection=createWorldSection("2 · CAMERA BACKGROUND / SCREEN","LOCAL CAMERA · BACKGROUND · SCREEN",cameraBackgroundUI.element);
+cameraBackgroundUI=createCameraBackgroundUI({app,canvas,getRoom:()=>activeRoom,available:()=>!directorRemoteMode,backgroundAllowed:()=>!questVRUI?.isBusy(),setView:setCameraBackgroundView,canAddScreen:()=>environmentCanEdit,addScreen:createCameraScreenArtwork});
+sharedCameraScreenUI=createSharedBrowserScreenUI({app,channel:"camera-screen",getRoom:()=>activeRoom,getLocalVideo:()=>cameraBackgroundUI?.getVideo()??null,getLocalStream:()=>cameraBackgroundUI?.getStream()??null,canPublish:()=>environmentCanEdit&&!directorRemoteMode});
+const cameraScreenContent=document.createElement("div");cameraScreenContent.append(cameraBackgroundUI.element,sharedCameraScreenUI.element);
+const cameraBackgroundSection=createWorldSection("2 · CAMERA BACKGROUND / SCREEN","CAMERA · SHARE TO ROOM · RECEIVE",cameraScreenContent);
 projectionViewUI=createProjectionViewUI({app,canvas,camera,getRoom:()=>activeRoom,available:()=>!directorRemoteMode&&!questVRUI?.isBusy(),resetInput:()=>{
   keys.clear();resetJoystick();jumpRequested=false;
   if(cameraPointerId!==null&&canvas.hasPointerCapture(cameraPointerId))canvas.releasePointerCapture(cameraPointerId);
   cameraDragging=false;cameraPointerId=null;
 }});
-browserScreenUI=createBrowserScreenUI({app,getRoom:()=>activeRoom,available:()=>!directorRemoteMode&&!questVRUI?.isBusy(),canAddScreen:()=>environmentCanEdit,addScreen:createBrowserScreenArtwork});
+browserScreenUI=createBrowserScreenUI({app,getRoom:()=>activeRoom,available:()=>!directorRemoteMode,canAddScreen:()=>environmentCanEdit,addScreen:createBrowserScreenArtwork});
 sharedBrowserScreenUI=createSharedBrowserScreenUI({app,getRoom:()=>activeRoom,getLocalVideo:()=>browserScreenUI?.getVideo()??null,getLocalStream:()=>browserScreenUI?.getStream()??null,canPublish:()=>environmentCanEdit&&!directorRemoteMode});
 const browserScreenContent=document.createElement("div");browserScreenContent.append(browserScreenUI.element,sharedBrowserScreenUI.element);
 const browserScreenSection=createWorldSection("3 · BROWSER SCREEN","LOCAL CAPTURE · SHARE TO ROOM · RECEIVE",browserScreenContent);
 const projectionSection=createWorldSection("4 · PROJECTION VIEW","FIXED CAMERA · CLEAN VIEW · FULLSCREEN",projectionViewUI.element);
 questVRUI=createQuestVRUI({app,pc,camera,getRoom:()=>activeRoom,available:()=>!directorRemoteMode,
   getOrigin:()=>({x:localPosition.x,y:localPosition.y-AVATAR_FOOT_OFFSET,z:localPosition.z,yaw:cameraYaw}),
-  prepare:()=>{projectionViewUI?.stop();cameraBackgroundUI?.stop();},
+  prepare:()=>{projectionViewUI?.stop();setCameraBackgroundView(false,true);},
   resetInput:()=>{keys.clear();resetJoystick();jumpRequested=false;verticalVelocity=0;
     if(cameraPointerId!==null&&canvas.hasPointerCapture(cameraPointerId))canvas.releasePointerCapture(cameraPointerId);
     cameraDragging=false;cameraPointerId=null;}
@@ -7589,7 +7592,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.8.1</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.9</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

@@ -1,8 +1,8 @@
-type Context={app:any;canvas:HTMLCanvasElement;getRoom:()=>any;available:()=>boolean;setView:(enabled:boolean,showGround:boolean)=>void;canAddScreen?:()=>boolean;addScreen?:()=>Promise<string>};
+type Context={app:any;canvas:HTMLCanvasElement;getRoom:()=>any;available:()=>boolean;backgroundAllowed?:()=>boolean;setView:(enabled:boolean,showGround:boolean)=>void;canAddScreen?:()=>boolean;addScreen?:()=>Promise<string>};
 export function createCameraBackgroundUI(ctx:Context){
   const panel=document.createElement("section");panel.id="cameraBackgroundPanel";
-  panel.innerHTML=`<strong>CAMERA BACKGROUND <small>0.28.1</small></strong>
-    <p>LOCAL VIEW · カメラ映像はこの端末だけに表示されます。</p>
+  panel.innerHTML=`<strong>CAMERA BACKGROUND <small>0.30.9</small></strong>
+    <p>BACKGROUNDは端末内。SCREENの映像を共有するにはSHARED CAMERA SCREENのSHARE TO ROOM。</p>
     <label>DISPLAY MODE<select data-c="mode"><option value="background">BACKGROUND</option><option value="screen">SCREEN</option><option value="both">BACKGROUND + SCREEN</option></select></label>
     <button type="button" data-c="add-screen">ADD CAMERA SCREEN</button>
     <label>CAMERA<select data-c="device"><option value="@rear">AUTO / REAR</option><option value="@front">FRONT</option></select></label>
@@ -16,6 +16,7 @@ export function createCameraBackgroundUI(ctx:Context){
   const css=document.createElement("style");css.textContent=`
     #cameraBackgroundVideo{position:fixed;inset:0;width:100vw;height:100dvh;object-fit:cover;background:#000;z-index:0;pointer-events:none}
     #cameraBackgroundVideo[hidden]{display:none!important}
+    #cameraBackgroundVideo.camera-source-only{inset:auto!important;bottom:0!important;left:0!important;width:2px!important;height:2px!important;opacity:.01!important}
     body.camera-background-active #application-canvas{position:fixed!important;inset:0;z-index:1!important;background:transparent!important}
     body.camera-background-active #hud,body.camera-background-active #joystick{z-index:20}
     #cameraBackgroundPanel{display:grid;gap:10px;padding:12px;background:#101d28;color:#edf7ff;border:1px solid #48687f;border-radius:10px;font:12px system-ui}
@@ -47,7 +48,8 @@ export function createCameraBackgroundUI(ctx:Context){
   function presentation(){
     video.style.transform=q<HTMLInputElement>("mirror").checked?"scaleX(-1)":"none";
     video.style.objectFit=q<HTMLSelectElement>("fit").value==="contain"?"contain":"cover";
-    const background=active&&q<HTMLSelectElement>("mode").value!=="screen";
+    const background=active&&q<HTMLSelectElement>("mode").value!=="screen"&&(ctx.backgroundAllowed?.()??true);
+    video.classList.toggle("camera-source-only",active&&!background);
     document.body.classList.toggle("camera-background-active",background);
     ctx.setView(background,q<HTMLInputElement>("ground").checked);
   }
@@ -115,12 +117,13 @@ export function createCameraBackgroundUI(ctx:Context){
   q("device").addEventListener("change",()=>{if(active&&!pending)void start();});
   for(const name of ["mode","mirror","fit","ground"])q(name).addEventListener("change",presentation);
   for(const event of ["pointerdown","pointermove","pointerup","wheel","keydown"])panel.addEventListener(event,e=>e.stopPropagation());
-  const update=()=>{if((active||pending)&&ctx.getRoom()!==roomAtStart)stop();controls();};
+  let backgroundPermitted=ctx.backgroundAllowed?.()??true;
+  const update=()=>{if((active||pending)&&ctx.getRoom()!==roomAtStart)stop();const allowed=ctx.backgroundAllowed?.()??true;if(allowed!==backgroundPermitted){backgroundPermitted=allowed;presentation();}controls();};
   ctx.app.on("update",update);
   const pageHide=()=>stop();window.addEventListener("pagehide",pageHide);
   const deviceChange=()=>{if(active)void refreshDevices();};devices?.addEventListener?.("devicechange",deviceChange);
   if(!supported())status("カメラにはHTTPSと対応ブラウザが必要です。");
   else if(!ctx.getRoom())status("ROOMへ入室してからSTART CAMERAで開始してください。");
   controls();
-  return {element:panel,stop,getScreenVideo:()=>active&&q<HTMLSelectElement>("mode").value!=="background"?video:null,getScreenDisplay:()=>({mirror:q<HTMLInputElement>("mirror").checked,fit:q<HTMLSelectElement>("fit").value}),dispose(){stop();ctx.app.off?.("update",update);window.removeEventListener("pagehide",pageHide);devices?.removeEventListener?.("devicechange",deviceChange);video.remove();css.remove();panel.remove();}};
+  return {element:panel,stop,getStream:()=>active?stream:null,getVideo:()=>active?video:null,getScreenVideo:()=>active&&q<HTMLSelectElement>("mode").value!=="background"?video:null,getScreenDisplay:()=>({mirror:q<HTMLInputElement>("mirror").checked,fit:q<HTMLSelectElement>("fit").value}),dispose(){stop();ctx.app.off?.("update",update);window.removeEventListener("pagehide",pageHide);devices?.removeEventListener?.("devicechange",deviceChange);video.remove();css.remove();panel.remove();}};
 }

@@ -11,7 +11,7 @@ export function createCameraScreenRuntime(ctx:Context){
   const canvas=document.createElement("canvas");canvas.width=1280;canvas.height=Math.round(1280/aspect);
   const draw=canvas.getContext("2d",{alpha:false});if(!draw)throw new Error("Camera screen canvas unavailable");
   const texture=new pc.Texture(app.graphicsDevice,{format:pc.PIXELFORMAT_RGBA8,minFilter:pc.FILTER_LINEAR,magFilter:pc.FILTER_LINEAR,addressU:pc.ADDRESS_CLAMP_TO_EDGE,addressV:pc.ADDRESS_CLAMP_TO_EDGE,mipmaps:false});
-  const material=new pc.StandardMaterial();material.useLighting=false;material.emissive=new pc.Color(1,1,1);material.diffuse=new pc.Color(0,0,0);material.emissiveMap=texture;
+  const material=new pc.StandardMaterial();material.useLighting=false;material.useTonemap=false;material.emissive=new pc.Color(1,1,1);material.diffuse=new pc.Color(0,0,0);material.emissiveMap=texture;
   material.opacity=1;material.blendType=pc.BLEND_NORMAL;material.depthWrite=true;material.alphaTest=0;material.cull=pc.CULLFACE_NONE;material.update();
   const entity=new pc.Entity(`CameraScreen_${ctx.id}`),surface=new pc.Entity(`CameraScreenSurface_${ctx.id}`);
   entity.tags.add("camera-screen");

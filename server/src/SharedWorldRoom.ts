@@ -807,11 +807,13 @@ export class SharedWorldRoom extends Room<WorldState> {
   state = new WorldState();
 
   private sharedScreenRelay:SharedScreenRelay|null=null;
+  private sharedCameraRelay:SharedScreenRelay|null=null;
 
   private questVRTeleport:QuestVRTeleport|null=null;
   onCreate(options: { roomCode?: string }) {
     this.questVRTeleport=new QuestVRTeleport(this,()=>this.worldLimit(),client=>this.evaluateProximity(client));
     this.sharedScreenRelay=new SharedScreenRelay(this,client=>this.canEditEnvironment(client,false));
+    this.sharedCameraRelay=new SharedScreenRelay(this,client=>this.canEditEnvironment(client,false),"camera-screen");
     this.registerArtworkTimeline();
     this.roomCode=String(options.roomCode||"ART001").toUpperCase().replace(/[^A-Z0-9_-]/g,"").slice(0,16)||"ART001";
     liveRoomInstances.add(this.roomCode);
@@ -1847,7 +1849,7 @@ export class SharedWorldRoom extends Room<WorldState> {
   // Called only after a consented leave or reconnection failure/timeout.
   onLeave(client: Client, code: number) {
     this.questVRTeleport?.leave(client);
-    this.sharedScreenRelay?.leave(client);
+    this.sharedScreenRelay?.leave(client);this.sharedCameraRelay?.leave(client);
     this.artworkHistories.delete(client.sessionId);
     this.mediaEditScopes.delete(client.sessionId);
     this.leaveProximity(client.sessionId);

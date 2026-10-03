@@ -1,6 +1,6 @@
 import { questVRAirStep } from "./questVRView";
 import { questVRStickDelta, questVRWalk, questVRWalkSurface, questVRSnapTurn, questVRHeading } from "./questVRMovement";
-type Context={app:any;pc:any;camera:any;getRig:()=>any;getRoom:()=>any;getItems:()=>any[];canTeleport:(x:number,z:number)=>boolean;onTeleport:(x:number,z:number)=>void;getMovement?:()=>string;getSpeed?:()=>number;toggleMovement?:()=>void;adjustSpeed?:(direction:number)=>void;getGround?:(x:number,z:number,foot:number)=>number;isBlocked?:(x:number,z:number,foot:number)=>boolean;onWalk?:(x:number,z:number,foot:number)=>void;getFlying?:()=>boolean;toggleFlight?:()=>void;getLight?:()=>boolean;toggleLight?:()=>void};
+type Context={app:any;pc:any;camera:any;getRig:()=>any;getRoom:()=>any;getItems:()=>any[];canTeleport:(x:number,z:number)=>boolean;onTeleport:(x:number,z:number)=>void;getMovement?:()=>string;getSpeed?:()=>number;toggleMovement?:()=>void;adjustSpeed?:(direction:number)=>void;getGround?:(x:number,z:number,foot:number)=>number;isBlocked?:(x:number,z:number,foot:number)=>boolean;onWalk?:(x:number,z:number,foot:number)=>void;getFlying?:()=>boolean;toggleFlight?:()=>void;getLight?:()=>boolean;toggleLight?:()=>void;overlayLayer?:number;isMenuBusy?:()=>boolean;consumeMenuJump?:()=>boolean};
 /** Quest xr-standard controllers; all transforms operate on the XR origin. */
 export function createQuestVRInteraction(ctx:Context){
   const {app,pc,camera}=ctx;
@@ -14,7 +14,7 @@ export function createQuestVRInteraction(ctx:Context){
     marker=new pc.Entity("VR teleport target");marker.addComponent("render",{type:"sphere"});marker.setLocalScale(.22,.025,.22);material=new pc.StandardMaterial();material.diffuse=green;material.emissive=green;material.update();marker.render.meshInstances.forEach((m:any)=>m.material=material);app.root.addChild(marker);marker.enabled=false;
     canvas=document.createElement("canvas");canvas.width=1024;canvas.height=384;texture=new pc.Texture(app.graphicsDevice,{width:1024,height:384,mipmaps:false});texture.setSource(canvas);
     hudMaterial=new pc.StandardMaterial();hudMaterial.useLighting=false;hudMaterial.emissive=new pc.Color(1,1,1);hudMaterial.emissiveMap=texture;hudMaterial.cull=pc.CULLFACE_NONE;hudMaterial.depthWrite=false;hudMaterial.depthTest=false;hudMaterial.update();
-    hud=new pc.Entity("VR controls");hud.addComponent("render",{type:"plane"});hud.render.meshInstances.forEach((m:any)=>m.material=hudMaterial);camera.addChild(hud);hud.setLocalPosition(0,-.28,-1);hud.setLocalEulerAngles(90,0,0);hud.setLocalScale(.9,1,.3375);
+    hud=new pc.Entity("VR controls");hud.addComponent("render",{type:"plane",...(ctx.overlayLayer!==undefined?{layers:[ctx.overlayLayer]}:{})});hud.render.meshInstances.forEach((m:any)=>m.material=hudMaterial);camera.addChild(hud);hud.setLocalPosition(0,-.28,-1);hud.setLocalEulerAngles(90,0,0);hud.setLocalScale(.9,1,.3375);
     message="READY";
     unsubscribe=room.onMessage("vr:teleport:result",(result:any)=>{
       if(!pending||result?.requestId!==pending.id)return;
@@ -42,6 +42,8 @@ export function createQuestVRInteraction(ctx:Context){
   function update(dt:number){
     const rig=ctx.getRig(),next=ctx.getRoom();if(!rig||!next){if(room)clean();return;}if(room!==next){clean();setup(next);}
     if(app.xr.session?.visibilityState&&app.xr.session.visibilityState!=="visible"){left=right=null;leftButtons=[];viewArmed=false;walkArmed=false;airVelocity=0;aiming=false;marker.enabled=false;return;}
+    hud.enabled=!ctx.isMenuBusy?.();
+    if(ctx.isMenuBusy?.()){left=right=null;leftButtons=[];viewArmed=false;walkArmed=false;airVelocity=0;aiming=false;marker.enabled=false;return;}
     if(pending&&performance.now()-pending.at>3000){pending=null;message="TELEPORT TIMEOUT";}
     const sources=app.xr.input?.inputSources??[],l=sources.find((s:any)=>s.handedness==="left"&&s.gamepad),r=sources.find((s:any)=>s.handedness==="right"&&s.gamepad);
     if(l!==left){left=l;leftButtons=(l?.gamepad.buttons??[]).map((b:any)=>!!b.pressed);viewArmed=false;aiming=false;walkArmed=false;leftClick=!!l?.gamepad.buttons[3]?.pressed;}if(r!==right){right=r;turnArmed=false;turnAt=null;speedArmed=false;buttons=(r?.gamepad.buttons??[]).map((b:any)=>!!b.pressed);}
@@ -51,7 +53,7 @@ export function createQuestVRInteraction(ctx:Context){
     if(nextLeftButtons[4]&&!leftButtons[4]&&!pending){ctx.toggleFlight?.();airVelocity=0;aiming=false;}
     if(nextLeftButtons[5]&&!leftButtons[5])ctx.toggleLight?.();
     const flying=ctx.getFlying?.()??false;
-    const jump=viewArmed&&!flying&&!!nextLeftButtons[0]&&!leftButtons[0]&&!pending;
+    const jump=!!ctx.consumeMenuJump?.()||(viewArmed&&!flying&&!!nextLeftButtons[0]&&!leftButtons[0]&&!pending);
     const vertical=viewArmed&&l?(Number(!!nextLeftButtons[0])-Number(!!nextLeftButtons[1])):0;
     leftButtons=nextLeftButtons;
     const clicked=!!l?.gamepad.buttons[3]?.pressed;
@@ -86,7 +88,7 @@ export function createQuestVRInteraction(ctx:Context){
     if(Math.abs(rx)<.25){turnArmed=true;turnAt=null;}
     if(r&&(turnArmed||(turnAt!==null&&performance.now()-turnAt>=350))&&Math.abs(rx)>.65&&!pending){turnArmed=false;turnAt=performance.now();questVRSnapTurn(rig,camera.getPosition().clone(),rx);}
     if(r){const item=pick(r),nextButtons=r.gamepad.buttons.map((b:any)=>!!b.pressed);if(nextButtons[0]&&!buttons[0])action(item,"play");if(nextButtons[1]&&!buttons[1])action(item??selected,"timeline");if(nextButtons[3]&&!buttons[3])action(selected,"stop");buttons=nextButtons;}
-    const label=`${mode==="stick"?`LEFT: MOVE ${speed} m/s`:"LEFT: forward + release = TELEPORT"} | CLICK LEFT: switch mode\nRIGHT: L/R turn | UP/DOWN speed | TRIGGER PLAY | GRIP DO\nLEFT: TRIGGER JUMP/UP | GRIP DOWN | X FLY | Y LIGHT\nFLY ${flying?"ON":"OFF"} | LIGHT ${ctx.getLight?.()?"ON":"OFF"} | HEIGHT ${rig.getPosition().y.toFixed(1)} m\n${selected?.id??"Aim at an artwork"} · ${message}`;
+    const label=`${mode==="stick"?`LEFT: MOVE ${speed} m/s`:"LEFT: forward + release = TELEPORT"} | CLICK LEFT: switch mode\nRIGHT: L/R turn | UP/DOWN speed | TRIGGER PLAY | GRIP DO\nB: MENU | LEFT TRIGGER JUMP/UP | GRIP DOWN | X FLY | Y LIGHT\nFLY ${flying?"ON":"OFF"} | LIGHT ${ctx.getLight?.()?"ON":"OFF"} | HEIGHT ${rig.getPosition().y.toFixed(1)} m\n${selected?.id??"Aim at an artwork"} · ${message}`;
     if(label!==lastLabel){lastLabel=label;const c=canvas.getContext("2d");c.fillStyle="#102030";c.fillRect(0,0,1024,384);c.fillStyle="white";c.font="23px sans-serif";label.split("\n").forEach((line,i)=>c.fillText(line.slice(0,85),20,45+i*68));texture.upload();}
   }
   app.on("update",update);return {dispose:()=>{app.off("update",update);clean();}};

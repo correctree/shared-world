@@ -1,3 +1,4 @@
+import { createQuestVRMenu } from "./questVRMenu";
 import { createQuestVRFlashlight } from "./questVRView";
 import { questVRHeading } from "./questVRMovement";
 import { createQuestVRInteraction } from "./questVRInteraction";
@@ -33,7 +34,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.30.6 BROWSER SCREEN LOADED]");
+console.log("[PROTOTYPE 0.30.7 BROWSER SCREEN LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1111,7 +1112,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList,#roomManager #archivedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.6</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.7</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -5920,7 +5921,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.6</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.7</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -7547,7 +7548,11 @@ questVRUI=createQuestVRUI({app,pc,camera,getRoom:()=>activeRoom,available:()=>!d
     if(cameraPointerId!==null&&canvas.hasPointerCapture(cameraPointerId))canvas.releasePointerCapture(cameraPointerId);
     cameraDragging=false;cameraPointerId=null;}
 });
-createQuestVRInteraction({app,pc,camera,getRig:()=>questVRUI?.getRig(),getRoom:()=>activeRoom,
+const questVRMenu=createQuestVRMenu({app,pc,camera,active:()=>questVRUI?.isActive()??false,getRoom:()=>activeRoom,host:questVRUI.element,
+  getMovement:()=>questVRUI?.getMovement()??"stick",toggleMovement:()=>questVRUI?.toggleMovement(),getSpeed:()=>questVRUI?.getSpeed()??1.2,adjustSpeed:d=>questVRUI?.adjustSpeed(d),
+  getFlying:()=>flying,toggleFlight:()=>setFlightMode(!flying),getLight:()=>avatars.get(currentSessionId)?.flashlightOn??false,toggleLight:toggleLocalFlashlight,stop:()=>questVRUI?.stop()
+});
+createQuestVRInteraction({app,pc,camera,overlayLayer:questVRMenu.overlayLayer,isMenuBusy:()=>questVRMenu.isBusy(),consumeMenuJump:()=>questVRMenu.consumeJump(),getRig:()=>questVRUI?.getRig(),getRoom:()=>activeRoom,
   getItems:()=>Array.from(managedPlacedMedia.values()),
   getMovement:()=>questVRUI?.getMovement()??"stick",getSpeed:()=>questVRUI?.getSpeed()??1.2,toggleMovement:()=>questVRUI?.toggleMovement(),adjustSpeed:(direction)=>questVRUI?.adjustSpeed(direction),
   getFlying:()=>flying,toggleFlight:()=>setFlightMode(!flying),getLight:()=>avatars.get(currentSessionId)?.flashlightOn??false,toggleLight:toggleLocalFlashlight,
@@ -7575,7 +7580,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.6</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.7</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

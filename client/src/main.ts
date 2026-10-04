@@ -35,7 +35,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.30.9 BROWSER SCREEN LOADED]");
+console.log("[PROTOTYPE 0.30.10 BROWSER SCREEN LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -279,10 +279,10 @@ if (!audioArtworkMode && glbArtworkMode) {
 }
 const audioSettingsPanel = document.createElement("section");
 audioSettingsPanel.id = "audioSettingsPanel"; audioSettingsPanel.style.cssText = "display:none;margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.18);border-radius:10px";
-audioSettingsPanel.innerHTML = `<div style="font-size:11px;font-weight:800;letter-spacing:.1em;margin-bottom:8px">AUDIO SETTINGS</div>
+audioSettingsPanel.innerHTML = `<div style="font-size:11px;font-weight:800;letter-spacing:.1em;margin-bottom:8px">AUDIO SETTINGS · AUTO PLAY / LOOP / INVISIBLE</div>
 <label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Volume <input id="audioVolume" type="range" min="0" max="1" step="0.05" value="0.8"></label>
 <label style="display:flex;gap:8px;margin:8px 0"><input id="audioLoop" type="checkbox" checked> LOOP</label>
-<label style="display:flex;gap:8px;margin:8px 0;align-items:center"><input id="audioSpatial" type="checkbox" checked> SPATIAL AUDIO <strong id="audioSpatialState" style="margin-left:auto">ON</strong></label>
+<label style="display:flex;gap:8px;margin:8px 0;align-items:center"><input id="audioSpatial" type="checkbox"> SPATIAL AUDIO <strong id="audioSpatialState" style="margin-left:auto">ON</strong></label>
 <label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Distance <input id="audioDistance" type="range" min="2" max="30" step="1" value="12"></label>
 <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.15);font-size:10px;font-weight:800;letter-spacing:.1em;opacity:.75">AUDIO REACTIVE</div>
 <label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Action <select id="audioReactiveAction"><option value="off">OFF</option><option value="scale">SCALE</option><option value="shake">SHAKE</option><option value="rotate">ROTATE</option></select></label>
@@ -290,7 +290,7 @@ audioSettingsPanel.innerHTML = `<div style="font-size:11px;font-weight:800;lette
 <label style="display:grid;grid-template-columns:80px 1fr;gap:8px;margin:8px 0">Smoothing <input id="audioReactiveSmoothing" type="range" min="0" max="0.95" step="0.05" value="0.7"></label>`;
 addArtworkPanel?.appendChild(audioSettingsPanel);
 const audioVolume = audioSettingsPanel.querySelector<HTMLInputElement>("#audioVolume")!;
-const audioLoop = audioSettingsPanel.querySelector<HTMLInputElement>("#audioLoop")!;
+const audioLoop = audioSettingsPanel.querySelector<HTMLInputElement>("#audioLoop")!;audioLoop.checked=true;audioLoop.disabled=true;
 const audioSpatial = audioSettingsPanel.querySelector<HTMLInputElement>("#audioSpatial")!;
 const audioSpatialState = audioSettingsPanel.querySelector<HTMLElement>("#audioSpatialState")!;
 const audioDistance = audioSettingsPanel.querySelector<HTMLInputElement>("#audioDistance")!;
@@ -1113,7 +1113,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList,#roomManager #archivedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.9</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.10</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -3517,11 +3517,10 @@ function audioConfigFromRef(ref:string):XRAudioConfig{
   catch { return {volume:.8,loop:true,spatial:true,distance:12,reactive:"off",strength:1,smoothing:.7}; }
 }
 function makeAudioMarker(name:string){
-  const e=new pc.Entity(name); e.addComponent("render",{type:"sphere"}); e.setLocalScale(.34,.34,.34);
-  const m=new pc.StandardMaterial(); m.diffuse=new pc.Color(.15,.55,1); m.emissive=new pc.Color(.03,.12,.3); m.update(); e.render!.material=m; app.root.addChild(e); return e;
+  const e=new pc.Entity(name); e.setLocalScale(.34,.34,.34); app.root.addChild(e); return e;
 }
 function configureSpatialAudioElement(id:string, el:HTMLAudioElement, entity:pc.Entity, cfg:XRAudioConfig){
-  el.loop=cfg.loop; el.volume=cfg.volume; el.preload="auto"; audioElements.set(id,el);
+  el.loop=true; el.volume=cfg.volume; el.preload="auto"; audioElements.set(id,el);
   (el as any).__xrSpatial=cfg.spatial; (el as any).__xrDistance=cfg.distance; (el as any).__xrEntity=entity; (el as any).__xrBaseVolume=cfg.volume;
   (el as any).__xrReactiveAction=cfg.reactive; (el as any).__xrReactiveStrength=cfg.strength; (el as any).__xrReactiveSmoothing=cfg.smoothing; (el as any).__xrReactiveLevel=0;
 }
@@ -3531,7 +3530,7 @@ function configureSpatialAudioElement(id:string, el:HTMLAudioElement, entity:pc.
 function applyLiveAudioConfig(mediaId:string, assetRef:string){
   const el=audioElements.get(mediaId); if(!el)return false;
   const cfg=audioConfigFromRef(assetRef); const a=el as any; const item=managedPlacedMedia.get(mediaId);
-  a.__xrBaseVolume=cfg.volume; el.loop=cfg.loop; a.__xrSpatial=cfg.spatial; a.__xrDistance=cfg.distance;
+  a.__xrBaseVolume=cfg.volume; el.loop=true; a.__xrSpatial=cfg.spatial; a.__xrDistance=cfg.distance;
   a.__xrReactiveAction=cfg.reactive; a.__xrReactiveStrength=cfg.strength; a.__xrReactiveSmoothing=cfg.smoothing;
   a.__xrReactiveRotation=0; a.__xrReactiveLevel=0;
   if(item?.entity){
@@ -3545,28 +3544,68 @@ function ensureAudioAnalyser(el:HTMLAudioElement){
   const a=el as any; if(a.__xrAnalyser) return a.__xrAnalyser as AnalyserNode;
   try{
     const Ctx=(window.AudioContext || (window as any).webkitAudioContext); if(!Ctx)return null;
-    const ctx:AudioContext=new Ctx(); const source=ctx.createMediaElementSource(el); const analyser=ctx.createAnalyser();
+    const ctx=getRoomAudioContext(); if(!ctx)return null; const source=ctx.createMediaElementSource(el); const analyser=ctx.createAnalyser();
     // 0.16.1.2: one stable WebAudio graph for every reactive action.
     // SCALE / SHAKE / ROTATE only read analyser data; they never replace or disconnect the audible route.
     analyser.fftSize=256; analyser.smoothingTimeConstant=0; source.connect(analyser); analyser.connect(ctx.destination);
-    a.__xrAudioContext=ctx; a.__xrAnalyser=analyser; a.__xrAnalyserData=new Uint8Array(analyser.fftSize); return analyser;
+    a.__xrAudioSource=source; a.__xrAudioContext=ctx; a.__xrAnalyser=analyser; a.__xrAnalyserData=new Uint8Array(analyser.fftSize); return analyser;
   }catch(e){console.warn("[AUDIO ANALYSER ERROR]",e);return null}
 }
-async function playXRAudio(el:HTMLAudioElement, mediaId:string){
-  const analyser=ensureAudioAnalyser(el); const ctx=(el as any).__xrAudioContext as AudioContext|undefined;
+// ROOM audio starts after loading, independently of interactive transport actions.
+let roomAudioContext:AudioContext|null=null;
+const pendingRoomAudio=new Set<HTMLAudioElement>();
+const roomAudioUnlockButton=document.createElement("button");
+roomAudioUnlockButton.type="button";roomAudioUnlockButton.textContent="ENABLE ROOM AUDIO · 音を再生";roomAudioUnlockButton.hidden=true;
+roomAudioUnlockButton.style.cssText="position:fixed;right:12px;top:80px;z-index:9999;padding:12px;background:#000;color:#fff;border:1px solid #fff;border-radius:8px";
+document.body.appendChild(roomAudioUnlockButton);
+function getRoomAudioContext(){
+  const Ctx=window.AudioContext||(window as any).webkitAudioContext;
+  if(!Ctx)return null;
+  if(!roomAudioContext||roomAudioContext.state==="closed")roomAudioContext=new Ctx();
+  return roomAudioContext;
+}
+function refreshRoomAudioUnlock(){roomAudioUnlockButton.hidden=!activeRoom||pendingRoomAudio.size===0;}
+function disposeRoomAudio(el:HTMLAudioElement){
+  const a=el as any;a.__xrDisposed=true;a.__xrRoomAudio=false;pendingRoomAudio.delete(el);
+  if(a.__xrReadyHandler){el.removeEventListener("canplay",a.__xrReadyHandler);a.__xrReadyHandler=null;}
+  el.pause();try{el.currentTime=0;}catch{}
+  try{a.__xrAudioSource?.disconnect();a.__xrAnalyser?.disconnect();}catch{}
+  a.__xrAudioSource=null;a.__xrAnalyser=null;a.__xrAnalyserData=null;
+  refreshRoomAudioUnlock();
+}
+async function playXRAudio(el:HTMLAudioElement,mediaId:string){
+  const a=el as any;if(a.__xrDisposed||a.__xrPlayPending)return;
+  const analyser=ensureAudioAnalyser(el),ctx=a.__xrAudioContext as AudioContext|undefined;
+  a.__xrPlayPending=true;
   try{
-    if(ctx?.state==="suspended") await ctx.resume();
-    const a=el as any;
-    // Restore the configured base volume before every PLAY. Spatial attenuation will
-    // immediately refine it on the next frame. This prevents an old zero-volume
-    // attenuation state from making a newly selected SHAKE / ROTATE action silent.
+    el.loop=true;
     el.volume=Math.max(0,Math.min(1,Number(a.__xrBaseVolume??el.volume??.8)));
     const entity=a.__xrEntity as pc.Entity|undefined;
-    if(entity && !a.__xrReactiveBase) a.__xrReactiveBase={position:entity.getPosition().clone(),euler:entity.getEulerAngles().clone(),scale:entity.getLocalScale().clone()};
-    await el.play();
-    console.log("[AUDIO PLAY]",mediaId,{analyser:!!analyser,reactive:a.__xrReactiveAction,volume:el.volume});
-  }catch(e){console.warn("[AUDIO PLAY BLOCKED]",e)}
+    if(entity&&!a.__xrReactiveBase)a.__xrReactiveBase={position:entity.getPosition().clone(),euler:entity.getEulerAngles().clone(),scale:entity.getLocalScale().clone()};
+    // Start both calls within the gesture; awaiting resume first loses activation.
+    const resumed=ctx?.state==="suspended"?ctx.resume():Promise.resolve();
+    await Promise.all([resumed,el.play()]);
+    if(a.__xrDisposed||(a.__xrRoomAudio&&(!activeRoom||!Array.from(audioElements.values()).includes(el)))){el.pause();return;}
+    pendingRoomAudio.delete(el);
+    console.log("[ROOM AUDIO PLAY]",mediaId,{analyser:!!analyser});
+  }catch(error){
+    if(a.__xrRoomAudio&&activeRoom&&Array.from(audioElements.values()).includes(el))pendingRoomAudio.add(el);
+    console.warn("[ROOM AUDIO WAITING FOR GESTURE]",mediaId,error);
+  }finally{a.__xrPlayPending=false;refreshRoomAudioUnlock();}
 }
+function startRoomAudio(el:HTMLAudioElement,mediaId:string){
+  const a=el as any;a.__xrRoomAudio=true;el.loop=true;
+  if(!a.__xrReadyHandler){a.__xrReadyHandler=()=>{if(a.__xrRoomAudio&&!a.__xrDisposed&&el.paused)void playXRAudio(el,mediaId);};el.addEventListener("canplay",a.__xrReadyHandler);}
+  void playXRAudio(el,mediaId);
+}
+function unlockRoomAudio(){
+  // Unlock one shared context before assets finish downloading after entry.
+  const ctx=getRoomAudioContext();if(ctx?.state==="suspended")void ctx.resume().catch(()=>{});
+  for(const [id,el] of audioElements)if((el as any).__xrRoomAudio&&(el.paused||pendingRoomAudio.has(el)))void playXRAudio(el,id);
+}
+roomAudioUnlockButton.addEventListener("click",unlockRoomAudio);
+for(const event of ["pointerdown","touchend","keydown"])document.addEventListener(event,unlockRoomAudio,{capture:true});
+function roomAudioStop(el:HTMLAudioElement){if(!(el as any).__xrRoomAudio){el.pause();el.currentTime=0;}}
 async function createSharedAudioFromAsset(mediaId:string, media:any){
   if(managedPlacedMedia.has(mediaId)||sharedMediaLoadingIds.has(mediaId)) return;
   sharedMediaLoadingIds.add(mediaId); const gen=bumpSharedMediaGeneration(mediaId); const ref=String(media.assetRef||"");
@@ -3576,14 +3615,15 @@ async function createSharedAudioFromAsset(mediaId:string, media:any){
     const url=URL.createObjectURL(blob); const el=new Audio(url); const cfg=audioConfigFromRef(ref); const entity=makeAudioMarker(`SharedAudio_${mediaId}`);
     entity.setPosition(Number(media.x),Number(media.y),Number(media.z)); entity.setEulerAngles(Number(media.rotationX)||0,Number(media.rotationY)||0,Number(media.rotationZ)||0); entity.setLocalScale(Number(media.scale)||1,Number(media.scale)||1,Number(media.scale)||1);
     configureSpatialAudioElement(mediaId,el,entity,cfg);
-    const remote=createMediaObject({title:media.title||"Audio",type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{await playXRAudio(el,mediaId)},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:true}]});
+    const remote=createMediaObject({title:media.title||"Audio",type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{await playXRAudio(el,mediaId)},stop:()=>roomAudioStop(el),setLoop:(_v:boolean)=>{el.loop=true}},behavior:[]});
     (remote as any).id=mediaId; xrMediaManager.register(remote as any); managedPlacedMedia.set(mediaId,{id:mediaId,title:`${media.title||"Audio"} [SHARED]`,kind:"audio",entity}); sharedRemoteMediaIds.add(mediaId);
-    placedMediaRuntimes.push({id:mediaId,dispose:()=>{el.pause();audioElements.delete(mediaId);URL.revokeObjectURL(url);if(entity.parent)entity.destroy()}}); sharedMediaLoadingIds.delete(mediaId); refreshMediaManagerUI();
+    startRoomAudio(el,mediaId);
+    placedMediaRuntimes.push({id:mediaId,dispose:()=>{disposeRoomAudio(el);audioElements.delete(mediaId);URL.revokeObjectURL(url);if(entity.parent)entity.destroy()}}); sharedMediaLoadingIds.delete(mediaId); refreshMediaManagerUI();
   }catch(e){sharedMediaLoadingIds.delete(mediaId);console.error("[SHARED AUDIO LOAD ERROR]",mediaId,e)}
 }
 async function publishCommittedAudioToSharedWorld(mediaId:string, blob:Blob|null, ext:"mp3"|"wav"){
   if(!activeRoom||!blob)return; const item=managedPlacedMedia.get(mediaId), media=xrMediaManager.get(mediaId); if(!item||!media)return;
-  const cfg:XRAudioConfig={volume:Number(audioVolume.value),loop:audioLoop.checked,spatial:audioSpatial.checked,distance:Number(audioDistance.value),reactive:audioReactiveAction.value as AudioReactiveAction,strength:Number(audioReactiveStrength.value),smoothing:Number(audioReactiveSmoothing.value)};
+  const cfg:XRAudioConfig={volume:Number(audioVolume.value),loop:true,spatial:audioSpatial.checked,distance:Number(audioDistance.value),reactive:audioReactiveAction.value as AudioReactiveAction,strength:Number(audioReactiveStrength.value),smoothing:Number(audioReactiveSmoothing.value)};
   const base=sharedAssetURL(mediaId,ext); const up=await fetch(base,{method:"PUT",headers:{"Content-Type":ext==="mp3"?"audio/mpeg":"audio/wav"},body:blob}); if(!up.ok)throw new Error(`Audio upload HTTP ${up.status}`);
   const ref=`${base}?volume=${cfg.volume}&loop=${cfg.loop?1:0}&spatial=${cfg.spatial?1:0}&distance=${cfg.distance}&reactive=${cfg.reactive}&strength=${cfg.strength}&smoothing=${cfg.smoothing}`; const pos=item.entity.getPosition(), rot=item.entity.getEulerAngles(), sc=item.entity.getLocalScale();
   activeRoom.send("media:add",{id:mediaId,title:media.title||"Audio",type:"audio",assetRef:ref,x:pos.x,y:pos.y,z:pos.z,rotationX:rot.x,rotationY:rot.y,rotationZ:rot.z,scale:sc.x});
@@ -5925,7 +5965,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.9</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.10</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -6241,7 +6281,7 @@ environmentEditor.querySelector<HTMLButtonElement>("[data-fog-demo]")!.addEventL
 const managedAudioEditPanel = document.createElement("section");
 managedAudioEditPanel.id = "managedAudioEditPanel";
 managedAudioEditPanel.className = "hidden";
-managedAudioEditPanel.innerHTML = `<div class="managed-audio-edit-title">AUDIO SETTINGS</div>
+managedAudioEditPanel.innerHTML = `<div class="managed-audio-edit-title">AUDIO SETTINGS · AUTO PLAY / LOOP / INVISIBLE</div>
 <label class="managed-audio-row"><span>Volume</span><input id="managedAudioVolume" type="range" min="0" max="1" step="0.05" value="0.8"></label>
 <label class="managed-audio-check"><input id="managedAudioLoop" type="checkbox"> LOOP</label>
 <label class="managed-audio-check"><input id="managedAudioSpatial" type="checkbox"> SPATIAL AUDIO <strong id="managedAudioSpatialState">ON</strong></label>
@@ -6253,7 +6293,7 @@ managedAudioEditPanel.innerHTML = `<div class="managed-audio-edit-title">AUDIO S
 <div class="managed-audio-edit-actions"><button id="managedAudioApply" type="button">APPLY</button><button id="managedAudioCancel" type="button">CANCEL</button></div>`;
 mediaManagerPanel.insertBefore(managedAudioEditPanel, mediaManagerList);
 const managedAudioVolume=managedAudioEditPanel.querySelector<HTMLInputElement>("#managedAudioVolume")!;
-const managedAudioLoop=managedAudioEditPanel.querySelector<HTMLInputElement>("#managedAudioLoop")!;
+const managedAudioLoop=managedAudioEditPanel.querySelector<HTMLInputElement>("#managedAudioLoop")!;managedAudioLoop.checked=true;managedAudioLoop.disabled=true;
 const managedAudioSpatial=managedAudioEditPanel.querySelector<HTMLInputElement>("#managedAudioSpatial")!;
 const managedAudioSpatialState=managedAudioEditPanel.querySelector<HTMLElement>("#managedAudioSpatialState")!;
 const managedAudioDistance=managedAudioEditPanel.querySelector<HTMLInputElement>("#managedAudioDistance")!;
@@ -6266,7 +6306,7 @@ function refreshManagedAudioSpatialUI(){managedAudioSpatialState.textContent=man
 managedAudioSpatial.addEventListener("change",refreshManagedAudioSpatialUI);
 function currentAudioAssetRef(id:string){const map:any=getAuthoritativeMediaMap();try{return String(map?.get?.(id)?.assetRef||"");}catch{return "";}}
 function openManagedAudioEditor(id:string){const el=audioElements.get(id);if(!el)return;const a=el as any;managedAudioVolume.value=String(Number(a.__xrBaseVolume??.8));managedAudioLoop.checked=!!el.loop;managedAudioSpatial.checked=!!a.__xrSpatial;managedAudioDistance.value=String(Number(a.__xrDistance??12));managedAudioReactiveAction.value=String(a.__xrReactiveAction||"off");managedAudioReactiveStrength.value=String(Number(a.__xrReactiveStrength??1));managedAudioReactiveSmoothing.value=String(Number(a.__xrReactiveSmoothing??.7));refreshManagedAudioSpatialUI();managedAudioEditPanel.classList.remove("hidden");const section=managedAudioEditPanel.closest<HTMLDetailsElement>("details");if(section)section.open=true;managedAudioEditPanel.scrollIntoView({block:"start",behavior:"smooth"});}
-function applyManagedAudioConfig(id:string){const el=audioElements.get(id);const item=managedPlacedMedia.get(id);if(!el||!item)return;const a=el as any;a.__xrBaseVolume=Number(managedAudioVolume.value);el.loop=managedAudioLoop.checked;a.__xrSpatial=managedAudioSpatial.checked;a.__xrDistance=Number(managedAudioDistance.value);a.__xrReactiveAction=managedAudioReactiveAction.value as AudioReactiveAction;a.__xrReactiveStrength=Number(managedAudioReactiveStrength.value);a.__xrReactiveSmoothing=Number(managedAudioReactiveSmoothing.value);a.__xrReactiveRotation=0;a.__xrReactiveLevel=0;if(a.__xrReactiveBase){const b=a.__xrReactiveBase;item.entity.setPosition(b.position);item.entity.setEulerAngles(b.euler);item.entity.setLocalScale(b.scale);}a.__xrReactiveBase={position:item.entity.getPosition().clone(),euler:item.entity.getEulerAngles().clone(),scale:item.entity.getLocalScale().clone()};el.volume=Number(managedAudioVolume.value);const oldRef=currentAudioAssetRef(id);if(activeRoom&&oldRef){const u=new URL(oldRef,window.location.href);u.searchParams.set("volume",managedAudioVolume.value);u.searchParams.set("loop",managedAudioLoop.checked?"1":"0");u.searchParams.set("spatial",managedAudioSpatial.checked?"1":"0");u.searchParams.set("distance",managedAudioDistance.value);u.searchParams.set("reactive",managedAudioReactiveAction.value);u.searchParams.set("strength",managedAudioReactiveStrength.value);u.searchParams.set("smoothing",managedAudioReactiveSmoothing.value);const p=item.entity.getPosition(),r=item.entity.getEulerAngles(),sc=item.entity.getLocalScale();activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:sc.x,assetRef:u.toString()});}activeRoom?.send("history:media:commit",{id});editingManagedMediaId=null;managedAudioEditPanel.classList.add("hidden");console.log("[0.25.0 AUDIO CONFIG APPLIED / HISTORY COMMITTED]",id);}
+function applyManagedAudioConfig(id:string){const el=audioElements.get(id);const item=managedPlacedMedia.get(id);if(!el||!item)return;const a=el as any;a.__xrBaseVolume=Number(managedAudioVolume.value);el.loop=true;a.__xrSpatial=managedAudioSpatial.checked;a.__xrDistance=Number(managedAudioDistance.value);a.__xrReactiveAction=managedAudioReactiveAction.value as AudioReactiveAction;a.__xrReactiveStrength=Number(managedAudioReactiveStrength.value);a.__xrReactiveSmoothing=Number(managedAudioReactiveSmoothing.value);a.__xrReactiveRotation=0;a.__xrReactiveLevel=0;if(a.__xrReactiveBase){const b=a.__xrReactiveBase;item.entity.setPosition(b.position);item.entity.setEulerAngles(b.euler);item.entity.setLocalScale(b.scale);}a.__xrReactiveBase={position:item.entity.getPosition().clone(),euler:item.entity.getEulerAngles().clone(),scale:item.entity.getLocalScale().clone()};el.volume=Number(managedAudioVolume.value);const oldRef=currentAudioAssetRef(id);if(activeRoom&&oldRef){const u=new URL(oldRef,window.location.href);u.searchParams.set("volume",managedAudioVolume.value);u.searchParams.set("loop","1");u.searchParams.set("spatial",managedAudioSpatial.checked?"1":"0");u.searchParams.set("distance",managedAudioDistance.value);u.searchParams.set("reactive",managedAudioReactiveAction.value);u.searchParams.set("strength",managedAudioReactiveStrength.value);u.searchParams.set("smoothing",managedAudioReactiveSmoothing.value);const p=item.entity.getPosition(),r=item.entity.getEulerAngles(),sc=item.entity.getLocalScale();activeRoom.send("media:update",{id,x:p.x,y:p.y,z:p.z,rotationX:r.x,rotationY:r.y,rotationZ:r.z,scale:sc.x,assetRef:u.toString()});}activeRoom?.send("history:media:commit",{id});editingManagedMediaId=null;managedAudioEditPanel.classList.add("hidden");console.log("[0.25.0 AUDIO CONFIG APPLIED / HISTORY COMMITTED]",id);}
 managedAudioApply.addEventListener("click",()=>{if(selectedManagedMediaId)applyManagedAudioConfig(selectedManagedMediaId);});
 managedAudioCancel.addEventListener("click",()=>{const id=editingManagedMediaId;if(id)activeRoom?.send("history:media:cancel",{id});editingManagedMediaId=null;managedAudioEditPanel.classList.add("hidden");});
 
@@ -7320,7 +7360,7 @@ function deleteManagedMedia(id: string) {
     if (el) {
       try { el.pause(); el.currentTime = 0; } catch {}
       const a = el as any;
-      try { a.__xrAudioContext?.close?.(); } catch {}
+      disposeRoomAudio(el);
       a.__xrAnalyser = null;
       a.__xrAnalyserData = null;
       a.__xrReactiveBase = null;
@@ -7592,7 +7632,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.9</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.10</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>
@@ -8159,8 +8199,8 @@ function commitActiveArtworkToWorld() {
 
   if (importedArtworkKind === "audio") {
     const el=importedAudioElement, url=importedArtworkObjectURL;
-    if(el){ audioElements.delete("preview-audio"); audioElements.set(committedId,el); (el as any).__xrEntity=importedArtworkEntity; }
-    placedMediaRuntimes.push({id:committedId,dispose:()=>{el?.pause();audioElements.delete(committedId);if(url)URL.revokeObjectURL(url)}});
+    if(el){ audioElements.delete("preview-audio"); audioElements.set(committedId,el); (el as any).__xrEntity=importedArtworkEntity;startRoomAudio(el,committedId); }
+    placedMediaRuntimes.push({id:committedId,dispose:()=>{if(el)disposeRoomAudio(el);audioElements.delete(committedId);if(url)URL.revokeObjectURL(url)}});
   }
 
   const committedMedia = xrMediaManager.get(committedId);
@@ -8225,6 +8265,7 @@ function commitActiveArtworkToWorld() {
 }
 
 function clearImportedArtwork() {
+  if(importedAudioElement){disposeRoomAudio(importedAudioElement);audioElements.delete("preview-audio");importedAudioElement=null;importedAudioBlob=null;}
   if (activeXRMediaId) {
     xrMediaManager.unregister(activeXRMediaId);
     activeXRMediaId = null;
@@ -8994,10 +9035,11 @@ cancelPlacementButton?.addEventListener("click", () => {
 
 // Prototype 0.16.0 / LOCAL AUDIO IMPORT
 async function addAudioArtworkToWorld(file:File){
+  clearImportedArtwork();
   importedAudioBlob=file; importedAudioExt=file.name.toLowerCase().endsWith(".wav")?"wav":"mp3"; const url=URL.createObjectURL(file); const el=new Audio(url);
   const entity=makeAudioMarker("ImportedAudioArtwork"); entity.setPosition(0,1.2,-3); app.root.addChild(entity); importedArtworkEntity=entity; importedArtworkKind="audio"; importedAudioElement=el; importedArtworkObjectURL=url;
-  configureSpatialAudioElement("preview-audio",el,entity,{volume:Number(audioVolume.value),loop:audioLoop.checked,spatial:audioSpatial.checked,distance:Number(audioDistance.value),reactive:audioReactiveAction.value as AudioReactiveAction,strength:Number(audioReactiveStrength.value),smoothing:Number(audioReactiveSmoothing.value)});
-  const media=xrMediaManager.register(createMediaObject({title:file.name,type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{el.volume=Number(audioVolume.value);el.loop=audioLoop.checked;await playXRAudio(el,"preview-audio")},stop:()=>{el.pause();el.currentTime=0},setLoop:(v:boolean)=>{el.loop=v}},behavior:[{id:"proximity-play",trigger:"user-proximity",distance:3,enterAction:"play",leaveAction:"stop",enabled:true}]})); activeXRMediaId=media.id;
+  configureSpatialAudioElement("preview-audio",el,entity,{volume:Number(audioVolume.value),loop:true,spatial:audioSpatial.checked,distance:Number(audioDistance.value),reactive:audioReactiveAction.value as AudioReactiveAction,strength:Number(audioReactiveStrength.value),smoothing:Number(audioReactiveSmoothing.value)});
+  const media=xrMediaManager.register(createMediaObject({title:file.name,type:"audio" as any,entity,playable:true,animated:false,playback:{play:async()=>{el.volume=Number(audioVolume.value);el.loop=true;await playXRAudio(el,"preview-audio")},stop:()=>roomAudioStop(el),setLoop:(_v:boolean)=>{el.loop=true}},behavior:[]})); activeXRMediaId=media.id;
 }
 
 // =========================================================
@@ -9247,6 +9289,7 @@ function updateTransformAnimations(dt: number) {
 
 function runXRBehaviorAction(object: any, action: string | undefined, params?: XRTransformActionParams) {
   const actionId = String(action || "none") as XRBehaviorActionId;
+  if(String(object?.type)==="audio"&&(actionId==="play"||actionId==="stop"))return;
   switch (actionId) {
     case "play": void object.playback?.play(); break;
     case "stop": object.playback?.stop(); break;
@@ -9271,6 +9314,7 @@ function runXRBehaviorAction(object: any, action: string | undefined, params?: X
 function dispatchSharedXRBehaviorAction(object: any, action: string | undefined, source: string) {
   const actionId = String(action || "none") as XRBehaviorActionId;
   if (!object?.id || actionId === "none") return;
+  if(String(object.type)==="audio")return;
 
   const behavior = object.behavior?.[0];
   const params = getBehaviorTransformParams(behavior);
@@ -9299,6 +9343,7 @@ const sharedProximityState = new Map<string, boolean>();
 const proximityEnterLatched = new Map<string, boolean>();
 function updateSharedProximityBehaviors() {
   for (const object of xrMediaManager.list()) {
+    if(String(object.type)==="audio")continue;
     const behavior = object.behavior?.find(
       (item: any) => (item as any).trigger === "user-proximity" && item.enabled
     );
@@ -9352,6 +9397,7 @@ function updateLookAtBehaviors() {
   const cameraPosition = camera.getPosition();
 
   for (const object of xrMediaManager.list()) {
+    if(String(object.type)==="audio")continue;
     const behavior = object.behavior?.find(
       (item: any) => (item as any).trigger === "look-at" && item.enabled
     );
@@ -9426,6 +9472,7 @@ function findTouchedMediaObject(clientX: number, clientY: number) {
   // Browser-native fallback hit test using a bounding sphere around each media entity.
   // This avoids adding a physics dependency and can later be replaced by WebXR hit-test/controller rays.
   for (const object of xrMediaManager.list()) {
+    if(String(object.type)==="audio")continue;
     const behavior = object.behavior?.find(
       (item: any) => (item as any).trigger === "touch" && item.enabled
     );
@@ -9456,6 +9503,7 @@ const touchActiveState = new Map<string, boolean>();
 
 function initializeTouchBehaviorPlayback() {
   for (const object of xrMediaManager.list()) {
+    if(String(object.type)==="audio")continue;
     const behavior = object.behavior?.find(
       (item: any) => (item as any).trigger === "touch" && item.enabled
     );

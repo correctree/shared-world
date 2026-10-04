@@ -1,3 +1,34 @@
+// Pinhole planar-pose fallback from the detector's ordered square vertices.
+export function markerPoseFromCorners(vertices:number[][], direction:number, width:number, projection:ArrayLike<number>, imageWidth:number, imageHeight:number) {
+  const fx=Math.abs(projection[0])*imageWidth/2,fy=Math.abs(projection[5])*imageHeight/2;
+  const cx=(1-projection[8])*imageWidth/2,cy=(1+projection[9])*imageHeight/2;
+  if(!vertices||vertices.length!==4||!fx||!fy)return null;
+  const h=width/2,local=[[-h,-h],[-h,h],[h,h],[h,-h]],rows:number[][]=[];
+  for(let i=0;i<4;i++) {
+    const point=vertices[(i+4-(direction||0))%4],X=local[i][0],Y=local[i][1];
+    const u=(point[0]-cx)/fx,v=(point[1]-cy)/fy;
+    rows.push([X,Y,1,0,0,0,-u*X,-u*Y,u],[0,0,0,X,Y,1,-v*X,-v*Y,v]);
+  }
+  for(let c=0;c<8;c++) {
+    let pivot=c;for(let r=c+1;r<8;r++)if(Math.abs(rows[r][c])>Math.abs(rows[pivot][c]))pivot=r;
+    if(Math.abs(rows[pivot][c])<1e-10)return null;
+    [rows[c],rows[pivot]]=[rows[pivot],rows[c]];const divisor=rows[c][c];
+    for(let j=c;j<9;j++)rows[c][j]/=divisor;
+    for(let r=0;r<8;r++)if(r!==c){const factor=rows[r][c];for(let j=c;j<9;j++)rows[r][j]-=factor*rows[c][j];}
+  }
+  const H=rows.map(r=>r[8]);let a=[H[0],H[3],H[6]],b=[H[1],H[4],H[7]],t=[H[2],H[5],1];
+  const dot=(a:number[],b:number[])=>a.reduce((n,v,i)=>n+v*b[i],0);
+  const length=(a:number[])=>Math.sqrt(dot(a,a));const norm=(a:number[])=>{const n=length(a);return a.map(v=>v/n);};
+  const factor=2/(length(a)+length(b));t=t.map(v=>v*factor);a=norm(a);
+  const ab=dot(a,b);b=norm(b.map((v,i)=>v-ab*a[i]));const z=[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+  const raw=Float64Array.from([a[0],b[0],z[0],t[0],a[1],b[1],z[1],t[1],a[2],b[2],z[2],t[2]]);
+  return Array.from(raw).every(Number.isFinite)&&raw[11]>0?raw:null;
+}
+export function validMarkerPose(raw:ArrayLike<number>) {
+  if(!raw||raw.length!==12||!Array.from(raw).every(Number.isFinite)||raw[11]<=0)return false;
+  const det=raw[0]*(raw[5]*raw[10]-raw[6]*raw[9])-raw[1]*(raw[4]*raw[10]-raw[6]*raw[8])+raw[2]*(raw[4]*raw[9]-raw[5]*raw[8]);
+  return det>.5&&det<1.5;
+}
 // Explicit row-major 3x4 CV pose -> column-major 4x4. Avoid getMarker event axis ambiguity.
 export function markerPoseMatrix(raw:ArrayLike<number>) {
   return Float64Array.from([raw[0],raw[4],raw[8],0,raw[1],raw[5],raw[9],0,raw[2],raw[6],raw[10],0,raw[3],raw[7],raw[11],1]);
@@ -16,7 +47,7 @@ export function markerCameraMatrix(pc:any, raw:ArrayLike<number>, origin:any, sc
   const flip=new pc.Mat4().setFromEulerAngles(180,0,0);
   const ground=new pc.Mat4().setFromEulerAngles(90,0,0);
   const modelView=new pc.Mat4().mul2(flip,pose);modelView.mul(ground);
-  const camera=new pc.Mat4().invert(modelView);
+  const camera=new pc.Mat4().copy(modelView).invert();
   const room=new pc.Mat4().setTRS(new pc.Vec3(origin.x,origin.y,origin.z),new pc.Quat(),new pc.Vec3(1/scale,1/scale,1/scale));
   return new pc.Mat4().mul2(room,camera);
 }
@@ -51,7 +82,7 @@ export function createARMarkerUI(ctx:any) {
   `;document.head.appendChild(css);
   const launch=document.createElement('button');launch.id='arMarkerLauncher';launch.textContent='AR · MARKER';document.body.appendChild(launch);
   const panel=document.createElement('div');panel.id='arMarkerPanel';panel.hidden=true;
-  panel.innerHTML=`<strong>MARKER AR · 0.31.0.2</strong><button data-ar="close">閉じる</button><p>HIROを平らな机に置き、黒枠全体を映してください。</p><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
+  panel.innerHTML=`<strong>MARKER AR · 0.31.0.3</strong><button data-ar="close">閉じる</button><p>HIROを平らな机に置き、黒枠全体を映してください。</p><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
   document.body.appendChild(panel);
   const hud=document.createElement('div');hud.id='arMarkerHUD';hud.hidden=true;document.body.appendChild(hud);
   const q=(name:string)=>panel.querySelector(`[data-ar="${name}"]`) as any;
@@ -61,7 +92,7 @@ export function createARMarkerUI(ctx:any) {
   const cube=new pc.Entity('AR tracking check');cube.addComponent('render',{type:'box',layers:[layer.id]});const mat=new pc.StandardMaterial();mat.diffuse=new pc.Color(0,.7,1);mat.emissive=new pc.Color(0,.35,.5);mat.useLighting=false;mat.update();cube.render.material=mat;cube.enabled=false;app.root.addChild(cube);
   let active=false,pending=false,generation=0,room:any=null,stream:MediaStream|null=null,controller:any=null,saved:any=null;
   let origin={x:0,y:0,z:0},pose:any=null,projection:any=null,lastSeen=0,lastFrame=-1,detected=false;
-  let markerId=-1,markerWidth=.1;
+  let markerId=-1,markerWidth=.1,poseSource="",markerFound=false;
   let meshes:any[]=[];const worldCamera=new pc.Mat4();
   const status=(s:string)=>{q('status').textContent=s;hud.textContent=s;};
   const scale=()=>Math.max(.005,Math.min(.2,Number(q('scale').value)||.02));
@@ -113,14 +144,18 @@ export function createARMarkerUI(ctx:any) {
     for(const i of [0,4,8,12])projection.data[i]*=sx;
     for(const i of [1,5,9,13])projection.data[i]*=sy;
     camera.camera.rect.set(0,0,1,1);
-    try{if(video.readyState>=2&&video.currentTime!==lastFrame){lastFrame=video.currentTime;const result=controller.detectMarker(video);
+    try{if(video.readyState>=2&&video.currentTime!==lastFrame){lastFrame=video.currentTime;markerFound=false;const result=controller.detectMarker(video);
         if(result!==0)throw new Error(`detectMarker: ${result}`);
         for(let i=0;i<controller.getMarkerNum();i++) {
           const marker=controller.getMarker(i);if(marker.idPatt!==markerId||marker.cfPatt<.5)continue;
           // Match the pattern direction before solving the square's pose.
           if(marker.dirPatt!==undefined)controller.setMarkerInfoDir(i,marker.dirPatt);
-          const raw=new Float64Array(12);controller.getTransMatSquare(i,markerWidth,raw);
-          if(!Array.from(raw).every(Number.isFinite)||raw[11]<=0)continue;
+          markerFound=true;
+          let raw=new Float64Array(12);controller.getTransMatSquare(i,markerWidth,raw);poseSource="NATIVE";
+          if(!validMarkerPose(raw)) {
+            const fallback=markerPoseFromCorners(marker.vertex.map((v:any)=>[v[0],v[1]]),marker.dirPatt,markerWidth,controller.getCameraMatrix(),controller.width,controller.height);
+            if(!fallback)continue;raw=fallback;poseSource="CORNERS";
+          }
           pose=markerPoseMatrix(raw);lastSeen=performance.now();detected=true;break;
         }}}
     catch(error){stop(`追跡エラー · ${error instanceof Error?error.message:String(error)}`);return;}
@@ -133,7 +168,7 @@ export function createARMarkerUI(ctx:any) {
     }
     cube.enabled=visible&&q('test').checked;cube.setPosition(origin.x,origin.y+.015/scale(),origin.z);cube.setLocalScale(.03/scale(),.03/scale(),.03/scale());
     const clip=visible?markerClipPosition(projection.data,worldCamera.data,{x:origin.x,y:origin.y+.015/scale(),z:origin.z},pc):null;
-    status(visible?`TRACKING · ${Math.round(scale()*1000)/10}% · 原点 ${origin.x.toFixed(1)}, ${origin.y.toFixed(1)}, ${origin.z.toFixed(1)} · CUBE ${clip!.w>0?"FRONT":"BEHIND"} ${clip!.x.toFixed(2)},${clip!.y.toFixed(2)} · MESH ${meshes.length}`:detected?'MARKER LOST · 黒枠全体を映してください。':'SEARCHING · HIROの黒枠全体を映してください。');
+    status(visible?`TRACKING · ${Math.round(scale()*1000)/10}% · 原点 ${origin.x.toFixed(1)}, ${origin.y.toFixed(1)}, ${origin.z.toFixed(1)} · ${poseSource} · CUBE ${clip!.w>0?"FRONT":"BEHIND"} ${clip!.x.toFixed(2)},${clip!.y.toFixed(2)} · MESH ${meshes.length}`:markerFound?'MARKER FOUND · 姿勢を計算できません。黒枠を正面から映してください。':detected?'MARKER LOST · 黒枠全体を映してください。':'SEARCHING · HIROの黒枠全体を映してください。');
   }
   launch.onclick=()=>panel.hidden=!panel.hidden;q('close').onclick=()=>panel.hidden=true;q('start').onclick=()=>void start();q('stop').onclick=()=>stop();
   q('scale').oninput=()=>q('scale-text').textContent=`${Math.round(scale()*1000)/10}%`;

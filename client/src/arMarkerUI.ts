@@ -23,12 +23,12 @@ function loadToolkit(base:string):Promise<any> {
         if(typeof controller?.initWithDimensions==='function'){resolve(controller);return;}}
       reject(new Error('ARControllerが見つかりません。AR assetsのインストールを確認してください。'));
     };
-    script.onerror=()=>{clearTimeout(timer);script.remove();reject(new Error('ARエンジンが取得できません。デプロイした ar/vendor を確認してください。'));};document.head.appendChild(script);
+    script.onerror=()=>{clearTimeout(timer);script.remove();reject(new Error(`ARエンジンが取得できません: ${script.src}`));};document.head.appendChild(script);
   }).catch(error=>{toolkitPromise=null;throw error;});return toolkitPromise;
 }
 export function createARMarkerUI(ctx:any) {
   const {app,pc,camera,canvas}=ctx;
-  const base=new URL(import.meta.env.BASE_URL,location.origin).href;
+  const base=new URL("./",document.baseURI).href;
   const css=document.createElement('style');css.textContent=`
   #arMarkerLauncher{position:fixed;right:14px;bottom:100px;z-index:10050;background:#000;color:#fff;border:1px solid #fff;border-radius:8px;padding:12px;font-weight:bold}
   #arMarkerPanel{position:fixed;right:12px;bottom:150px;z-index:10051;background:#000;color:#fff;border:1px solid #fff;border-radius:10px;padding:14px;width:min(340px,calc(100vw - 52px));font:14px sans-serif;max-height:65vh;overflow:auto}
@@ -40,7 +40,7 @@ export function createARMarkerUI(ctx:any) {
   `;document.head.appendChild(css);
   const launch=document.createElement('button');launch.id='arMarkerLauncher';launch.textContent='AR · MARKER';document.body.appendChild(launch);
   const panel=document.createElement('div');panel.id='arMarkerPanel';panel.hidden=true;
-  panel.innerHTML=`<strong>MARKER AR · 0.31.0</strong><button data-ar="close">閉じる</button><p>HIROを平らな机に置き、黒枠全体を映してください。</p><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
+  panel.innerHTML=`<strong>MARKER AR · 0.31.0.1</strong><button data-ar="close">閉じる</button><p>HIROを平らな机に置き、黒枠全体を映してください。</p><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
   document.body.appendChild(panel);
   const q=(name:string)=>panel.querySelector(`[data-ar="${name}"]`) as any;
   const video=document.createElement('video');video.id='arMarkerVideo';video.muted=true;video.autoplay=true;video.playsInline=true;video.setAttribute('playsinline','');video.setAttribute('webkit-playsinline','');video.hidden=true;

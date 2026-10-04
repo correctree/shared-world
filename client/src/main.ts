@@ -1,3 +1,5 @@
+import { createArtworkVisuals } from "./artworkVisuals";
+let artworkVisuals:ReturnType<typeof createArtworkVisuals>|null=null;
 import { createQuestVRMenu } from "./questVRMenu";
 import { createQuestVRFlashlight } from "./questVRView";
 import { questVRHeading, questVRTeleportRay } from "./questVRMovement";
@@ -35,7 +37,7 @@ const SEND_HZ = 20;
 // Prototype 0.11 / XR MEDIA CORE
 // Stage 1 keeps the proven rendering/import code intact and adds a common registry/controller layer.
 const xrMediaManager = new XRMediaManager();
-console.log("[PROTOTYPE 0.30.10.1 BROWSER SCREEN LOADED]");
+console.log("[PROTOTYPE 0.30.11 BROWSER SCREEN LOADED]");
 let activeXRMediaId: string | null = null;
 
 type Avatar = {
@@ -1113,7 +1115,7 @@ const roomManagerStyle=document.createElement("style");roomManagerStyle.textCont
   #roomManagerStatus{display:block;min-height:28px;padding:7px 8px;border-radius:7px;background:#09121a;color:#a9bfd1;line-height:1.35}
   @media(max-width:640px){#lobby.panel{left:max(8px,env(safe-area-inset-left));right:max(8px,env(safe-area-inset-right));top:max(8px,env(safe-area-inset-top));width:auto;max-height:calc(var(--shared-world-viewport-height,100dvh) - max(8px,env(safe-area-inset-top)) - max(8px,env(safe-area-inset-bottom)) - 8px);padding:20px 18px 24px;border-radius:16px}#lobby input,#lobby select,#lobby textarea{font-size:16px!important;line-height:1.25}#roomManager{margin-bottom:max(8px,env(safe-area-inset-bottom))!important}#roomManager #ownedRoomList,#roomManager #archivedRoomList{max-height:190px}#roomManager .room-action-row,#roomManager .archive-row{grid-template-columns:1fr}#roomManager .room-action-row button,#roomManager .archive-row button{width:100%!important;min-width:0!important}#roomManager .room-entry-card{grid-template-columns:1fr}#roomManager .room-entry-card button{width:100%!important;min-width:0!important;min-height:46px}}
 `;document.head.appendChild(roomManagerStyle);
-roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.10.1</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
+roomManager.innerHTML=`<div class="room-manager-head"><div class="room-manager-title"><strong>ROOM ENTRY</strong><small>0.30.11</small></div><button type="button" id="refreshRoomsButton" aria-label="Refresh ROOM list" title="Refresh ROOM list">↻</button></div>
   <div id="roomEntryPreview" class="room-entry-card" data-state="checking"><div><strong>CHECKING ROOM…</strong><span>Entry role will appear here</span></div><button type="button" id="enterSelectedRoomButton">ENTER ROOM</button></div>
   <details id="myRoomsSection"><summary>MY ROOMS</summary><div class="room-action-body">
     <div id="roomSelectionSummary" class="room-selection"><strong>NO ROOM SELECTED</strong><span>—</span><small>Select a ROOM below</small><span>—</span></div>
@@ -5966,7 +5968,7 @@ directorPanel.innerHTML=`<div class="director-header"><strong>DIRECTOR CONTROL</
 document.body.append(directorButton,directorPanel);
 
 const directorRemoteRoot=document.createElement("main");directorRemoteRoot.id="directorRemoteRoot";directorRemoteRoot.className="hidden";
-directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.10.1</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
+directorRemoteRoot.innerHTML=`<header><div><strong>DIRECTOR REMOTE</strong><small>v0.30.11</small></div><button id="directorRemoteExit" type="button">EXIT REMOTE</button></header>
   <section class="remote-room-strip"><span id="directorRemoteConnection">CONNECTING</span><strong id="directorRemoteRoom">ROOM —</strong><span id="directorRemoteRole">CHECKING ACCESS</span></section>
   <section class="remote-now"><div class="remote-timeline-head"><span id="directorRemoteState">STOPPED</span><time id="directorRemoteClock">00:00.0 / 00:05.0</time></div><div class="remote-progress"><i id="directorRemoteProgress"></i></div><div class="remote-current"><div><small>CURRENT</small><strong id="directorRemoteCurrent">—</strong></div><div><small>NEXT</small><strong id="directorRemoteNext">—</strong></div></div></section>
   <section class="remote-transport"><button id="directorRemotePlay" type="button">▶ PLAY</button><button id="directorRemotePause" type="button">Ⅱ PAUSE</button><button id="directorRemoteStop" type="button">■ STOP</button></section>
@@ -6356,6 +6358,7 @@ mediaManagerStyle.textContent = `
     background:#111720; color:#fff;
   }
   .media-manager-item.selected,.media-manager-row.selected .media-manager-item { outline:2px solid #2f8cff; background:#172334; }
+  .media-manager-preview{display:grid;justify-items:center;gap:3px;width:52px;min-width:52px}.media-manager-thumb{display:block;width:48px;height:48px;object-fit:contain;border:1px solid #425970;border-radius:7px;background:#111e2c}.media-manager-preview .media-manager-kind{font-size:8px;opacity:.8;text-align:center;overflow-wrap:anywhere}
   .media-manager-kind { opacity:.62; font-size:10px; font-weight:800; }
   .media-manager-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
   .media-manager-empty { opacity:.55; padding:18px 6px; text-align:center; font-size:12px; }
@@ -7203,6 +7206,9 @@ behaviorTestLeave.addEventListener("click", (event) => {
 });
 
 let artworkListRenderSignature="";
+artworkVisuals=createArtworkVisuals({pc,app,getItems:()=>managedPlacedMedia,getSelected:()=>selectedManagedMediaId,
+  enabled:()=>!!activeRoom&&environmentCanEdit&&!projectionViewUI?.isActive()&&(!mediaManagerPanel.classList.contains("hidden")||!!editingManagedMediaId)});
+
 function refreshMediaManagerUI() {
   const artworkListCount=document.getElementById("artworkListCount");
   if(artworkListCount)artworkListCount.textContent=`${managedPlacedMedia.size} ${managedPlacedMedia.size===1?"ARTWORK":"ARTWORKS"}`;
@@ -7241,7 +7247,8 @@ function refreshMediaManagerUI() {
       const finishDrag=(event:PointerEvent)=>{if(!artworkDrag||artworkDrag.pointerId!==event.pointerId)return;artworkDrag.row.classList.remove("reordering");selectedArtworkInspector?.classList.remove("reorder-suspended");artworkDrag=null;commitArtworkOrderFromList();};
       drag.addEventListener("pointerup",finishDrag);drag.addEventListener("pointercancel",finishDrag);
       const button = document.createElement("button");button.type="button";button.className="media-manager-item";
-      button.innerHTML = `<span class="media-manager-kind">${String(index + 1).padStart(2, "0")} ${item.browserScreen?"BROWSER":item.cameraScreen?"CAMERA":item.kind.toUpperCase()}</span><span class="media-manager-title-wrap"><span class="media-manager-title"></span><span class="media-manager-meta"></span></span>`;
+      button.innerHTML = `<span class="media-manager-preview"><img class="media-manager-thumb"><span class="media-manager-kind">${String(index + 1).padStart(2, "0")} ${item.browserScreen?"BROWSER":item.cameraScreen?"CAMERA":item.kind.toUpperCase()}</span></span><span class="media-manager-title-wrap"><span class="media-manager-title"></span><span class="media-manager-meta"></span></span>`;
+      const thumbnail=button.querySelector<HTMLImageElement>(".media-manager-thumb");if(thumbnail)artworkVisuals?.request(item,thumbnail);
       const title = button.querySelector<HTMLElement>(".media-manager-title");
       if (title) title.textContent = item.title;
       const meta=mediaMetadata.get(item.id)||{groupName:"",tags:[]};
@@ -7633,7 +7640,7 @@ const uiFoundationRoot=document.createElement("div");
 uiFoundationRoot.id="uiFoundationRoot";
 uiFoundationRoot.innerHTML=`
   <nav id="uiWorkspaceBar" aria-label="Workspace">
-    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.10.1</span></div>
+    <div class="ui-foundation-brand"><strong>SHARED WORLD</strong><span>v0.30.11</span></div>
     <div class="ui-room-summary"><strong id="uiRoomCode">ROOM —</strong><span id="roomAccessRole" data-role="pending">ROLE…</span><span id="uiPlayerCount">0 / 4</span></div>
     <div class="ui-workspace-tabs">
       <button type="button" data-workspace="view">VIEW<span>閲覧</span></button>

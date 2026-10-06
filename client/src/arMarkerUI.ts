@@ -122,32 +122,41 @@ export function createARMarkerUI(ctx:any) {
   #arMarkerLauncher{position:fixed;right:14px;bottom:100px;z-index:10050;background:#000;color:#fff;border:1px solid #fff;border-radius:8px;padding:12px;font-weight:bold}
   #arMarkerPanel{position:fixed;right:12px;bottom:150px;z-index:10051;background:#000;color:#fff;border:1px solid #fff;border-radius:10px;padding:14px;width:min(340px,calc(100vw - 52px));font:14px sans-serif;max-height:65vh;overflow:auto}
   #arMarkerPanel button,#arMarkerPanel input,#arMarkerPanel select{margin:6px 3px;min-height:36px}#arMarkerPanel button{background:#000;color:white;border:1px solid white;border-radius:5px;padding:6px 10px}#arMarkerHUD{position:fixed;left:8px;right:8px;top:8px;z-index:10052;background:#000b;color:#fff;font:12px monospace;padding:6px;pointer-events:none}#arMarkerPanel a{color:#8eeaff}#arMarkerPanel input[type=number]{width:80px}#arMarkerPanel label{display:block}
-  body.marker-ar-active *{visibility:hidden!important}body.marker-ar-active #application-canvas,body.marker-ar-active #arMarkerVideo,body.marker-ar-active #arMarkerBackdrop,body.marker-ar-active #arMarkerPanel,body.marker-ar-active #arMarkerPanel *,body.marker-ar-active #arMarkerLauncher,body.marker-ar-active #arMarkerHUD{visibility:visible!important}
+  body.marker-ar-active *{visibility:hidden!important}body.marker-ar-active #application-canvas,body.marker-ar-active #arMarkerVideo,body.marker-ar-active #arMarkerBackdrop,body.marker-ar-active #arMarkerPanel,body.marker-ar-active #arMarkerPanel *,body.marker-ar-active #arMarkerLauncher,body.marker-ar-active #arMarkerHUD,body.marker-ar-active #arGeometryOverlay,body.marker-ar-active #arGeometryOverlay *{visibility:visible!important}
   body.marker-ar-active #application-canvas{position:fixed!important;inset:0!important;width:100%!important;height:100%!important;z-index:1!important;pointer-events:none!important}
-  #arMarkerBackdrop{position:fixed;inset:0;background:#000;z-index:0}#arMarkerVideo{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;pointer-events:none;transform:none}
+  #arGeometryOverlay{position:fixed;inset:0;z-index:10049;pointer-events:none}#arGeometryOverlay svg{width:100%;height:100%;overflow:visible}#arMarkerBackdrop{position:fixed;inset:0;background:#000;z-index:0}#arMarkerVideo{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;pointer-events:none;transform:none}
   body.marker-ar-active{overflow:hidden!important}
   `;document.head.appendChild(css);
   const launch=document.createElement('button');launch.id='arMarkerLauncher';launch.textContent='AR · MARKER';document.body.appendChild(launch);
   const panel=document.createElement('div');panel.id='arMarkerPanel';panel.hidden=true;
-  panel.innerHTML=`<strong>MARKER AR · 0.31.0.7</strong><button data-ar="close">閉じる</button><p>選択したマーカーを平らな机に置き、黒枠全体を映してください。</p><label>検証マーカー <select data-ar="marker"><option value="hiro">HIRO（従来）</option><option value="blocks">BLOCKS 01（比較用）</option></select></label><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><br><a target="_blank" rel="noopener" href="${new URL('ar/marker-blocks-print.html',base).href}">BLOCKS 01 を開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><label>認識切れの表示保持 <select data-ar="hold"><option value="0.5">0.5秒</option><option value="1.5" selected>1.5秒</option><option value="3">3秒</option></select></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
+  panel.innerHTML=`<strong>MARKER AR · 0.31.0.8</strong><button data-ar="close">閉じる</button><p>選択したマーカーを平らな机に置き、黒枠全体を映してください。</p><label>検証マーカー <select data-ar="marker"><option value="hiro">HIRO（従来）</option><option value="blocks">BLOCKS 01（比較用）</option></select></label><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><br><a target="_blank" rel="noopener" href="${new URL('ar/marker-blocks-print.html',base).href}">BLOCKS 01 を開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><label>認識切れの表示保持 <select data-ar="hold"><option value="0.5">0.5秒</option><option value="1.5" selected>1.5秒</option><option value="3">3秒</option></select></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><label><input data-ar="geometry" type="checkbox" checked>幾何確認（緑:検出／橙:計算／赤:3D）</label><label><input data-ar="smooth" type="checkbox">姿勢の揺れ補正（比較用）</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
   document.body.appendChild(panel);
   const hud=document.createElement('div');hud.id='arMarkerHUD';hud.hidden=true;document.body.appendChild(hud);
+  const overlay=document.createElement('div');overlay.id='arGeometryOverlay';overlay.hidden=true;document.body.appendChild(overlay);
   const q=(name:string)=>panel.querySelector(`[data-ar="${name}"]`) as any;
+  q('smooth').checked=false;
   const video=document.createElement('video');video.id='arMarkerVideo';video.muted=true;video.autoplay=true;video.playsInline=true;video.setAttribute('playsinline','');video.setAttribute('webkit-playsinline','');video.hidden=true;
   const backdrop=document.createElement('div');backdrop.id='arMarkerBackdrop';backdrop.hidden=true;document.body.append(backdrop,video);
   const layer=new pc.Layer({name:'Marker AR artworks'});app.scene.layers.push(layer);
   const cube=new pc.Entity('AR tracking check');cube.addComponent('render',{type:'box',layers:[layer.id]});const mat=new pc.StandardMaterial();mat.diffuse=new pc.Color(0,.7,1);mat.emissive=new pc.Color(0,.35,.5);mat.useLighting=false;mat.update();cube.render.material=mat;cube.enabled=false;app.root.addChild(cube);
   let active=false,pending=false,generation=0,room:any=null,stream:MediaStream|null=null,controller:any=null,saved:any=null;
   let origin={x:0,y:0,z:0},pose:any=null,projection:any=null,lastSeen=0,lastFrame=-1,detected=false;
+  let corners:number[][]|null=null,cornerDirection=0,cornerSeen=0,rejection="SEARCHING";
   let markerId=-1,markerWidth=.1,poseSource="",markerFound=false;
   const poseFilter=createMarkerPoseFilter();
+  // Real 3D outline: the renderer draws this independently of the SVG projection.
+  const redMaterial=new pc.StandardMaterial();redMaterial.diffuse=new pc.Color(1,0,0);redMaterial.emissive=new pc.Color(1,0,0);redMaterial.useLighting=false;redMaterial.update();
+  const edgeMaterial=new pc.StandardMaterial();edgeMaterial.diffuse=new pc.Color(1,1,0);edgeMaterial.emissive=new pc.Color(1,1,0);edgeMaterial.useLighting=false;edgeMaterial.update();
+  const makeBar=(name:string,material:any)=>{const e=new pc.Entity(name);e.addComponent('render',{type:'box',layers:[layer.id]});e.render.material=material;e.enabled=false;app.root.addChild(e);return e;};
+  const markerEdges=Array.from({length:4},()=>makeBar('AR marker border',redMaterial));
+  const cubeEdges=Array.from({length:12},()=>makeBar('AR cube edge',edgeMaterial));
   let meshes:any[]=[];const worldCamera=new pc.Mat4();
   const status=(s:string)=>{q('status').textContent=s;hud.textContent=s;};
   const holdMS=()=>Math.max(500,Math.min(3000,(Number(q('hold').value)||1.5)*1000));
   const scale=()=>Math.max(.005,Math.min(.2,Number(q('scale').value)||.02));
   const controls=()=>{launch.hidden=!ctx.getRoom()||!ctx.available();q('start').disabled=active||pending||!ctx.getRoom()||!ctx.available();q('stop').disabled=!active&&!pending;q('size').disabled=active||pending;q('marker').disabled=active||pending;};
   function stop(message='ARを停止しました。通常のROOM表示に戻りました。') {
-    generation++;active=false;pending=false;room=null;hud.hidden=true;
+    generation++;active=false;pending=false;room=null;hud.hidden=true;overlay.hidden=true;overlay.innerHTML="";corners=null;cornerSeen=0;rejection="SEARCHING";markerEdges.forEach(e=>e.enabled=false);cubeEdges.forEach(e=>e.enabled=false);
     stream?.getTracks().forEach(t=>t.stop());stream=null;video.pause();video.srcObject=null;video.hidden=true;backdrop.hidden=true;
     poseFilter.reset();controller?.dispose();controller=null;pose=null;projection=null;lastSeen=0;lastFrame=-1;detected=false;
     layer.removeMeshInstances(meshes);meshes=[];cube.enabled=false;
@@ -181,36 +190,40 @@ export function createARMarkerUI(ctx:any) {
       const c=camera.camera;saved={transform:c.calculateTransform,projection:c.calculateProjection,layers:[...c.layers],rect:c.rect.clone(),color:c.clearColor.clone(),near:c.nearClip,far:c.farClip,culling:c.frustumCulling,position:camera.getPosition().clone(),rotation:camera.getRotation().clone()};
       c.layers=[layer.id];c.nearClip=.005;c.farClip=100;c.frustumCulling=false;c.clearColor=new pc.Color(0,0,0,0);
       c.calculateProjection=(out:any)=>out.copy(projection);c.calculateTransform=(out:any)=>out.copy(worldCamera);
-      active=true;pending=false;hud.hidden=false;panel.hidden=true;document.body.classList.add('marker-ar-active');status(`SEARCHING · ${markerName}の黒枠全体を映してください。`);controls();
+      app.resizeCanvas?.();active=true;pending=false;hud.hidden=false;panel.hidden=true;document.body.classList.add('marker-ar-active');status(`SEARCHING · ${markerName}の黒枠全体を映してください。`);controls();
       stream.getVideoTracks()[0]?.addEventListener('ended',()=>{if(generation===token)stop('カメラが停止しました。START ARで再開してください。');});
     }catch(error){if(generation!==token)return;stop(`AR開始失敗 · ${error instanceof Error?error.message:String(error)}（Safariのカメラ許可も確認してください）`);}
   }
   function update(){
     if((active||pending)&&(room!==ctx.getRoom()||!ctx.available())){stop();return;}controls();if(!active)return;
     if(video.videoWidth/video.videoHeight<=0)return;
-    const aspect=video.videoWidth/video.videoHeight,screen=innerWidth/innerHeight;
+    const canvasRect=canvas.getBoundingClientRect?.()??{left:0,top:0,width:innerWidth,height:innerHeight};
+    const videoRect=video.getBoundingClientRect?.()??{left:0,top:0,width:innerWidth,height:innerHeight};
+    const aspect=video.videoWidth/video.videoHeight,screen=canvasRect.width/canvasRect.height;
+    if(!Number.isFinite(screen)||screen<=0)return;
     // Match the video object-fit:cover crop, including off-centre calibration.
     const calibrated=controller.getCameraMatrix();projection.data.set(calibrated);
     const sx=Math.max(1,aspect/screen),sy=Math.max(1,screen/aspect);
     for(const i of [0,4,8,12])projection.data[i]*=sx;
     for(const i of [1,5,9,13])projection.data[i]*=sy;
     camera.camera.rect.set(0,0,1,1);
-    try{if(video.readyState>=2&&video.currentTime!==lastFrame){lastFrame=video.currentTime;markerFound=false;const result=controller.detectMarker(video);
+    try{if(video.readyState>=2&&video.currentTime!==lastFrame){lastFrame=video.currentTime;markerFound=false;rejection="NO MARKER";const result=controller.detectMarker(video);
         if(result!==0)throw new Error(`detectMarker: ${result}`);
         for(let i=0;i<controller.getMarkerNum();i++) {
-          const marker=controller.getMarker(i);if(marker.idPatt!==markerId||marker.cfPatt<.5)continue;
+          const marker=controller.getMarker(i);if(marker.idPatt!==markerId)continue;if(marker.cfPatt<.5){rejection="LOW CONFIDENCE";continue;}
           // Match the pattern direction before solving the square's pose.
           if(marker.dirPatt!==undefined)controller.setMarkerInfoDir(i,marker.dirPatt);
           markerFound=true;
+          corners=marker.vertex?.map((v:any)=>[v[0],v[1]])??null;cornerDirection=marker.dirPatt||0;cornerSeen=performance.now();
           // Prefer one consistent solver while corners are usable. Validate native fallback.
           let raw=markerPoseFromCorners(marker.vertex?.map((v:any)=>[v[0],v[1]]),marker.dirPatt,markerWidth,controller.getCameraMatrix(),controller.width,controller.height);
           let source="CORNERS";
           if(!raw||!validMarkerPose(raw)) {
             raw=new Float64Array(12);controller.getTransMatSquare(i,markerWidth,raw);source="NATIVE";
-            if(!validMarkerPose(raw))continue;
+            if(!validMarkerPose(raw)){rejection="POSE FAILED";continue;}
           }
           const now=performance.now(),filtered=poseFilter.sample(markerPoseMatrix(raw),now);
-          if(!filtered)continue;poseSource=source;pose=filtered;lastSeen=now;detected=true;break;
+          if(!filtered&&q('smooth').checked){rejection="OUTLIER";continue;}poseSource=source;pose=q('smooth').checked?filtered:markerPoseMatrix(raw);rejection="OK";lastSeen=now;detected=true;break;
         }}}
     catch(error){stop(`追跡エラー · ${error instanceof Error?error.message:String(error)}`);return;}
     const visible=!!pose&&performance.now()-lastSeen<holdMS();
@@ -222,7 +235,31 @@ export function createARMarkerUI(ctx:any) {
     }
     cube.enabled=visible&&q('test').checked;cube.setPosition(origin.x,origin.y+.015/scale(),origin.z);cube.setLocalScale(.03/scale(),.03/scale(),.03/scale());
     const clip=visible?markerClipPosition(projection.data,worldCamera.data,{x:origin.x,y:origin.y+.015/scale(),z:origin.z},pc):null;
-    status(visible?`${performance.now()-lastSeen>120?"HOLD":"TRACKING"} · ${Math.round(scale()*1000)/10}% · 原点 ${origin.x.toFixed(1)}, ${origin.y.toFixed(1)}, ${origin.z.toFixed(1)} · ${poseSource} · CUBE ${clip!.w>0?"FRONT":"BEHIND"} ${clip!.x.toFixed(2)},${clip!.y.toFixed(2)} · MESH ${meshes.length}`:markerFound?'MARKER FOUND · 姿勢を計算できません。黒枠を正面から映してください。':detected?'MARKER LOST · 黒枠全体を映してください。':'SEARCHING · 選択したマーカーの黒枠全体を映してください。');
+    const diagnostic=visible&&q('geometry').checked;
+    const unit=1/scale(),h=markerWidth*unit/2,thin=.0007*unit;
+    markerEdges.forEach((e,i)=>{e.enabled=diagnostic;const axis=i<2?0:2,sign=i%2?1:-1;
+      e.setPosition(origin.x+(axis===2?sign*h:0),origin.y+.0003*unit,origin.z+(axis===0?sign*h:0));
+      e.setLocalScale(axis===0?2*h:thin,thin,axis===2?2*h:thin);});
+    let edge=0;const half=.015*unit;
+    for(let axis=0;axis<3;axis++)for(const signA of [-1,1])for(const signB of [-1,1]){
+      const position=[origin.x,origin.y+half,origin.z],size=[thin,thin,thin];size[axis]=2*half;
+      const others=[0,1,2].filter(i=>i!==axis);position[others[0]]+=signA*half;position[others[1]]+=signB*half;
+      const e=cubeEdges[edge++];e.enabled=visible&&q('test').checked;e.setPosition(...position);e.setLocalScale(...size);
+    }
+    overlay.hidden=!active||!q('geometry').checked;
+    let reprojection="--";
+    if(!overlay.hidden&&corners&&performance.now()-cornerSeen<120){
+      const cover=Math.max(videoRect.width/controller.width,videoRect.height/controller.height);
+      const left=videoRect.left+(videoRect.width-controller.width*cover)/2,top=videoRect.top+(videoRect.height-controller.height*cover)/2;
+      const detectedPixels=corners.map(v=>[left+v[0]*cover,top+v[1]*cover]);
+      const local=[[-h,-h],[-h,h],[h,h],[h,-h]];
+      const projected=visible?local.map(([X,Y])=>{const c=markerClipPosition(projection.data,worldCamera.data,{x:origin.x+X,y:origin.y,z:origin.z-Y},pc);return [canvasRect.left+(c.x+1)*canvasRect.width/2,canvasRect.top+(1-c.y)*canvasRect.height/2];}):[];
+      if(projected.length)reprojection=(Math.sqrt(projected.reduce((sum,v,i)=>{const d=detectedPixels[(i+4-cornerDirection)%4];return sum+(v[0]-d[0])**2+(v[1]-d[1])**2;},0)/4)).toFixed(1);
+      const points=(a:number[][])=>a.map(v=>v.join(',')).join(' ');
+      overlay.innerHTML=`<svg viewBox="0 0 ${innerWidth} ${innerHeight}" preserveAspectRatio="none"><polygon points="${points(detectedPixels)}" fill="none" stroke="#00ff75" stroke-width="3"/>${projected.length?`<polygon points="${points(projected)}" fill="none" stroke="#ff9d00" stroke-width="2"/>`:''}</svg>`;
+    }else overlay.innerHTML='';
+    const detail=q('geometry').checked?` · ${q('smooth').checked?'SMOOTH':'RAW'} · ${rejection} · ERR ${reprojection}px · VIDEO ${video.videoWidth}x${video.videoHeight} · DET ${controller.width}x${controller.height} · CSS ${Math.round(canvasRect.width)}x${Math.round(canvasRect.height)} · BUF ${canvas.width??'?'}x${canvas.height??'?'}`:'';
+    status(visible?`${performance.now()-lastSeen>120?"HOLD":"TRACKING"} · ${Math.round(scale()*1000)/10}% · 原点 ${origin.x.toFixed(1)}, ${origin.y.toFixed(1)}, ${origin.z.toFixed(1)} · ${poseSource} · CUBE ${clip!.w>0?"FRONT":"BEHIND"} ${clip!.x.toFixed(2)},${clip!.y.toFixed(2)} · MESH ${meshes.length}`:markerFound?'MARKER FOUND · 姿勢を計算できません。黒枠を正面から映してください。':detected?'MARKER LOST · 黒枠全体を映してください。':'SEARCHING · 選択したマーカーの黒枠全体を映してください。');if(detail)status(hud.textContent+detail);
   }
   launch.onclick=()=>panel.hidden=!panel.hidden;q('close').onclick=()=>panel.hidden=true;q('start').onclick=()=>void start();q('stop').onclick=()=>stop();
   q('scale').oninput=()=>q('scale-text').textContent=`${Math.round(scale()*1000)/10}%`;
@@ -231,5 +268,5 @@ export function createARMarkerUI(ctx:any) {
   for(const name of ['pointerdown','pointermove','pointerup','wheel','keydown'])panel.addEventListener(name,e=>e.stopPropagation());
   const hidden=()=>{if(document.hidden&&(active||pending))stop('バックグラウンド移行でARを停止しました。START ARで再開してください。');};
   const pagehide=()=>stop();document.addEventListener('visibilitychange',hidden);window.addEventListener('pagehide',pagehide);app.on('update',update);controls();
-  return {isBusy:()=>active||pending,stop,dispose(){stop();app.off('update',update);document.removeEventListener('visibilitychange',hidden);window.removeEventListener('pagehide',pagehide);cube.destroy();mat.destroy();app.scene.layers.remove(layer);css.remove();launch.remove();panel.remove();video.remove();backdrop.remove();hud.remove();}};
+  return {isBusy:()=>active||pending,stop,dispose(){stop();app.off('update',update);document.removeEventListener('visibilitychange',hidden);window.removeEventListener('pagehide',pagehide);cube.destroy();mat.destroy();markerEdges.forEach(e=>e.destroy());cubeEdges.forEach(e=>e.destroy());redMaterial.destroy();edgeMaterial.destroy();overlay.remove();app.scene.layers.remove(layer);css.remove();launch.remove();panel.remove();video.remove();backdrop.remove();hud.remove();}};
 }

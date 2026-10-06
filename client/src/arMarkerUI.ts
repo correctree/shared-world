@@ -8,11 +8,11 @@ export function markerQuaternion(m:ArrayLike<number>) {
   const n=Math.hypot(x,y,z,w);return [x/n,y/n,z/n,w/n];
 }
 export function createMarkerPoseFilter() {
-  let value:Float64Array|null=null,reference:Float64Array|null=null,last=0,pending:Float64Array|null=null,count=0;
+  let value:Float64Array|null=null,reference:Float64Array|null=null,last=0,movingUntil=0,pending:Float64Array|null=null,count=0;
   const distance=(a:ArrayLike<number>,b:ArrayLike<number>)=>Math.hypot(a[12]-b[12],a[13]-b[13],a[14]-b[14]);
   const dot=(a:number[],b:number[])=>a.reduce((n,v,i)=>n+v*b[i],0);
   const angle=(a:ArrayLike<number>,b:ArrayLike<number>)=>2*Math.acos(Math.min(1,Math.abs(dot(markerQuaternion(a),markerQuaternion(b)))));
-  return {reset(){value=null;reference=null;last=0;pending=null;count=0;},sample(next:Float64Array,now:number) {
+  return {reset(){value=null;reference=null;last=0;movingUntil=0;pending=null;count=0;},sample(next:Float64Array,now:number) {
     if(!Array.from(next).every(Number.isFinite))return null;
     if(!value){value=new Float64Array(next);reference=new Float64Array(next);last=now;return value;}
     // Compare detections with the last accepted detection, not the lagging display.
@@ -20,10 +20,15 @@ export function createMarkerPoseFilter() {
       count=pending&&distance(pending,next)<.06&&angle(pending,next)<Math.PI/9?count+1:1;
       pending=new Float64Array(next);if(count<3)return null;
     }
+    // Increase responsiveness for coherent movement; keep stronger damping at rest.
+    const elapsed=Math.max(.001,(now-last)/1000);
+    const linearSpeed=distance(reference!,next)/elapsed,angularSpeed=angle(reference!,next)/elapsed;
+    const d=distance(value,next),rotationError=angle(value,next);
+    if(linearSpeed>.06||angularSpeed>.3||d>.008||rotationError>.035)movingUntil=now+100;
     pending=null;count=0;reference=new Float64Array(next);
-    // A long detection gap must not increase the interpolation step or reseed the pose.
-    const dt=Math.max(.001,Math.min(.05,(now-last)/1000));last=now;
-    const d=distance(value,next),alpha=1-Math.exp(-dt/.12);
+    // Bound the interpolation step across detection gaps.
+    const dt=Math.min(.05,elapsed);last=now;
+    const tau=now<=movingUntil ? .018 : .12,alpha=1-Math.exp(-dt/tau);
     const positionWeight=d>0?Math.min(alpha,2*dt/d):alpha;
     const out=new Float64Array(value);for(const i of [12,13,14])out[i]+=positionWeight*(next[i]-out[i]);
     const a=markerQuaternion(value),b=markerQuaternion(next);let cosine=dot(a,b);
@@ -44,7 +49,7 @@ export function createMarkerPoseFilter() {
 export function markerPoseFromCorners(vertices:number[][], direction:number, width:number, projection:ArrayLike<number>, imageWidth:number, imageHeight:number) {
   const fx=Math.abs(projection[0])*imageWidth/2,fy=Math.abs(projection[5])*imageHeight/2;
   const cx=(1-projection[8])*imageWidth/2,cy=(1+projection[9])*imageHeight/2;
-  if(!vertices||vertices.length!==4||!fx||!fy)return null;
+  if(!vertices||vertices.length!==4||!vertices.every(v=>v&&v.length>=2&&Number.isFinite(v[0])&&Number.isFinite(v[1]))||!fx||!fy)return null;
   const h=width/2,local=[[-h,-h],[-h,h],[h,h],[h,-h]],rows:number[][]=[];
   for(let i=0;i<4;i++) {
     const point=vertices[(i+4-(direction||0))%4],X=local[i][0],Y=local[i][1];
@@ -116,7 +121,7 @@ export function createARMarkerUI(ctx:any) {
   const css=document.createElement('style');css.textContent=`
   #arMarkerLauncher{position:fixed;right:14px;bottom:100px;z-index:10050;background:#000;color:#fff;border:1px solid #fff;border-radius:8px;padding:12px;font-weight:bold}
   #arMarkerPanel{position:fixed;right:12px;bottom:150px;z-index:10051;background:#000;color:#fff;border:1px solid #fff;border-radius:10px;padding:14px;width:min(340px,calc(100vw - 52px));font:14px sans-serif;max-height:65vh;overflow:auto}
-  #arMarkerPanel button,#arMarkerPanel input{margin:6px 3px;min-height:36px}#arMarkerPanel button{background:#000;color:white;border:1px solid white;border-radius:5px;padding:6px 10px}#arMarkerHUD{position:fixed;left:8px;right:8px;top:8px;z-index:10052;background:#000b;color:#fff;font:12px monospace;padding:6px;pointer-events:none}#arMarkerPanel a{color:#8eeaff}#arMarkerPanel input[type=number]{width:80px}#arMarkerPanel label{display:block}
+  #arMarkerPanel button,#arMarkerPanel input,#arMarkerPanel select{margin:6px 3px;min-height:36px}#arMarkerPanel button{background:#000;color:white;border:1px solid white;border-radius:5px;padding:6px 10px}#arMarkerHUD{position:fixed;left:8px;right:8px;top:8px;z-index:10052;background:#000b;color:#fff;font:12px monospace;padding:6px;pointer-events:none}#arMarkerPanel a{color:#8eeaff}#arMarkerPanel input[type=number]{width:80px}#arMarkerPanel label{display:block}
   body.marker-ar-active *{visibility:hidden!important}body.marker-ar-active #application-canvas,body.marker-ar-active #arMarkerVideo,body.marker-ar-active #arMarkerBackdrop,body.marker-ar-active #arMarkerPanel,body.marker-ar-active #arMarkerPanel *,body.marker-ar-active #arMarkerLauncher,body.marker-ar-active #arMarkerHUD{visibility:visible!important}
   body.marker-ar-active #application-canvas{position:fixed!important;inset:0!important;width:100%!important;height:100%!important;z-index:1!important;pointer-events:none!important}
   #arMarkerBackdrop{position:fixed;inset:0;background:#000;z-index:0}#arMarkerVideo{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;pointer-events:none;transform:none}
@@ -124,7 +129,7 @@ export function createARMarkerUI(ctx:any) {
   `;document.head.appendChild(css);
   const launch=document.createElement('button');launch.id='arMarkerLauncher';launch.textContent='AR · MARKER';document.body.appendChild(launch);
   const panel=document.createElement('div');panel.id='arMarkerPanel';panel.hidden=true;
-  panel.innerHTML=`<strong>MARKER AR · 0.31.0.5</strong><button data-ar="close">閉じる</button><p>HIROを平らな机に置き、黒枠全体を映してください。</p><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
+  panel.innerHTML=`<strong>MARKER AR · 0.31.0.6</strong><button data-ar="close">閉じる</button><p>HIROを平らな机に置き、黒枠全体を映してください。</p><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><label>認識切れの表示保持 <select data-ar="hold"><option value="0.5">0.5秒</option><option value="1.5" selected>1.5秒</option><option value="3">3秒</option></select></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
   document.body.appendChild(panel);
   const hud=document.createElement('div');hud.id='arMarkerHUD';hud.hidden=true;document.body.appendChild(hud);
   const q=(name:string)=>panel.querySelector(`[data-ar="${name}"]`) as any;
@@ -138,6 +143,7 @@ export function createARMarkerUI(ctx:any) {
   const poseFilter=createMarkerPoseFilter();
   let meshes:any[]=[];const worldCamera=new pc.Mat4();
   const status=(s:string)=>{q('status').textContent=s;hud.textContent=s;};
+  const holdMS=()=>Math.max(500,Math.min(3000,(Number(q('hold').value)||1.5)*1000));
   const scale=()=>Math.max(.005,Math.min(.2,Number(q('scale').value)||.02));
   const controls=()=>{launch.hidden=!ctx.getRoom()||!ctx.available();q('start').disabled=active||pending||!ctx.getRoom()||!ctx.available();q('stop').disabled=!active&&!pending;q('size').disabled=active||pending;};
   function stop(message='ARを停止しました。通常のROOM表示に戻りました。') {
@@ -205,7 +211,7 @@ export function createARMarkerUI(ctx:any) {
           if(!filtered)continue;poseSource=source;pose=filtered;lastSeen=now;detected=true;break;
         }}}
     catch(error){stop(`追跡エラー · ${error instanceof Error?error.message:String(error)}`);return;}
-    const visible=!!pose&&performance.now()-lastSeen<900;
+    const visible=!!pose&&performance.now()-lastSeen<holdMS();
     layer.removeMeshInstances(meshes);meshes=[];
     if(visible){worldCamera.copy(markerCameraMatrix(pc,pose,origin,scale()));camera.setPosition(worldCamera.getTranslation());
       for(const item of ctx.getItems()){const entity=item.entity;if(!entity?.enabledInHierarchy)continue;

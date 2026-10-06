@@ -129,7 +129,7 @@ export function createARMarkerUI(ctx:any) {
   `;document.head.appendChild(css);
   const launch=document.createElement('button');launch.id='arMarkerLauncher';launch.textContent='AR · MARKER';document.body.appendChild(launch);
   const panel=document.createElement('div');panel.id='arMarkerPanel';panel.hidden=true;
-  panel.innerHTML=`<strong>MARKER AR · 0.31.0.6</strong><button data-ar="close">閉じる</button><p>HIROを平らな机に置き、黒枠全体を映してください。</p><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><label>認識切れの表示保持 <select data-ar="hold"><option value="0.5">0.5秒</option><option value="1.5" selected>1.5秒</option><option value="3">3秒</option></select></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
+  panel.innerHTML=`<strong>MARKER AR · 0.31.0.7</strong><button data-ar="close">閉じる</button><p>選択したマーカーを平らな机に置き、黒枠全体を映してください。</p><label>検証マーカー <select data-ar="marker"><option value="hiro">HIRO（従来）</option><option value="blocks">BLOCKS 01（比較用）</option></select></label><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><br><a target="_blank" rel="noopener" href="${new URL('ar/marker-blocks-print.html',base).href}">BLOCKS 01 を開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><label>認識切れの表示保持 <select data-ar="hold"><option value="0.5">0.5秒</option><option value="1.5" selected>1.5秒</option><option value="3">3秒</option></select></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
   document.body.appendChild(panel);
   const hud=document.createElement('div');hud.id='arMarkerHUD';hud.hidden=true;document.body.appendChild(hud);
   const q=(name:string)=>panel.querySelector(`[data-ar="${name}"]`) as any;
@@ -145,7 +145,7 @@ export function createARMarkerUI(ctx:any) {
   const status=(s:string)=>{q('status').textContent=s;hud.textContent=s;};
   const holdMS=()=>Math.max(500,Math.min(3000,(Number(q('hold').value)||1.5)*1000));
   const scale=()=>Math.max(.005,Math.min(.2,Number(q('scale').value)||.02));
-  const controls=()=>{launch.hidden=!ctx.getRoom()||!ctx.available();q('start').disabled=active||pending||!ctx.getRoom()||!ctx.available();q('stop').disabled=!active&&!pending;q('size').disabled=active||pending;};
+  const controls=()=>{launch.hidden=!ctx.getRoom()||!ctx.available();q('start').disabled=active||pending||!ctx.getRoom()||!ctx.available();q('stop').disabled=!active&&!pending;q('size').disabled=active||pending;q('marker').disabled=active||pending;};
   function stop(message='ARを停止しました。通常のROOM表示に戻りました。') {
     generation++;active=false;pending=false;room=null;hud.hidden=true;
     stream?.getTracks().forEach(t=>t.stop());stream=null;video.pause();video.srcObject=null;video.hidden=true;backdrop.hidden=true;
@@ -158,6 +158,8 @@ export function createARMarkerUI(ctx:any) {
   async function start(){
     if(active||pending||!ctx.getRoom()||!ctx.available())return;
     if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia){status('HTTPSのSafariで開き、カメラを許可してください。');return;}
+    const markerName=q('marker').value==='blocks'?'BLOCKS 01':'HIRO';
+    const markerFile=q('marker').value==='blocks'?'patt.shared-blocks':'patt.hiro';
     const widthMM=Number(q('size').value);if(!Number.isFinite(widthMM)||widthMM<30||widthMM>1000){status('マーカーの黒枠サイズを30〜1000mmで指定してください。');return;}
     pending=true;room=ctx.getRoom();const token=++generation;controls();status('リアカメラとARエンジンを準備しています…');
     try {
@@ -172,14 +174,14 @@ export function createARMarkerUI(ctx:any) {
       const fresh=await Controller.initWithDimensions(w,h,new URL('ar/data/camera_para.dat',base).href);
       if(!current(token)){fresh.dispose();return;}controller=fresh;
       controller.setProjectionNearPlane(.005);controller.setProjectionFarPlane(100);
-      const id=await controller.loadMarker(new URL('ar/data/patt.hiro',base).href);if(!current(token))return;
+      const id=await controller.loadMarker(new URL(`ar/data/${markerFile}`,base).href);if(!current(token))return;
       controller.trackPatternMarkerId(id,widthMM/1000);
       projection=new pc.Mat4();projection.data.set(controller.getCameraMatrix());
       markerId=id;markerWidth=widthMM/1000;
       const c=camera.camera;saved={transform:c.calculateTransform,projection:c.calculateProjection,layers:[...c.layers],rect:c.rect.clone(),color:c.clearColor.clone(),near:c.nearClip,far:c.farClip,culling:c.frustumCulling,position:camera.getPosition().clone(),rotation:camera.getRotation().clone()};
       c.layers=[layer.id];c.nearClip=.005;c.farClip=100;c.frustumCulling=false;c.clearColor=new pc.Color(0,0,0,0);
       c.calculateProjection=(out:any)=>out.copy(projection);c.calculateTransform=(out:any)=>out.copy(worldCamera);
-      active=true;pending=false;hud.hidden=false;panel.hidden=true;document.body.classList.add('marker-ar-active');status('SEARCHING · HIROの黒枠全体を映してください。');controls();
+      active=true;pending=false;hud.hidden=false;panel.hidden=true;document.body.classList.add('marker-ar-active');status(`SEARCHING · ${markerName}の黒枠全体を映してください。`);controls();
       stream.getVideoTracks()[0]?.addEventListener('ended',()=>{if(generation===token)stop('カメラが停止しました。START ARで再開してください。');});
     }catch(error){if(generation!==token)return;stop(`AR開始失敗 · ${error instanceof Error?error.message:String(error)}（Safariのカメラ許可も確認してください）`);}
   }
@@ -220,7 +222,7 @@ export function createARMarkerUI(ctx:any) {
     }
     cube.enabled=visible&&q('test').checked;cube.setPosition(origin.x,origin.y+.015/scale(),origin.z);cube.setLocalScale(.03/scale(),.03/scale(),.03/scale());
     const clip=visible?markerClipPosition(projection.data,worldCamera.data,{x:origin.x,y:origin.y+.015/scale(),z:origin.z},pc):null;
-    status(visible?`${performance.now()-lastSeen>120?"HOLD":"TRACKING"} · ${Math.round(scale()*1000)/10}% · 原点 ${origin.x.toFixed(1)}, ${origin.y.toFixed(1)}, ${origin.z.toFixed(1)} · ${poseSource} · CUBE ${clip!.w>0?"FRONT":"BEHIND"} ${clip!.x.toFixed(2)},${clip!.y.toFixed(2)} · MESH ${meshes.length}`:markerFound?'MARKER FOUND · 姿勢を計算できません。黒枠を正面から映してください。':detected?'MARKER LOST · 黒枠全体を映してください。':'SEARCHING · HIROの黒枠全体を映してください。');
+    status(visible?`${performance.now()-lastSeen>120?"HOLD":"TRACKING"} · ${Math.round(scale()*1000)/10}% · 原点 ${origin.x.toFixed(1)}, ${origin.y.toFixed(1)}, ${origin.z.toFixed(1)} · ${poseSource} · CUBE ${clip!.w>0?"FRONT":"BEHIND"} ${clip!.x.toFixed(2)},${clip!.y.toFixed(2)} · MESH ${meshes.length}`:markerFound?'MARKER FOUND · 姿勢を計算できません。黒枠を正面から映してください。':detected?'MARKER LOST · 黒枠全体を映してください。':'SEARCHING · 選択したマーカーの黒枠全体を映してください。');
   }
   launch.onclick=()=>panel.hidden=!panel.hidden;q('close').onclick=()=>panel.hidden=true;q('start').onclick=()=>void start();q('stop').onclick=()=>stop();
   q('scale').oninput=()=>q('scale-text').textContent=`${Math.round(scale()*1000)/10}%`;

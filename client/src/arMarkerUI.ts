@@ -1,29 +1,43 @@
-// Physical camera-space filtering, independent of room scale/origin.
+// Quaternion filtering preserves rigid rotation, including 180-degree changes.
+export function markerQuaternion(m:ArrayLike<number>) {
+  const trace=m[0]+m[5]+m[10];let x:number,y:number,z:number,w:number;
+  if(trace>0){const s=Math.sqrt(trace+1)*2;w=s/4;x=(m[6]-m[9])/s;y=(m[8]-m[2])/s;z=(m[1]-m[4])/s;}
+  else if(m[0]>m[5]&&m[0]>m[10]){const s=Math.sqrt(1+m[0]-m[5]-m[10])*2;w=(m[6]-m[9])/s;x=s/4;y=(m[4]+m[1])/s;z=(m[8]+m[2])/s;}
+  else if(m[5]>m[10]){const s=Math.sqrt(1+m[5]-m[0]-m[10])*2;w=(m[8]-m[2])/s;x=(m[4]+m[1])/s;y=s/4;z=(m[9]+m[6])/s;}
+  else{const s=Math.sqrt(1+m[10]-m[0]-m[5])*2;w=(m[1]-m[4])/s;x=(m[8]+m[2])/s;y=(m[9]+m[6])/s;z=s/4;}
+  const n=Math.hypot(x,y,z,w);return [x/n,y/n,z/n,w/n];
+}
 export function createMarkerPoseFilter() {
-  let value:Float64Array|null=null,last=0,pending:Float64Array|null=null,count=0;
+  let value:Float64Array|null=null,reference:Float64Array|null=null,last=0,pending:Float64Array|null=null,count=0;
   const distance=(a:ArrayLike<number>,b:ArrayLike<number>)=>Math.hypot(a[12]-b[12],a[13]-b[13],a[14]-b[14]);
-  const angle=(a:ArrayLike<number>,b:ArrayLike<number>)=>{
-    let trace=0;for(const i of [0,1,2,4,5,6,8,9,10])trace+=a[i]*b[i];
-    return Math.acos(Math.max(-1,Math.min(1,(trace-1)/2)));
-  };
-  return {reset(){value=null;last=0;pending=null;count=0;},sample(next:Float64Array,now:number) {
-    if(!value||now-last>=900){value=new Float64Array(next);last=now;pending=null;count=0;return value;}
-    // Ignore one-frame spikes; accept a consistent new location after three frames.
-    if(distance(value,next)>Math.max(.12,value[14]*.3)||angle(value,next)>Math.PI/3){
+  const dot=(a:number[],b:number[])=>a.reduce((n,v,i)=>n+v*b[i],0);
+  const angle=(a:ArrayLike<number>,b:ArrayLike<number>)=>2*Math.acos(Math.min(1,Math.abs(dot(markerQuaternion(a),markerQuaternion(b)))));
+  return {reset(){value=null;reference=null;last=0;pending=null;count=0;},sample(next:Float64Array,now:number) {
+    if(!Array.from(next).every(Number.isFinite))return null;
+    if(!value){value=new Float64Array(next);reference=new Float64Array(next);last=now;return value;}
+    // Compare detections with the last accepted detection, not the lagging display.
+    if(distance(reference!,next)>Math.max(.12,reference![14]*.3)||angle(reference!,next)>Math.PI/3){
       count=pending&&distance(pending,next)<.06&&angle(pending,next)<Math.PI/9?count+1:1;
       pending=new Float64Array(next);if(count<3)return null;
-      value=new Float64Array(next);last=now;pending=null;count=0;return value;
     }
-    pending=null;count=0;
-    const alpha=1-Math.exp(-Math.max(1,now-last)/80),out=new Float64Array(value);
-    for(const i of [0,1,2,4,5,6,12,13,14])out[i]+=alpha*(next[i]-out[i]);
-    // Rebuild an orthonormal rotation instead of accumulating scale/shear.
-    let n=Math.hypot(out[0],out[1],out[2]);for(const i of [0,1,2])out[i]/=n;
-    const dot=out[0]*out[4]+out[1]*out[5]+out[2]*out[6];
-    for(let i=0;i<3;i++)out[4+i]-=dot*out[i];
-    n=Math.hypot(out[4],out[5],out[6]);for(const i of [4,5,6])out[i]/=n;
-    out[8]=out[1]*out[6]-out[2]*out[5];out[9]=out[2]*out[4]-out[0]*out[6];out[10]=out[0]*out[5]-out[1]*out[4];
-    value=out;last=now;return value;
+    pending=null;count=0;reference=new Float64Array(next);
+    // A long detection gap must not increase the interpolation step or reseed the pose.
+    const dt=Math.max(.001,Math.min(.05,(now-last)/1000));last=now;
+    const d=distance(value,next),alpha=1-Math.exp(-dt/.12);
+    const positionWeight=d>0?Math.min(alpha,2*dt/d):alpha;
+    const out=new Float64Array(value);for(const i of [12,13,14])out[i]+=positionWeight*(next[i]-out[i]);
+    const a=markerQuaternion(value),b=markerQuaternion(next);let cosine=dot(a,b);
+    if(cosine<0){for(let i=0;i<4;i++)b[i]=-b[i];cosine=-cosine;}
+    const theta=Math.acos(Math.min(1,cosine));
+    const t=theta>1e-8?Math.min(alpha,Math.PI*dt/(2*theta)):alpha;
+    let q:number[];
+    if(cosine>.9995)q=a.map((v,i)=>v+t*(b[i]-v));
+    else{const sin=Math.sin(theta),wa=Math.sin((1-t)*theta)/sin,wb=Math.sin(t*theta)/sin;q=a.map((v,i)=>wa*v+wb*b[i]);}
+    const n=Math.hypot(...q);const [x,y,z,w]=q.map(v=>v/n);
+    out[0]=1-2*(y*y+z*z);out[1]=2*(x*y+z*w);out[2]=2*(x*z-y*w);
+    out[4]=2*(x*y-z*w);out[5]=1-2*(x*x+z*z);out[6]=2*(y*z+x*w);
+    out[8]=2*(x*z+y*w);out[9]=2*(y*z-x*w);out[10]=1-2*(x*x+y*y);
+    value=out;return value;
   }};
 }
 // Pinhole planar-pose fallback from the detector's ordered square vertices.
@@ -110,7 +124,7 @@ export function createARMarkerUI(ctx:any) {
   `;document.head.appendChild(css);
   const launch=document.createElement('button');launch.id='arMarkerLauncher';launch.textContent='AR · MARKER';document.body.appendChild(launch);
   const panel=document.createElement('div');panel.id='arMarkerPanel';panel.hidden=true;
-  panel.innerHTML=`<strong>MARKER AR · 0.31.0.4</strong><button data-ar="close">閉じる</button><p>HIROを平らな机に置き、黒枠全体を映してください。</p><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
+  panel.innerHTML=`<strong>MARKER AR · 0.31.0.5</strong><button data-ar="close">閉じる</button><p>HIROを平らな机に置き、黒枠全体を映してください。</p><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
   document.body.appendChild(panel);
   const hud=document.createElement('div');hud.id='arMarkerHUD';hud.hidden=true;document.body.appendChild(hud);
   const q=(name:string)=>panel.querySelector(`[data-ar="${name}"]`) as any;
@@ -180,13 +194,15 @@ export function createARMarkerUI(ctx:any) {
           // Match the pattern direction before solving the square's pose.
           if(marker.dirPatt!==undefined)controller.setMarkerInfoDir(i,marker.dirPatt);
           markerFound=true;
-          let raw=new Float64Array(12);controller.getTransMatSquare(i,markerWidth,raw);poseSource="NATIVE";
-          if(!validMarkerPose(raw)) {
-            const fallback=markerPoseFromCorners(marker.vertex.map((v:any)=>[v[0],v[1]]),marker.dirPatt,markerWidth,controller.getCameraMatrix(),controller.width,controller.height);
-            if(!fallback)continue;raw=fallback;poseSource="CORNERS";
+          // Prefer one consistent solver while corners are usable. Validate native fallback.
+          let raw=markerPoseFromCorners(marker.vertex?.map((v:any)=>[v[0],v[1]]),marker.dirPatt,markerWidth,controller.getCameraMatrix(),controller.width,controller.height);
+          let source="CORNERS";
+          if(!raw||!validMarkerPose(raw)) {
+            raw=new Float64Array(12);controller.getTransMatSquare(i,markerWidth,raw);source="NATIVE";
+            if(!validMarkerPose(raw))continue;
           }
           const now=performance.now(),filtered=poseFilter.sample(markerPoseMatrix(raw),now);
-          if(!filtered)continue;pose=filtered;lastSeen=now;detected=true;break;
+          if(!filtered)continue;poseSource=source;pose=filtered;lastSeen=now;detected=true;break;
         }}}
     catch(error){stop(`追跡エラー · ${error instanceof Error?error.message:String(error)}`);return;}
     const visible=!!pose&&performance.now()-lastSeen<900;

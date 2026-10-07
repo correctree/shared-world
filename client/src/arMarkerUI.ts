@@ -39,6 +39,19 @@ export function refineMarkerPose(initial:ArrayLike<number>,vertices:number[][],d
   }
   return {pose:value,before,after:Math.sqrt(current/4),iterations};
 }
+// Prefer a recent solution only when it fits the current observations equally well.
+export function continuousMarkerRefinement(initial:ArrayLike<number>,previous:ArrayLike<number>|null,vertices:number[][],direction:number,width:number,projection:ArrayLike<number>,imageWidth:number,imageHeight:number) {
+  const fresh=refineMarkerPose(initial,vertices,direction,width,projection,imageWidth,imageHeight);
+  if(!previous||!validMarkerPose(previous)||!Number.isFinite(fresh.after))return fresh;
+  const prior=refineMarkerPose(previous,vertices,direction,width,projection,imageWidth,imageHeight);
+  if(!Number.isFinite(prior.after)||prior.after>Math.min(fresh.before,fresh.after+.25))return fresh;
+  const change=(p:ArrayLike<number>)=>{
+    const a=markerQuaternion(markerPoseMatrix(p)),b=markerQuaternion(markerPoseMatrix(previous));
+    const angle=2*Math.acos(Math.min(1,Math.abs(a.reduce((sum,v,i)=>sum+v*b[i],0))));
+    return Math.hypot(p[3]-previous[3],p[7]-previous[7],p[11]-previous[11])/width+angle;
+  };
+  return change(prior.pose)<change(fresh.pose)?{...prior,before:fresh.before}:fresh;
+}
 // Generic calibration can be stretched anisotropically by ARToolKit resizing.
 // Assume square camera pixels and preserve horizontal focal length / principal point.
 export function markerSquarePixelProjection(raw:ArrayLike<number>,width:number,height:number) {
@@ -57,11 +70,11 @@ export function markerQuaternion(m:ArrayLike<number>) {
   const n=Math.hypot(x,y,z,w);return [x/n,y/n,z/n,w/n];
 }
 export function createMarkerPoseFilter() {
-  let value:Float64Array|null=null,reference:Float64Array|null=null,last=0,movingUntil=0,pending:Float64Array|null=null,count=0;
+  let value:Float64Array|null=null,reference:Float64Array|null=null,last=0,pending:Float64Array|null=null,count=0,velocity=new Float64Array(12);
   const distance=(a:ArrayLike<number>,b:ArrayLike<number>)=>Math.hypot(a[12]-b[12],a[13]-b[13],a[14]-b[14]);
   const dot=(a:number[],b:number[])=>a.reduce((n,v,i)=>n+v*b[i],0);
   const angle=(a:ArrayLike<number>,b:ArrayLike<number>)=>2*Math.acos(Math.min(1,Math.abs(dot(markerQuaternion(a),markerQuaternion(b)))));
-  return {reset(){value=null;reference=null;last=0;movingUntil=0;pending=null;count=0;},sample(next:Float64Array,now:number) {
+  return {reset(){value=null;reference=null;last=0;pending=null;count=0;velocity.fill(0);},sample(next:Float64Array,now:number) {
     if(!Array.from(next).every(Number.isFinite))return null;
     if(!value){value=new Float64Array(next);reference=new Float64Array(next);last=now;return value;}
     // Compare detections with the last accepted detection, not the lagging display.
@@ -71,13 +84,17 @@ export function createMarkerPoseFilter() {
     }
     // Increase responsiveness for coherent movement; keep stronger damping at rest.
     const elapsed=Math.max(.001,(now-last)/1000);
-    const linearSpeed=distance(reference!,next)/elapsed,angularSpeed=angle(reference!,next)/elapsed;
-    const d=distance(value,next),rotationError=angle(value,next);
-    if(linearSpeed>.06||angularSpeed>.3||d>.008||rotationError>.035)movingUntil=now+100;
+    // Filter signed derivatives: alternating jitter cancels instead of raising speed.
+    const derivativeAlpha=1-Math.exp(-Math.min(.1,elapsed)/.08);
+    const indices=[12,13,14,0,1,2,4,5,6,8,9,10];
+    indices.forEach((index,i)=>velocity[i]+=derivativeAlpha*((next[index]-reference![index])/elapsed-velocity[i]));
+    const linearSpeed=Math.hypot(...velocity.slice(0,3)),angularSpeed=Math.hypot(...velocity.slice(3))/Math.sqrt(2);
+    const d=distance(value,next);
+    const responsiveness=Math.max(linearSpeed/.12,angularSpeed/.6);
     pending=null;count=0;reference=new Float64Array(next);
     // Bound the interpolation step across detection gaps.
     const dt=Math.min(.05,elapsed);last=now;
-    const tau=now<=movingUntil ? .018 : .12,alpha=1-Math.exp(-dt/tau);
+    const tau=Math.max(.018,.12/(1+4*responsiveness)),alpha=1-Math.exp(-dt/tau);
     const positionWeight=d>0?Math.min(alpha,2*dt/d):alpha;
     const out=new Float64Array(value);for(const i of [12,13,14])out[i]+=positionWeight*(next[i]-out[i]);
     const a=markerQuaternion(value),b=markerQuaternion(next);let cosine=dot(a,b);
@@ -178,18 +195,18 @@ export function createARMarkerUI(ctx:any) {
   `;document.head.appendChild(css);
   const launch=document.createElement('button');launch.id='arMarkerLauncher';launch.textContent='AR · MARKER';document.body.appendChild(launch);
   const panel=document.createElement('div');panel.id='arMarkerPanel';panel.hidden=true;
-  panel.innerHTML=`<strong>MARKER AR · 0.31.0.10</strong><button data-ar="close">閉じる</button><p>選択したマーカーを平らな机に置き、黒枠全体を映してください。</p><label>検証マーカー <select data-ar="marker"><option value="hiro">HIRO（従来）</option><option value="blocks">BLOCKS 01（比較用）</option></select></label><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><br><a target="_blank" rel="noopener" href="${new URL('ar/marker-blocks-print.html',base).href}">BLOCKS 01 を開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><label>認識切れの表示保持 <select data-ar="hold"><option value="0.5">0.5秒</option><option value="1.5" selected>1.5秒</option><option value="3">3秒</option></select></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><label><input data-ar="geometry" type="checkbox" checked>幾何確認（緑:検出／橙:計算／赤:3D）</label><label><input data-ar="refine" type="checkbox" checked>四隅に合わせて姿勢を最適化</label><label><input data-ar="smooth" type="checkbox">姿勢の揺れ補正（比較用）</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
+  panel.innerHTML=`<strong>MARKER AR · 0.31.0.11</strong><button data-ar="close">閉じる</button><p>選択したマーカーを平らな机に置き、黒枠全体を映してください。</p><label>検証マーカー <select data-ar="marker"><option value="hiro">HIRO（従来）</option><option value="blocks">BLOCKS 01（比較用）</option></select></label><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><br><a target="_blank" rel="noopener" href="${new URL('ar/marker-blocks-print.html',base).href}">BLOCKS 01 を開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><label>認識切れの表示保持 <select data-ar="hold"><option value="0.5">0.5秒</option><option value="1.5" selected>1.5秒</option><option value="3">3秒</option></select></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><label><input data-ar="geometry" type="checkbox" checked>幾何確認（緑:検出／橙:計算／赤:3D）</label><label><input data-ar="refine" type="checkbox" checked>四隅に合わせて姿勢を最適化</label><label><input data-ar="smooth" type="checkbox" checked>追跡の安定化（OFFで比較）</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
   document.body.appendChild(panel);
   const hud=document.createElement('div');hud.id='arMarkerHUD';hud.hidden=true;document.body.appendChild(hud);
   const overlay=document.createElement('div');overlay.id='arGeometryOverlay';overlay.hidden=true;document.body.appendChild(overlay);
   const q=(name:string)=>panel.querySelector(`[data-ar="${name}"]`) as any;
-  q('smooth').checked=false;q('refine').checked=true;
+  q('smooth').checked=true;q('refine').checked=true;
   const video=document.createElement('video');video.id='arMarkerVideo';video.muted=true;video.autoplay=true;video.playsInline=true;video.setAttribute('playsinline','');video.setAttribute('webkit-playsinline','');video.hidden=true;
   const backdrop=document.createElement('div');backdrop.id='arMarkerBackdrop';backdrop.hidden=true;document.body.append(backdrop,video);
   const layer=new pc.Layer({name:'Marker AR artworks'});app.scene.layers.push(layer);
   const cube=new pc.Entity('AR tracking check');cube.addComponent('render',{type:'box',layers:[layer.id]});const mat=new pc.StandardMaterial();mat.diffuse=new pc.Color(0,.7,1);mat.emissive=new pc.Color(0,.35,.5);mat.useLighting=false;mat.update();cube.render.material=mat;cube.enabled=false;app.root.addChild(cube);
   let active=false,pending=false,generation=0,room:any=null,stream:MediaStream|null=null,controller:any=null,saved:any=null;
-  let origin={x:0,y:0,z:0},pose:any=null,projection:any=null,lastSeen=0,lastFrame=-1,detected=false;
+  let origin={x:0,y:0,z:0},pose:any=null,projection:any=null,lastSeen=0,lastFrame=-1,detected=false,previousRaw:Float64Array|null=null;
   let corners:number[][]|null=null,cornerDirection=0,cornerSeen=0,rejection="SEARCHING";
   let fitBefore=NaN,fitAfter=NaN;
   let markerId=-1,markerWidth=.1,poseSource="",markerFound=false;
@@ -208,7 +225,7 @@ export function createARMarkerUI(ctx:any) {
   function stop(message='ARを停止しました。通常のROOM表示に戻りました。') {
     generation++;active=false;pending=false;room=null;hud.hidden=true;overlay.hidden=true;overlay.innerHTML="";corners=null;cornerSeen=0;rejection="SEARCHING";fitBefore=NaN;fitAfter=NaN;markerEdges.forEach(e=>e.enabled=false);cubeEdges.forEach(e=>e.enabled=false);
     stream?.getTracks().forEach(t=>t.stop());stream=null;video.pause();video.srcObject=null;video.hidden=true;backdrop.hidden=true;
-    poseFilter.reset();controller?.dispose();controller=null;pose=null;projection=null;lastSeen=0;lastFrame=-1;detected=false;
+    previousRaw=null;poseFilter.reset();controller?.dispose();controller=null;pose=null;projection=null;lastSeen=0;lastFrame=-1;detected=false;
     layer.removeMeshInstances(meshes);meshes=[];cube.enabled=false;
     if(saved){const c=camera.camera;c.calculateTransform=saved.transform;c.calculateProjection=saved.projection;c.layers=saved.layers;c.rect.copy(saved.rect);c.clearColor.copy(saved.color);c.nearClip=saved.near;c.farClip=saved.far;c.frustumCulling=saved.culling;camera.setPosition(saved.position);camera.setRotation(saved.rotation);saved=null;ctx.finish();}
     document.body.classList.remove('marker-ar-active');status(message);controls();
@@ -275,11 +292,13 @@ export function createARMarkerUI(ctx:any) {
             raw=new Float64Array(12);controller.getTransMatSquare(i,markerWidth,raw);source="NATIVE";
             if(!validMarkerPose(raw)){rejection="POSE FAILED";continue;}
           }
-          const refinement=refineMarkerPose(raw,corners!,cornerDirection,markerWidth,calibrated,controller.width,controller.height);
+          const now=performance.now();
+          if(now-lastSeen>holdMS()){previousRaw=null;poseFilter.reset();}
+          const refinement=continuousMarkerRefinement(raw,previousRaw&&now-lastSeen<250?previousRaw:null,corners!,cornerDirection,markerWidth,calibrated,controller.width,controller.height);
           fitBefore=refinement.before;fitAfter=q('refine').checked?refinement.after:refinement.before;
           if(q('refine').checked)raw=refinement.pose;
-          const now=performance.now(),filtered=poseFilter.sample(markerPoseMatrix(raw),now);
-          if(!filtered&&q('smooth').checked){rejection="OUTLIER";continue;}poseSource=source;pose=q('smooth').checked?filtered:markerPoseMatrix(raw);rejection="OK";lastSeen=now;detected=true;break;
+          const filtered=poseFilter.sample(markerPoseMatrix(raw),now);
+          if(!filtered&&q('smooth').checked){rejection="OUTLIER";continue;}previousRaw=new Float64Array(raw);poseSource=source;pose=q('smooth').checked?filtered:markerPoseMatrix(raw);rejection="OK";lastSeen=now;detected=true;break;
         }}}
     catch(error){stop(`追跡エラー · ${error instanceof Error?error.message:String(error)}`);return;}
     const visible=!!pose&&performance.now()-lastSeen<holdMS();

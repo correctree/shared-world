@@ -1,3 +1,44 @@
+// Refine a rigid CV pose against the four observed corners. No calibration changes.
+export function refineMarkerPose(initial:ArrayLike<number>,vertices:number[][],direction:number,width:number,projection:ArrayLike<number>,imageWidth:number,imageHeight:number) {
+  const original=Float64Array.from(initial),fx=Math.abs(projection[0])*imageWidth/2,fy=Math.abs(projection[5])*imageHeight/2;
+  const cx=(1-projection[8])*imageWidth/2,cy=(1+projection[9])*imageHeight/2;
+  if(!validMarkerPose(original)||!vertices||vertices.length!==4||!vertices.every(v=>v&&v.length>=2&&v.every(Number.isFinite))||!(width>0)||!(fx>0)||!(fy>0))return {pose:original,before:NaN,after:NaN,iterations:0};
+  const h=width/2,local=[[-h,-h],[-h,h],[h,h],[h,-h]];
+  const residual=(pose:ArrayLike<number>)=>{
+    const out:number[]=[];
+    for(let i=0;i<4;i++){const [X,Y]=local[i],z=pose[8]*X+pose[9]*Y+pose[11];if(z<=1e-5)return null;
+      const v=vertices[(i+4-(direction||0))%4];out.push(fx*(pose[0]*X+pose[1]*Y+pose[3])/z+cx-v[0],fy*(pose[4]*X+pose[5]*Y+pose[7])/z+cy-v[1]);}
+    return out.every(Number.isFinite)?out:null;
+  };
+  const cost=(r:number[])=>r.reduce((n,v)=>n+v*v,0);
+  const step=(pose:ArrayLike<number>,delta:number[])=>{
+    const [x,y,z]=delta,theta=Math.hypot(x,y,z),a=theta<1e-8?1:Math.sin(theta)/theta,b=theta<1e-8?.5:(1-Math.cos(theta))/(theta*theta);
+    const R=[1-b*(y*y+z*z),b*x*y-a*z,b*x*z+a*y,b*x*y+a*z,1-b*(x*x+z*z),b*y*z-a*x,b*x*z-a*y,b*y*z+a*x,1-b*(x*x+y*y)];
+    const out=new Float64Array(pose);
+    for(let r=0;r<3;r++)for(let c=0;c<3;c++)out[r*4+c]=R[r*3]*pose[c]+R[r*3+1]*pose[4+c]+R[r*3+2]*pose[8+c];
+    out[3]+=delta[3];out[7]+=delta[4];out[11]+=delta[5];return out;
+  };
+  let value=original,r=residual(value);if(!r)return {pose:original,before:NaN,after:NaN,iterations:0};
+  const before=Math.sqrt(cost(r)/4);let current=cost(r),lambda=.001,iterations=0;
+  for(let iteration=0;iteration<12;iteration++){
+    if(current<1e-12)break;
+    const columns:number[][]=[];
+    for(let j=0;j<6;j++){const eps=j<3?1e-5:Math.max(1e-7,width*1e-4),d=[0,0,0,0,0,0];d[j]=eps;const rr=residual(step(value,d));if(!rr)return {pose:value,before,after:Math.sqrt(current/4),iterations};columns.push(rr.map((v,k)=>(v-r![k])/eps));}
+    const rows=Array.from({length:6},(_,i)=>Array.from({length:7},(_,j)=>j===6?-columns[i].reduce((n,v,k)=>n+v*r![k],0):columns[i].reduce((n,v,k)=>n+v*columns[j][k],0)));
+    for(let i=0;i<6;i++)rows[i][i]+=lambda*(rows[i][i]+1);
+    let singular=false;
+    for(let c=0;c<6;c++){let pivot=c;for(let j=c+1;j<6;j++)if(Math.abs(rows[j][c])>Math.abs(rows[pivot][c]))pivot=j;
+      if(Math.abs(rows[pivot][c])<1e-12){singular=true;break;}[rows[c],rows[pivot]]=[rows[pivot],rows[c]];const n=rows[c][c];for(let j=c;j<7;j++)rows[c][j]/=n;
+      for(let i=0;i<6;i++)if(i!==c){const k=rows[i][c];for(let j=c;j<7;j++)rows[i][j]-=k*rows[c][j];}}
+    if(singular)break;
+    const delta=rows.map(row=>row[6]);
+    const limit=Math.min(1,.2/Math.max(1e-12,Math.hypot(...delta.slice(0,3))),width*.5/Math.max(1e-12,Math.hypot(...delta.slice(3))));
+    const candidate=step(value,delta.map(v=>v*limit)),rr=residual(candidate);iterations++;
+    if(rr&&validMarkerPose(candidate)&&cost(rr)<current){value=candidate;r=rr;current=cost(rr);lambda=Math.max(1e-7,lambda*.3);}
+    else lambda=Math.min(1e8,lambda*10);
+  }
+  return {pose:value,before,after:Math.sqrt(current/4),iterations};
+}
 // Generic calibration can be stretched anisotropically by ARToolKit resizing.
 // Assume square camera pixels and preserve horizontal focal length / principal point.
 export function markerSquarePixelProjection(raw:ArrayLike<number>,width:number,height:number) {
@@ -137,12 +178,12 @@ export function createARMarkerUI(ctx:any) {
   `;document.head.appendChild(css);
   const launch=document.createElement('button');launch.id='arMarkerLauncher';launch.textContent='AR · MARKER';document.body.appendChild(launch);
   const panel=document.createElement('div');panel.id='arMarkerPanel';panel.hidden=true;
-  panel.innerHTML=`<strong>MARKER AR · 0.31.0.9</strong><button data-ar="close">閉じる</button><p>選択したマーカーを平らな机に置き、黒枠全体を映してください。</p><label>検証マーカー <select data-ar="marker"><option value="hiro">HIRO（従来）</option><option value="blocks">BLOCKS 01（比較用）</option></select></label><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><br><a target="_blank" rel="noopener" href="${new URL('ar/marker-blocks-print.html',base).href}">BLOCKS 01 を開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><label>認識切れの表示保持 <select data-ar="hold"><option value="0.5">0.5秒</option><option value="1.5" selected>1.5秒</option><option value="3">3秒</option></select></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><label><input data-ar="geometry" type="checkbox" checked>幾何確認（緑:検出／橙:計算／赤:3D）</label><label><input data-ar="smooth" type="checkbox">姿勢の揺れ補正（比較用）</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
+  panel.innerHTML=`<strong>MARKER AR · 0.31.0.10</strong><button data-ar="close">閉じる</button><p>選択したマーカーを平らな机に置き、黒枠全体を映してください。</p><label>検証マーカー <select data-ar="marker"><option value="hiro">HIRO（従来）</option><option value="blocks">BLOCKS 01（比較用）</option></select></label><a target="_blank" rel="noopener" href="${new URL('ar/marker-print.html',base).href}">HIRO マーカーを開く / 印刷</a><br><a target="_blank" rel="noopener" href="${new URL('ar/marker-blocks-print.html',base).href}">BLOCKS 01 を開く / 印刷</a><label>黒枠の一辺 (mm) <input data-ar="size" type="number" min="30" max="1000" value="100"></label><label>表示倍率 <input data-ar="scale" type="range" min="0.005" max="0.2" step="0.005" value="0.02"><output data-ar="scale-text">2%</output></label><label>認識切れの表示保持 <select data-ar="hold"><option value="0.5">0.5秒</option><option value="1.5" selected>1.5秒</option><option value="3">3秒</option></select></label><button data-ar="origin">選択作品を中心に</button><button data-ar="room">ROOM原点</button><label><input data-ar="test" type="checkbox" checked>認識確認用キューブ</label><label><input data-ar="geometry" type="checkbox" checked>幾何確認（緑:検出／橙:計算／赤:3D）</label><label><input data-ar="refine" type="checkbox" checked>四隅に合わせて姿勢を最適化</label><label><input data-ar="smooth" type="checkbox">姿勢の揺れ補正（比較用）</label><button data-ar="start">START AR</button><button data-ar="stop" disabled>STOP AR</button><p data-ar="status" role="status">ROOMへ入室してから開始してください。</p>`;
   document.body.appendChild(panel);
   const hud=document.createElement('div');hud.id='arMarkerHUD';hud.hidden=true;document.body.appendChild(hud);
   const overlay=document.createElement('div');overlay.id='arGeometryOverlay';overlay.hidden=true;document.body.appendChild(overlay);
   const q=(name:string)=>panel.querySelector(`[data-ar="${name}"]`) as any;
-  q('smooth').checked=false;
+  q('smooth').checked=false;q('refine').checked=true;
   const video=document.createElement('video');video.id='arMarkerVideo';video.muted=true;video.autoplay=true;video.playsInline=true;video.setAttribute('playsinline','');video.setAttribute('webkit-playsinline','');video.hidden=true;
   const backdrop=document.createElement('div');backdrop.id='arMarkerBackdrop';backdrop.hidden=true;document.body.append(backdrop,video);
   const layer=new pc.Layer({name:'Marker AR artworks'});app.scene.layers.push(layer);
@@ -150,6 +191,7 @@ export function createARMarkerUI(ctx:any) {
   let active=false,pending=false,generation=0,room:any=null,stream:MediaStream|null=null,controller:any=null,saved:any=null;
   let origin={x:0,y:0,z:0},pose:any=null,projection:any=null,lastSeen=0,lastFrame=-1,detected=false;
   let corners:number[][]|null=null,cornerDirection=0,cornerSeen=0,rejection="SEARCHING";
+  let fitBefore=NaN,fitAfter=NaN;
   let markerId=-1,markerWidth=.1,poseSource="",markerFound=false;
   const poseFilter=createMarkerPoseFilter();
   // Real 3D outline: the renderer draws this independently of the SVG projection.
@@ -164,7 +206,7 @@ export function createARMarkerUI(ctx:any) {
   const scale=()=>Math.max(.005,Math.min(.2,Number(q('scale').value)||.02));
   const controls=()=>{launch.hidden=!ctx.getRoom()||!ctx.available();q('start').disabled=active||pending||!ctx.getRoom()||!ctx.available();q('stop').disabled=!active&&!pending;q('size').disabled=active||pending;q('marker').disabled=active||pending;};
   function stop(message='ARを停止しました。通常のROOM表示に戻りました。') {
-    generation++;active=false;pending=false;room=null;hud.hidden=true;overlay.hidden=true;overlay.innerHTML="";corners=null;cornerSeen=0;rejection="SEARCHING";markerEdges.forEach(e=>e.enabled=false);cubeEdges.forEach(e=>e.enabled=false);
+    generation++;active=false;pending=false;room=null;hud.hidden=true;overlay.hidden=true;overlay.innerHTML="";corners=null;cornerSeen=0;rejection="SEARCHING";fitBefore=NaN;fitAfter=NaN;markerEdges.forEach(e=>e.enabled=false);cubeEdges.forEach(e=>e.enabled=false);
     stream?.getTracks().forEach(t=>t.stop());stream=null;video.pause();video.srcObject=null;video.hidden=true;backdrop.hidden=true;
     poseFilter.reset();controller?.dispose();controller=null;pose=null;projection=null;lastSeen=0;lastFrame=-1;detected=false;
     layer.removeMeshInstances(meshes);meshes=[];cube.enabled=false;
@@ -233,6 +275,9 @@ export function createARMarkerUI(ctx:any) {
             raw=new Float64Array(12);controller.getTransMatSquare(i,markerWidth,raw);source="NATIVE";
             if(!validMarkerPose(raw)){rejection="POSE FAILED";continue;}
           }
+          const refinement=refineMarkerPose(raw,corners!,cornerDirection,markerWidth,calibrated,controller.width,controller.height);
+          fitBefore=refinement.before;fitAfter=q('refine').checked?refinement.after:refinement.before;
+          if(q('refine').checked)raw=refinement.pose;
           const now=performance.now(),filtered=poseFilter.sample(markerPoseMatrix(raw),now);
           if(!filtered&&q('smooth').checked){rejection="OUTLIER";continue;}poseSource=source;pose=q('smooth').checked?filtered:markerPoseMatrix(raw);rejection="OK";lastSeen=now;detected=true;break;
         }}}
@@ -269,7 +314,7 @@ export function createARMarkerUI(ctx:any) {
       const points=(a:number[][])=>a.map(v=>v.join(',')).join(' ');
       overlay.innerHTML=`<svg viewBox="0 0 ${innerWidth} ${innerHeight}" preserveAspectRatio="none"><polygon points="${points(detectedPixels)}" fill="none" stroke="#00ff75" stroke-width="3"/>${projected.length?`<polygon points="${points(projected)}" fill="none" stroke="#ff9d00" stroke-width="2"/>`:''}</svg>`;
     }else overlay.innerHTML='';
-    const detail=q('geometry').checked?` · ${q('smooth').checked?'SMOOTH':'RAW'} · FX/FY ${(Math.abs(calibrated[0])*controller.width/2).toFixed(0)}/${(Math.abs(calibrated[5])*controller.height/2).toFixed(0)} · ${rejection} · ERR ${reprojection}px · VIDEO ${video.videoWidth}x${video.videoHeight} · DET ${controller.width}x${controller.height} · CSS ${Math.round(canvasRect.width)}x${Math.round(canvasRect.height)} · BUF ${canvas.width??'?'}x${canvas.height??'?'}`:'';
+    const detail=q('geometry').checked?` · ${q('smooth').checked?'SMOOTH':'RAW'} · FIT ${Number.isFinite(fitBefore)?fitBefore.toFixed(1):'--'}→${Number.isFinite(fitAfter)?fitAfter.toFixed(1):'--'} DETpx · ${q('refine').checked?'REFINE':'BASE'} · FX/FY ${(Math.abs(calibrated[0])*controller.width/2).toFixed(0)}/${(Math.abs(calibrated[5])*controller.height/2).toFixed(0)} · ${rejection} · ERR ${reprojection}px · VIDEO ${video.videoWidth}x${video.videoHeight} · DET ${controller.width}x${controller.height} · CSS ${Math.round(canvasRect.width)}x${Math.round(canvasRect.height)} · BUF ${canvas.width??'?'}x${canvas.height??'?'}`:'';
     status(visible?`${performance.now()-lastSeen>120?"HOLD":"TRACKING"} · ${Math.round(scale()*1000)/10}% · 原点 ${origin.x.toFixed(1)}, ${origin.y.toFixed(1)}, ${origin.z.toFixed(1)} · ${poseSource} · CUBE ${clip!.w>0?"FRONT":"BEHIND"} ${clip!.x.toFixed(2)},${clip!.y.toFixed(2)} · MESH ${meshes.length}`:markerFound?'MARKER FOUND · 姿勢を計算できません。黒枠を正面から映してください。':detected?'MARKER LOST · 黒枠全体を映してください。':'SEARCHING · 選択したマーカーの黒枠全体を映してください。');if(detail)status(hud.textContent+detail);
   }
   launch.onclick=()=>panel.hidden=!panel.hidden;q('close').onclick=()=>panel.hidden=true;q('start').onclick=()=>void start();q('stop').onclick=()=>stop();
